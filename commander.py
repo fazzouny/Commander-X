@@ -19,6 +19,7 @@ import os
 import re
 import secrets
 import shutil
+import ssl
 import subprocess
 import sys
 import threading
@@ -1746,6 +1747,24 @@ def is_safe_mcp_package(value: str) -> bool:
     return bool(re.fullmatch(r"(?:@[a-zA-Z0-9_.-]+/)?[a-zA-Z0-9_.-]+", value.strip()))
 
 
+def trusted_mcp_npm_scopes() -> set[str]:
+    raw = os.environ.get(
+        "COMMANDER_MCP_TRUSTED_NPM_SCOPES",
+        "@modelcontextprotocol,@upstash,@supabase,@cloudflare,@github,@vercel,@netlify",
+    )
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def mcp_package_trust_label(package: str) -> str:
+    package = package.strip().lower()
+    if package.startswith("@") and "/" in package:
+        scope = package.split("/", 1)[0]
+        if scope in trusted_mcp_npm_scopes():
+            return "known vendor scope"
+        return "scoped community package"
+    return "unscoped community package"
+
+
 def validate_mcp_command(command: list[str]) -> tuple[bool, str]:
     if not command:
         return False, "MCP command is required."
@@ -1883,6 +1902,7 @@ def mcp_candidate_from_tokens(command: list[str], name_hint: str | None = None, 
         "name": normalize_mcp_server_name(name_hint or mcp_candidate_name(package)),
         "command": command,
         "package": package,
+        "trust": mcp_package_trust_label(package),
         "source": source,
     }
 
@@ -2019,6 +2039,9 @@ def format_mcp_candidate(candidate: dict[str, Any], index: int) -> str:
     command = " ".join(str(item) for item in candidate.get("command", []))
     package = str(candidate.get("package", "unknown"))
     line = f"{index}. {package}\n   Prepare: /mcp add {name} {command}"
+    trust = str(candidate.get("trust") or "").strip()
+    if trust:
+        line += f"\n   Trust: {trust}"
     description = str(candidate.get("description") or "").strip()
     if description:
         line += f"\n   Note: {description}"
@@ -4578,6 +4601,10 @@ def log_outgoing(user_id: str, text: str) -> None:
     print(f"{utc_now()} {user_id} [reply] {redact(preview)[:220]}", flush=True)
 
 
+def is_transient_poll_exception(exc: BaseException) -> bool:
+    return isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError, ssl.SSLError))
+
+
 def poll_forever() -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -4652,7 +4679,12 @@ def poll_forever() -> None:
         except KeyboardInterrupt:
             print("Stopping Codex Commander.", flush=True)
             return
-        except (urllib.error.URLError, TimeoutError, RuntimeError) as exc:
+        except RuntimeError as exc:
+            print(f"Polling error: {redact(str(exc))}", flush=True)
+            time.sleep(5)
+        except Exception as exc:
+            if not is_transient_poll_exception(exc):
+                raise
             print(f"Polling error: {redact(str(exc))}", flush=True)
             time.sleep(5)
 

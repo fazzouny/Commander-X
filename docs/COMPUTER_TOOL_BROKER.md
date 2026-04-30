@@ -15,7 +15,7 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - `/clickup recent [query]` reads recent ClickUp tasks when API credentials are configured.
 - `/mcp` lists Codex CLI MCP servers.
 - `/mcp request <docs URL, package search, or install command>` handles MCP install/connect requests without relying on the OpenAI router.
-- `/mcp find <package or connector name>` searches npm package metadata for MCP candidates as review leads.
+- `/mcp find <package or connector name>` searches npm package metadata for MCP candidates as review leads with a basic source-trust label.
 - `/mcp add <server-name> npx -y <package> [args...]` or `/mcp add <server-name> uvx <package> [args...]` prepares an approval-gated `codex mcp add`.
 - `/system` reports OS, memory, battery, and disk health.
 - `/env` reports which integration keys are configured without printing secret values.
@@ -37,7 +37,7 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - Secret-like files are blocked by filename and suffix.
 - App launching is allowlist-based through `computer_tools.json`.
 - ClickUp uses direct API credentials for the background Telegram service; Desktop MCP connector access is not assumed.
-- MCP install requests are controlled commands. Commander can research web pages and npm package metadata, but it does not execute from shell pipes, redirects, chained commands, unknown runners, or registry search results without an explicit `/mcp add` and approval.
+- MCP install requests are controlled commands. Commander can research web pages and npm package metadata, but it does not execute from shell pipes, redirects, chained commands, unknown runners, or registry search results without an explicit `/mcp add` and approval. NPM trust labels are conservative hints only, not security guarantees.
 - Clipboard reads, screenshot capture, and volume keys can be disabled by `.env` safety flags.
 - Disk cleanup is intentionally advice-only from Telegram. Deletion should remain a reviewed local action or a future approval-gated workflow.
 - High-impact external actions still require explicit approval.

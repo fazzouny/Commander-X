@@ -358,7 +358,7 @@ MCP setup is controlled and approval-gated:
 /mcp add example-server npx -y @vendor/mcp-server
 ```
 
-Commander treats URLs as setup/research requests, not raw install commands. If you send a docs URL, it fetches the page, looks for explicit `codex mcp add`, `npx -y`, or `uvx` install commands, and prepares an approval only when it finds a single safe candidate. If the page does not contain an install command, Commander can search npm package metadata with `/mcp find <connector name>` and show candidate packages as review leads.
+Commander treats URLs as setup/research requests, not raw install commands. If you send a docs URL, it fetches the page, looks for explicit `codex mcp add`, `npx -y`, or `uvx` install commands, and prepares an approval only when it finds a single safe candidate. If the page does not contain an install command, Commander can search npm package metadata with `/mcp find <connector name>` and show candidate packages as review leads with a basic source-trust label.
 
 Running `codex mcp add` always requires an explicit `/approve commander <approval_id>`.
 

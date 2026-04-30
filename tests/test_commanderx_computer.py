@@ -164,6 +164,12 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["name"], "meta-ads")
         self.assertEqual(candidates[0]["command"], ["npx", "-y", "@vendor/mcp-server"])
+        self.assertEqual(candidates[0]["trust"], "scoped community package")
+
+    def test_mcp_trust_labels_known_vendor_scopes(self) -> None:
+        self.assertEqual(commander.mcp_package_trust_label("@modelcontextprotocol/server-github"), "known vendor scope")
+        self.assertEqual(commander.mcp_package_trust_label("@unknown/server"), "scoped community package")
+        self.assertEqual(commander.mcp_package_trust_label("meta-ads-mcp"), "unscoped community package")
 
     def test_mcp_url_request_prepares_single_found_command(self) -> None:
         original_fetch = commander.fetch_mcp_url_text
@@ -196,6 +202,10 @@ class BrowserAndClickUpTests(unittest.TestCase):
         ok, error = commander.validate_mcp_command(["npx", "-y", "@vendor/mcp-server"])
         self.assertTrue(ok)
         self.assertEqual(error, "")
+
+    def test_polling_treats_connection_reset_as_transient(self) -> None:
+        self.assertTrue(commander.is_transient_poll_exception(ConnectionResetError("reset")))
+        self.assertFalse(commander.is_transient_poll_exception(ValueError("bug")))
 
     def test_inbox_items_include_pending_approvals(self) -> None:
         original_sessions = commander.sessions_data
