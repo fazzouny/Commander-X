@@ -13,6 +13,7 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - `/computer screenshot` captures the current primary screen to `logs/screenshots`.
 - `/browser inspect <url>` fetches a web page and reports status, title, description, headings, and link count.
 - `/clickup recent [query]` reads recent ClickUp tasks when API credentials are configured.
+- `/clickup count [query]` counts matching ClickUp tasks and shows a status breakdown for campaign/lead questions.
 - `/mcp` lists Codex CLI MCP servers.
 - `/mcp request <docs URL, package search, or install command>` handles MCP install/connect requests without relying on the OpenAI router.
 - `/mcp find <package or connector name>` searches npm package metadata for MCP candidates as review leads with a basic source-trust label.

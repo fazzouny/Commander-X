@@ -26,6 +26,8 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("visit example.com"), "/open url example.com")
         self.assertEqual(commander.natural_computer_command("inspect website example.com"), "/browser inspect example.com")
         self.assertEqual(commander.natural_computer_command("check clickup campaigns"), "/clickup recent campaigns")
+        self.assertEqual(commander.natural_computer_command("How many leads we have"), "/clickup count leads")
+        self.assertEqual(commander.natural_computer_command("latest updates about campaigns"), "/clickup recent campaigns")
         self.assertEqual(commander.natural_computer_command("what MCPs are available"), "/mcp")
         self.assertEqual(
             commander.natural_computer_command("Can you connect this mcp https://example.com/mcp"),
@@ -204,6 +206,26 @@ class BrowserAndClickUpTests(unittest.TestCase):
         ]
         self.assertEqual([task["id"] for task in filter_tasks(tasks, "campaign lead")], ["1"])
         self.assertIn("Campaign lead review", format_tasks(tasks, limit=1))
+
+    def test_clickup_count_summarizes_matching_tasks(self) -> None:
+        original_settings = commander.clickup_settings_from_env
+        original_tasks = commander.clickup_filtered_team_tasks
+        try:
+            commander.clickup_settings_from_env = lambda: settings_from_env({"CLICKUP_API_TOKEN": "tok", "CLICKUP_WORKSPACE_ID": "123"})  # type: ignore[assignment]
+            commander.clickup_filtered_team_tasks = lambda _settings: {  # type: ignore[assignment]
+                "tasks": [
+                    {"id": "1", "name": "Lead: Alpha clinic", "status": {"status": "open"}},
+                    {"id": "2", "name": "Lead: Beta group", "status": {"status": "qualified"}},
+                    {"id": "3", "name": "Campaign copy", "status": {"status": "open"}},
+                ]
+            }
+            text = commander.command_clickup(["count", "lead"])
+        finally:
+            commander.clickup_settings_from_env = original_settings  # type: ignore[assignment]
+            commander.clickup_filtered_team_tasks = original_tasks  # type: ignore[assignment]
+        self.assertIn("Matching tasks: 2", text)
+        self.assertIn("open: 1", text)
+        self.assertIn("qualified: 1", text)
 
     def test_cleanup_helpers_format_non_destructive_plan(self) -> None:
         self.assertEqual(bytes_to_mb(1024 * 1024), 1.0)

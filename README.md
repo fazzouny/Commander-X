@@ -114,6 +114,7 @@ Remove it later with:
 /browser inspect https://example.com
 /clickup status
 /clickup recent campaigns
+/clickup count leads
 /skills
 /skills playwright
 /plugins
@@ -177,6 +178,8 @@ What should I do next?
 Visit example.com.
 Inspect example.com.
 Check ClickUp for campaign tasks.
+How many leads do we have?
+Show me the latest campaign updates.
 What keys are missing?
 Show system status.
 Run Commander doctor.
@@ -343,6 +346,7 @@ ClickUp checks:
 ```text
 /clickup status
 /clickup recent [query]
+/clickup count [query]
 ```
 
 Commander can see Codex Desktop's ClickUp connector only inside this Codex session. For the always-on Telegram service, configure direct API access in `.env`:
@@ -352,7 +356,7 @@ CLICKUP_API_TOKEN=...
 CLICKUP_WORKSPACE_ID=...
 ```
 
-The ClickUp bridge uses ClickUp's filtered Workspace tasks endpoint and filters query terms locally for simple mobile briefs.
+The ClickUp bridge uses ClickUp's filtered Workspace tasks endpoint and filters query terms locally for simple mobile briefs. Natural-language campaign and lead questions such as "How many leads do we have?" route to `/clickup count leads` when the query is clear.
 
 ## MCP Setup
 

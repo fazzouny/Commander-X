@@ -3757,11 +3757,12 @@ def command_clickup(args: list[str]) -> str:
             "Commands:",
             "- /clickup recent [query]",
             "- /clickup tasks [query]",
+            "- /clickup count [query]",
             "",
             "Note: the Codex Desktop ClickUp connector is available to this Codex chat, but the always-on Commander service needs ClickUp API credentials to work from Telegram while this chat is closed.",
         ]
         return "\n".join(lines)
-    if action in {"recent", "tasks", "task"}:
+    if action in {"recent", "tasks", "task", "count", "counts", "summary"}:
         if not settings.configured:
             return (
                 "ClickUp API bridge is not configured.\n"
@@ -3777,6 +3778,20 @@ def command_clickup(args: list[str]) -> str:
         if not isinstance(tasks, list):
             return "ClickUp returned an unexpected task payload."
         filtered = clickup_filter_tasks(tasks, query=query)
+        if action in {"count", "counts", "summary"}:
+            statuses: dict[str, int] = {}
+            for task in filtered:
+                raw_status = task.get("status")
+                status = raw_status.get("status") if isinstance(raw_status, dict) else raw_status
+                label = str(status or "unknown").strip() or "unknown"
+                statuses[label] = statuses.get(label, 0) + 1
+            title = "ClickUp count" + (f" for: {query}" if query else "")
+            lines = [title, "", f"Matching tasks: {len(filtered)}"]
+            if statuses:
+                lines.extend(["", "Status breakdown:"])
+                lines.extend(f"- {status}: {count}" for status, count in sorted(statuses.items(), key=lambda item: (-item[1], item[0]))[:8])
+            lines.extend(["", "Sample:", clickup_format_tasks(filtered, limit=5)])
+            return compact("\n".join(lines), limit=3600)
         header = f"Recent ClickUp tasks" + (f" matching: {query}" if query else "")
         return compact(header + "\n\n" + clickup_format_tasks(filtered, limit=10), limit=3600)
     return "Unknown ClickUp action.\nUse /clickup status or /clickup recent [query]."
@@ -4340,7 +4355,7 @@ def command_help() -> str:
 /tools
 /computer
 /browser inspect <url>
-/clickup [status|recent] [query]
+/clickup [status|recent|count] [query]
 /skills [query]
 /plugins
 /mcp [help|request|find|add]
@@ -4718,6 +4733,14 @@ def natural_computer_command(text: str) -> str | None:
         terms = re.sub(r"\b(check|show|inspect|what|is|in|on|clickup|tasks?|latest|recent|the|my|me)\b", " ", lowered)
         query = " ".join(terms.split())
         return f"/clickup recent {query}".strip()
+    if re.search(r"\b(how many|count|number of|total)\b", lowered) and re.search(r"\b(leads?|prospects?|campaigns?|deals?|opportunities)\b", lowered):
+        terms = re.sub(r"\b(how|many|count|number|of|total|do|we|have|are|there|the|my|our|running|active|current)\b", " ", lowered)
+        query = " ".join(terms.split()) or "leads"
+        return f"/clickup count {query}".strip()
+    if re.search(r"\b(latest|recent|updates?|status|what.*happening|progress)\b", lowered) and re.search(r"\b(campaigns?|leads?|prospects?|deals?|opportunities)\b", lowered):
+        terms = re.sub(r"\b(latest|recent|updates?|status|what|is|are|happening|progress|about|for|the|my|our|running|active|current)\b", " ", lowered)
+        query = " ".join(terms.split()) or "campaigns"
+        return f"/clickup recent {query}".strip()
     if url_match and re.search(r"\b(open|visit|go to|browse|launch|pull up)\b", lowered):
         return f"/open url {url_match.group(1).rstrip('.,)')}"
     if re.search(r"\b(screenshot|screen shot|capture my screen|capture the screen)\b", lowered):
@@ -4804,7 +4827,7 @@ Allowed commands:
 /tools
 /computer [status|codex|processes|screenshot]
 /browser inspect <url>
-/clickup [status|recent] [query]
+/clickup [status|recent|count] [query]
 /skills [query]
 /plugins
 /mcp [help|request|find|add]
@@ -4875,6 +4898,8 @@ Rules:
 - If the user asks to open or visit a website, map to /open url <url>.
 - If the user asks to inspect, check, or summarize a website, map to /browser inspect <url>.
 - If the user asks to check ClickUp, map to /clickup recent with query terms if present.
+- If the user asks how many leads, prospects, deals, opportunities, or campaigns exist, map to /clickup count <query>.
+- If the user asks for latest campaign or lead updates, map to /clickup recent <query>.
 - If the user asks to open an app, map to /open app <allowlisted_app>.
 - If the user asks to lower, raise, maximize, set to 100, or mute system volume, map to /volume with the requested direction/steps.
 - If the user asks for a screenshot or screen capture, map to /computer screenshot.
