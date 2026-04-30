@@ -28,6 +28,12 @@ MCP_TIMEOUT_SECONDS = int(os.environ.get("COMMANDER_DASHBOARD_MCP_TIMEOUT_SECOND
 MCP_CACHE: dict[str, Any] = {"value": None, "at": 0.0}
 DASHBOARD_CACHE_SECONDS = int(os.environ.get("COMMANDER_DASHBOARD_CACHE_SECONDS", "8"))
 DASHBOARD_BACKGROUND_REFRESH_SECONDS = int(os.environ.get("COMMANDER_DASHBOARD_BACKGROUND_REFRESH_SECONDS", "45"))
+DASHBOARD_REQUEST_REFRESH_SECONDS = int(
+    os.environ.get(
+        "COMMANDER_DASHBOARD_REQUEST_REFRESH_SECONDS",
+        str(max(DASHBOARD_CACHE_SECONDS, DASHBOARD_BACKGROUND_REFRESH_SECONDS if DASHBOARD_BACKGROUND_REFRESH_SECONDS > 0 else DASHBOARD_CACHE_SECONDS)),
+    )
+)
 DASHBOARD_WARM_CACHE_ON_START = commander.env_bool("COMMANDER_DASHBOARD_WARM_CACHE_ON_START", True)
 DASHBOARD_CACHE: dict[str, Any] = {
     "value": None,
@@ -84,6 +90,7 @@ def dashboard_cache_metadata(now: float | None = None, stale: bool | None = None
         "refreshing": refreshing,
         "ttl_seconds": DASHBOARD_CACHE_SECONDS,
         "background_refresh_seconds": DASHBOARD_BACKGROUND_REFRESH_SECONDS,
+        "request_refresh_seconds": DASHBOARD_REQUEST_REFRESH_SECONDS,
         "last_error": last_error,
         "last_error_at": last_error_at,
     }
@@ -537,7 +544,7 @@ def dashboard_payload() -> dict[str, Any]:
         at = float(DASHBOARD_CACHE.get("at") or 0.0)
     if isinstance(payload, dict) and at:
         stale = now - at >= DASHBOARD_CACHE_SECONDS
-        if stale:
+        if stale and now - at >= DASHBOARD_REQUEST_REFRESH_SECONDS:
             refresh_dashboard_cache_async(force=True)
         return attach_dashboard_cache_metadata(payload, now=now, stale=stale)
     refresh_dashboard_cache_async(force=True)

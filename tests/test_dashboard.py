@@ -18,7 +18,7 @@ class DashboardCapabilityTests(unittest.TestCase):
                 dashboard.DASHBOARD_CACHE.update(
                     {
                         "value": {"status": "cached snapshot"},
-                        "at": time.monotonic() - dashboard.DASHBOARD_CACHE_SECONDS - 1,
+                        "at": time.monotonic() - dashboard.DASHBOARD_REQUEST_REFRESH_SECONDS - 1,
                         "generated_at": "2026-04-30T00:00:00+00:00",
                         "refreshing": False,
                         "last_error": "",
