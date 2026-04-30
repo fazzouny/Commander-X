@@ -44,6 +44,15 @@ button:hover {
   border-color: var(--accent);
 }
 
+button.danger:hover {
+  border-color: var(--bad);
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 select,
 input,
 textarea {
@@ -272,6 +281,13 @@ span {
   flex-wrap: wrap;
   gap: 8px;
   margin: 12px 0;
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 pre {

@@ -194,6 +194,11 @@ function renderApprovals(data) {
             <div class="row-main">
               <div class="row-title">${escapeHtml(item.project)} [${escapeHtml(item.id)}]</div>
               <div class="row-meta">${escapeHtml(item.type)} on ${escapeHtml(item.branch || "-")}</div>
+              ${item.message ? `<div class="row-meta">${escapeHtml(item.message)}</div>` : ""}
+              <div class="approval-actions">
+                <button data-approval-action="approve" data-project="${escapeHtml(item.project)}" data-id="${escapeHtml(item.id)}">Approve</button>
+                <button class="danger" data-approval-action="cancel" data-project="${escapeHtml(item.project)}" data-id="${escapeHtml(item.id)}">Cancel</button>
+              </div>
             </div>
             <div>${pill("approval", "warn")}</div>
           </div>
@@ -461,6 +466,27 @@ async function openClawStart() {
   await refresh();
 }
 
+async function handleApprovalClick(event) {
+  const button = event.target.closest("[data-approval-action]");
+  if (!button) return;
+  const action = button.dataset.approvalAction;
+  const project = button.dataset.project;
+  const approvalId = button.dataset.id;
+  if (!action || !project || !approvalId) return;
+  button.disabled = true;
+  qs("#action-output").textContent = `${action === "approve" ? "Approving" : "Cancelling"} ${approvalId}...`;
+  try {
+    const result = await api(`/api/approval/${encodeURIComponent(action)}`, {
+      method: "POST",
+      body: JSON.stringify({ project, approval_id: approvalId }),
+    });
+    qs("#action-output").textContent = result.text || result.error || JSON.stringify(result, null, 2);
+  } finally {
+    button.disabled = false;
+  }
+  await refresh();
+}
+
 async function showDiff() {
   const project = qs("#evidence-project").value;
   const result = await api(`/api/diff/${encodeURIComponent(project)}`);
@@ -527,6 +553,7 @@ qs("#openclaw-recover").addEventListener("click", openClawRecover);
 qs("#openclaw-start").addEventListener("click", openClawStart);
 qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);
 qs("#clear-dashboard-token").addEventListener("click", clearDashboardToken);
+qs("#approvals").addEventListener("click", handleApprovalClick);
 
 hydrateDashboardToken();
 refresh().catch((error) => {

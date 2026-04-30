@@ -357,6 +357,20 @@ def require_dashboard_token(headers: Any) -> tuple[bool, str]:
     return False, "Invalid dashboard token."
 
 
+def dashboard_approval_action(payload: dict[str, Any], action: str) -> tuple[dict[str, Any], int]:
+    project_id = str(payload.get("project", "")).strip()
+    approval_id = str(payload.get("approval_id", "")).strip()
+    if not project_id or not approval_id:
+        return {"ok": False, "error": "project and approval_id are required"}, 400
+    if action == "approve":
+        result = commander.execute_pending(project_id, approval_id)
+    elif action == "cancel":
+        result = commander.command_cancel(project_id, approval_id)
+    else:
+        return {"ok": False, "error": "Unknown approval action"}, 400
+    return {"ok": True, "text": result}, 200
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "CommanderXDashboard/0.1"
 
@@ -463,6 +477,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             result = commander.command_openclaw(["start"])
             invalidate_dashboard_cache()
             self.send_json({"ok": True, "text": result})
+            return
+        if parsed.path == "/api/approval/approve":
+            result, status = dashboard_approval_action(payload, "approve")
+            invalidate_dashboard_cache()
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/approval/cancel":
+            result, status = dashboard_approval_action(payload, "cancel")
+            invalidate_dashboard_cache()
+            self.send_json(result, status=status)
             return
         self.send_json({"ok": False, "error": "Unknown endpoint"}, status=404)
 
