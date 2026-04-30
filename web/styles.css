@@ -148,6 +148,7 @@ span {
 .doctor-list,
 .inbox-list,
 .approval-list,
+.openclaw-list,
 .logs {
   display: grid;
   gap: 8px;
@@ -251,6 +252,13 @@ span {
   grid-template-columns: 1fr auto auto auto auto;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.openclaw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
 }
 
 pre {

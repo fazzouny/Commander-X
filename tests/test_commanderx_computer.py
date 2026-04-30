@@ -38,6 +38,7 @@ class ComputerToolTests(unittest.TestCase):
             commander.natural_computer_command("prepare OpenClaw https://github.com/openclaw/openclaw"),
             "/openclaw prepare https://github.com/openclaw/openclaw",
         )
+        self.assertEqual(commander.natural_computer_command("start OpenClaw"), "/openclaw start")
         self.assertEqual(commander.natural_computer_command("what needs my attention"), "/inbox")
         self.assertEqual(commander.natural_computer_command("show pending approvals"), "/approvals")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
@@ -155,6 +156,29 @@ class ComputerToolTests(unittest.TestCase):
         self.assertIn("Approve openclaw clone", labels)
         self.assertIn("OpenClaw status", labels)
         self.assertIn("cmd:/approve commander abc123", callbacks)
+
+    def test_openclaw_start_requires_configured_launcher(self) -> None:
+        text = commander.prepare_openclaw_start_response(env={})
+        self.assertIn("COMMANDER_OPENCLAW_LAUNCHER is not configured", text)
+
+    def test_openclaw_start_prepares_approval_for_configured_launcher(self) -> None:
+        original_add = commander.add_pending_action
+        original_snapshot = commander.openclaw_status_snapshot
+        actions = []
+        try:
+            commander.add_pending_action = lambda project_id, action: actions.append((project_id, action)) or "def456"  # type: ignore[assignment]
+            commander.openclaw_status_snapshot = lambda *args, **kwargs: {"process_rows": []}  # type: ignore[assignment]
+            with tempfile.TemporaryDirectory() as temp:
+                launcher = Path(temp) / "openclaw.cmd"
+                launcher.write_text("@echo off\n", encoding="utf-8")
+                text = commander.prepare_openclaw_start_response(env={"COMMANDER_OPENCLAW_LAUNCHER": str(launcher)})
+        finally:
+            commander.add_pending_action = original_add  # type: ignore[assignment]
+            commander.openclaw_status_snapshot = original_snapshot  # type: ignore[assignment]
+        self.assertIn("OpenClaw start prepared", text)
+        self.assertIn("Pending approval ID: def456", text)
+        self.assertEqual(actions[0][0], "commander")
+        self.assertEqual(actions[0][1]["type"], "openclaw_start")
 
 
 class BrowserAndClickUpTests(unittest.TestCase):

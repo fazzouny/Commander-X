@@ -275,6 +275,44 @@ function renderTools(data) {
   `;
 }
 
+function renderOpenClaw(data) {
+  const openclaw = data.openclaw || {};
+  const stateText = openclaw.state || "unknown";
+  const stateType = stateText === "running" || stateText === "startable" ? "good" : stateText === "traces" || stateText === "launchable" ? "warn" : "bad";
+  qs("#openclaw-state").innerHTML = pill(stateText, stateType);
+  const processes = openclaw.processes || [];
+  const launchers = openclaw.available_launchers || [];
+  qs("#openclaw").innerHTML = `
+    <div class="row">
+      <div class="row-main">
+        <div class="row-title">Local traces</div>
+        <div class="row-meta">Skills: ${escapeHtml(openclaw.skills_count || 0)}; plugin cache: ${openclaw.plugin_cache ? "yes" : "no"}; legacy checkout: ${openclaw.legacy_checkout ? "yes" : "no"}</div>
+      </div>
+      <div>${pill(openclaw.skills_count ? "found" : "missing", openclaw.skills_count ? "good" : "warn")}</div>
+    </div>
+    <div class="row">
+      <div class="row-main">
+        <div class="row-title">Trusted launcher</div>
+        <div class="row-meta">${escapeHtml(openclaw.configured_launcher || openclaw.launcher_error || "not configured")}</div>
+      </div>
+      <div>${pill(openclaw.configured_launcher ? "configured" : "needed", openclaw.configured_launcher ? "good" : "warn")}</div>
+    </div>
+    <div class="row">
+      <div class="row-main">
+        <div class="row-title">Launcher candidates</div>
+        <div class="row-meta">${launchers.map((item) => `${escapeHtml(item.label)}: ${escapeHtml(item.path)}`).join("; ") || "none"}</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="row-main">
+        <div class="row-title">Running processes</div>
+        <div class="row-meta">${processes.map((item) => escapeHtml(item)).join(", ") || "none"}</div>
+      </div>
+      <div>${pill(processes.length ? "running" : "idle", processes.length ? "good" : "warn")}</div>
+    </div>
+  `;
+}
+
 function renderEnv(data) {
   const env = data.env || {};
   const groups = Object.entries(env);
@@ -368,9 +406,30 @@ async function refresh() {
   renderDoctor(data);
   renderLogs(data);
   renderTools(data);
+  renderOpenClaw(data);
   renderEnv(data);
   renderSystem(data);
   renderRecommendations(data);
+}
+
+async function openClawRecover() {
+  qs("#openclaw-output").textContent = "Researching OpenClaw recovery options...";
+  const result = await api("/api/openclaw/recover", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  qs("#openclaw-output").textContent = result.text || result.error || JSON.stringify(result, null, 2);
+  await refresh();
+}
+
+async function openClawStart() {
+  qs("#openclaw-output").textContent = "Preparing OpenClaw start approval...";
+  const result = await api("/api/openclaw/start", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  qs("#openclaw-output").textContent = result.text || result.error || JSON.stringify(result, null, 2);
+  await refresh();
 }
 
 async function showDiff() {
@@ -435,6 +494,8 @@ qs("#show-profile").addEventListener("click", showProfile);
 qs("#show-evidence").addEventListener("click", showEvidence);
 qs("#start-task-button").addEventListener("click", startTask);
 qs("#save-memory").addEventListener("click", saveMemory);
+qs("#openclaw-recover").addEventListener("click", openClawRecover);
+qs("#openclaw-start").addEventListener("click", openClawStart);
 
 refresh().catch((error) => {
   qs("#metrics").innerHTML = `<div class="metric"><strong>Error</strong><span>${escapeHtml(error.message)}</span></div>`;

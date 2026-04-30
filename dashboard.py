@@ -92,6 +92,39 @@ def fast_system_snapshot(paths: list[Path]) -> dict[str, Any]:
     }
 
 
+def openclaw_dashboard_payload() -> dict[str, Any]:
+    snapshot = commander.openclaw_status_snapshot()
+    launcher, launcher_error = commander.configured_openclaw_launcher()
+    launchable = bool(snapshot["available_launchers"])
+    running = bool(snapshot["process_rows"])
+    has_traces = bool(snapshot["openclaw_home_exists"] or snapshot["claw_home_exists"] or snapshot["skills_count"])
+    if running:
+        state = "running"
+    elif launcher:
+        state = "startable"
+    elif launchable:
+        state = "launchable"
+    elif has_traces:
+        state = "traces"
+    else:
+        state = "not detected"
+    return {
+        "state": state,
+        "skills_count": snapshot["skills_count"],
+        "plugin_cache": bool(snapshot["claw_home_exists"]),
+        "legacy_checkout": bool(snapshot["legacy_checkout_exists"]),
+        "configured_launcher": commander.friendly_local_path(launcher) if launcher else "",
+        "launcher_error": launcher_error,
+        "available_launchers": [
+            {"label": str(item.get("label", "")), "path": commander.friendly_local_path(str(item.get("path", "")))}
+            for item in snapshot["available_launchers"][:4]
+        ],
+        "processes": commander.summarize_process_rows(snapshot["process_rows"]),
+        "repo_configured": bool(os.environ.get("COMMANDER_OPENCLAW_REPO_URL")),
+        "web_research": os.environ.get("COMMANDER_OPENCLAW_WEB_RESEARCH", "true"),
+    }
+
+
 def sessions_payload() -> dict[str, Any]:
     commander.refresh_session_states()
     return commander.sessions_data()
@@ -170,6 +203,11 @@ def dashboard_recommendations(user_id: str, changes: list[dict[str, Any]], snaps
         items.append("Enable Commander heartbeat with /heartbeat on 30 for proactive updates.")
     if not commander.get_project(str(state.get("active_project") or "")) and commander.assistant_mode(user_id) == "focused":
         items.append("Set a focused project with /focus <project>, or switch to /free for general computer work.")
+    openclaw = openclaw_dashboard_payload()
+    if openclaw["state"] == "traces":
+        items.append("OpenClaw traces exist but no trusted launcher is configured. Use /openclaw recover or set COMMANDER_OPENCLAW_LAUNCHER.")
+    elif openclaw["state"] in {"startable", "launchable"}:
+        items.append("OpenClaw has a launcher candidate. Use /openclaw start when you want to start it with approval.")
     return items[:8]
 
 
@@ -285,6 +323,7 @@ def build_dashboard_payload() -> dict[str, Any]:
             "plugins": commander.plugin_catalog(limit=24),
             "clickup_configured": commander.clickup_settings_from_env().configured,
         },
+        "openclaw": openclaw_dashboard_payload(),
         "env": commander.env_readiness(),
         "system": snapshot,
         "logs": [
@@ -412,6 +451,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             project_id = str(payload.get("project", "")).strip()
             user_id = str(payload.get("user_id", "dashboard")).strip()
             result = commander.command_focus(project_id, user_id=user_id)
+            invalidate_dashboard_cache()
+            self.send_json({"ok": True, "text": result})
+            return
+        if parsed.path == "/api/openclaw/recover":
+            result = commander.command_openclaw(["recover"])
+            invalidate_dashboard_cache()
+            self.send_json({"ok": True, "text": result})
+            return
+        if parsed.path == "/api/openclaw/start":
+            result = commander.command_openclaw(["start"])
             invalidate_dashboard_cache()
             self.send_json({"ok": True, "text": result})
             return

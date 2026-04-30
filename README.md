@@ -126,6 +126,7 @@ Remove it later with:
 /openclaw details
 /openclaw recover
 /openclaw prepare https://github.com/owner/repo
+/openclaw start
 /env
 /system
 /clipboard show
@@ -378,12 +379,15 @@ Commander can report local OpenClaw traces and prepare a guarded recovery path w
 /openclaw details
 /openclaw recover
 /openclaw prepare https://github.com/owner/repo
+/openclaw start
 /openclaw doctor
 ```
 
 It checks PATH, common npm shims, `.openclaw` skills, `.claw` plugin cache, and the legacy `claw-code` checkout shape. If OpenClaw is installed in a custom location, set `COMMANDER_OPENCLAW_LAUNCHER` in `.env`.
 
 `/openclaw recover` searches GitHub repository candidates and README install clues as review leads. It does not install anything. `/openclaw prepare <github-url>` creates a pending approval to clone the repository source only; it does not run installer scripts, launch OpenClaw, or modify credentials.
+
+`/openclaw start` prepares an approval to start only the launcher already configured in `COMMANDER_OPENCLAW_LAUNCHER`. Telegram cannot provide a raw launcher command.
 
 Optional OpenClaw recovery settings:
 

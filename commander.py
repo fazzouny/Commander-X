@@ -394,12 +394,12 @@ def response_pending_hint(text: str) -> tuple[str, str, str] | None:
     if match:
         return "mcp add", "commander", match.group(2)
     match = re.search(
-        r"^OpenClaw clone prepared\b.*?Pending approval ID:\s*([A-Za-z0-9]+)",
+        r"^OpenClaw (clone|start) prepared\b.*?Pending approval ID:\s*([A-Za-z0-9]+)",
         stripped,
         flags=re.IGNORECASE | re.DOTALL,
     )
     if match:
-        return "openclaw clone", "commander", match.group(1)
+        return f"openclaw {match.group(1).lower()}", "commander", match.group(2)
     return None
 
 
@@ -2182,6 +2182,88 @@ def execute_openclaw_clone(action: dict[str, Any]) -> tuple[bool, str]:
     return True, "\n".join(lines)
 
 
+def configured_openclaw_launcher(env: dict[str, str] | None = None) -> tuple[Path | None, str]:
+    env = os.environ if env is None else env
+    raw = env.get("COMMANDER_OPENCLAW_LAUNCHER", "").strip()
+    if not raw:
+        return None, "COMMANDER_OPENCLAW_LAUNCHER is not configured."
+    launcher = Path(raw).expanduser()
+    try:
+        resolved = launcher.resolve()
+    except OSError as exc:
+        return None, f"OpenClaw launcher path could not be resolved: {redact(str(exc))}."
+    if not resolved.exists() or not resolved.is_file():
+        return None, f"OpenClaw launcher was not found: {friendly_local_path(resolved)}"
+    if os.name == "nt" and resolved.suffix.lower() not in {".cmd", ".bat", ".exe", ".com"}:
+        return None, "OpenClaw launcher must be a .cmd, .bat, .exe, or .com file on Windows."
+    return resolved, ""
+
+
+def openclaw_launcher_command(launcher: Path) -> list[str]:
+    if os.name == "nt" and launcher.suffix.lower() in {".cmd", ".bat"}:
+        return ["cmd.exe", "/c", str(launcher)]
+    return [str(launcher)]
+
+
+def prepare_openclaw_start_response(env: dict[str, str] | None = None) -> str:
+    env = os.environ if env is None else env
+    snapshot = openclaw_status_snapshot(env=env)
+    if snapshot["process_rows"]:
+        rows = "\n".join(f"- {item}" for item in summarize_process_rows(snapshot["process_rows"]))
+        return "OpenClaw already appears to be running:\n" + rows
+    launcher, error = configured_openclaw_launcher(env=env)
+    if not launcher:
+        return (
+            "OpenClaw start cannot be prepared yet.\n\n"
+            f"Reason: {error}\n\n"
+            "Set COMMANDER_OPENCLAW_LAUNCHER in .env to a launcher you trust, then restart Commander.\n"
+            "Use /openclaw recover if you need to find or reinstall OpenClaw first."
+        )
+    pending_id = add_pending_action(
+        "commander",
+        {
+            "type": "openclaw_start",
+            "launcher": str(launcher),
+            "message": "Start configured OpenClaw launcher",
+        },
+    )
+    return (
+        "OpenClaw start prepared.\n"
+        f"Pending approval ID: {pending_id}\n\n"
+        f"Launcher: {friendly_local_path(launcher)}\n\n"
+        "This starts only the launcher configured in COMMANDER_OPENCLAW_LAUNCHER. "
+        "Telegram cannot provide a raw launcher command.\n\n"
+        f"Approve with /approve commander {pending_id}\n"
+        f"Cancel with /cancel commander {pending_id}"
+    )
+
+
+def execute_openclaw_start(action: dict[str, Any]) -> tuple[bool, str]:
+    env = os.environ
+    launcher, error = configured_openclaw_launcher(env=env)
+    if not launcher:
+        return False, f"OpenClaw start blocked: {error}"
+    requested = Path(str(action.get("launcher") or "")).expanduser().resolve()
+    if requested != launcher:
+        return False, "OpenClaw start blocked because the configured launcher changed after approval was prepared."
+    command = openclaw_launcher_command(launcher)
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(launcher.parent),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+    except Exception as exc:
+        return False, f"OpenClaw start failed: {redact(str(exc))}"
+    return True, f"Started configured OpenClaw launcher, PID {process.pid}.\nUse /openclaw to check runtime status."
+
+
 def command_openclaw(args: list[str]) -> str:
     action = args[0].lower() if args else "status"
     snapshot = openclaw_status_snapshot()
@@ -2249,7 +2331,10 @@ def command_openclaw(args: list[str]) -> str:
     if action in {"prepare", "clone"}:
         return prepare_openclaw_clone_response(args[1] if len(args) > 1 else "")
 
-    return "Usage: /openclaw, /openclaw details, /openclaw recover, /openclaw prepare <github-url>, or /openclaw doctor"
+    if action in {"start", "launch", "run"}:
+        return prepare_openclaw_start_response()
+
+    return "Usage: /openclaw, /openclaw details, /openclaw recover, /openclaw prepare <github-url>, /openclaw start, or /openclaw doctor"
 
 
 def mcp_usage() -> str:
@@ -4170,6 +4255,10 @@ def execute_pending(project_id: str, pending_id: str | None) -> str:
         ok_clone, result = execute_openclaw_clone(action)
         if not ok_clone:
             return result
+    elif action_type == "openclaw_start":
+        ok_start, result = execute_openclaw_start(action)
+        if not ok_start:
+            return result
     else:
         return f"Unsupported pending action type: {action_type}"
 
@@ -4255,7 +4344,7 @@ def command_help() -> str:
 /skills [query]
 /plugins
 /mcp [help|request|find|add]
-/openclaw [details|recover|prepare|doctor]
+/openclaw [details|recover|prepare|start|doctor]
 /env
 /system
 /clipboard [show|set|clear]
@@ -4579,12 +4668,14 @@ def natural_computer_command(text: str) -> str | None:
         return f"/mcp request {text}"
     if re.search(r"\b(mcp|mcps)\b", lowered) and re.search(r"\b(show|list|what|available|have|status|help|how)\b", lowered):
         return "/mcp"
+    if re.search(r"\b(openclaw|open claw|claw)\b", lowered) and re.search(r"\b(start|launch|turn on|run)\b", lowered):
+        return "/openclaw start"
     if re.search(r"\b(openclaw|open claw|claw)\b", lowered) and re.search(r"\b(install|setup|set up|reinstall|recover|repair|fix|download)\b", lowered):
         return "/openclaw recover"
     if re.search(r"\b(openclaw|open claw|claw)\b", lowered) and re.search(r"\b(prepare|clone)\b", lowered):
         url_match = re.search(r"https?://\S+", text)
         return f"/openclaw prepare {url_match.group(0).rstrip('.,)')}" if url_match else "/openclaw recover"
-    if re.search(r"\b(openclaw|open claw|claw)\b", lowered) and re.search(r"\b(status|where|find|check|doctor|installed|running|available|launch|turn on|start)\b", lowered):
+    if re.search(r"\b(openclaw|open claw|claw)\b", lowered) and re.search(r"\b(status|where|find|check|doctor|installed|running|available)\b", lowered):
         return "/openclaw details" if re.search(r"\b(where|find|installed|available)\b", lowered) else "/openclaw"
     if re.search(r"\b(skills?)\b", lowered) and re.search(r"\b(show|list|what|available|have)\b", lowered):
         return "/skills"
@@ -4717,7 +4808,7 @@ Allowed commands:
 /skills [query]
 /plugins
 /mcp [help|request|find|add]
-/openclaw [details|recover|prepare|doctor]
+/openclaw [details|recover|prepare|start|doctor]
 /env
 /system
 /clipboard [show|set|clear]
@@ -4766,7 +4857,8 @@ Rules:
 - If the user asks what tools, MCPs, skills, plugins, connectors, or integrations are available, map to /tools.
 - If the user asks to install, connect, add, set up, wire, research, or find an MCP, map to /mcp request <original request>.
 - If the user specifically asks for MCP status/list/help, map to /mcp.
-- If the user asks where OpenClaw is, whether OpenClaw is installed/running, or how to turn OpenClaw on, map to /openclaw details.
+- If the user asks where OpenClaw is or whether OpenClaw is installed/running, map to /openclaw details.
+- If the user asks to start, launch, run, or turn on OpenClaw, map to /openclaw start.
 - If the user asks to install, recover, repair, or set up OpenClaw, map to /openclaw recover unless they provide a GitHub URL and explicitly ask to prepare/clone it.
 - If the user specifically asks for skills, map to /skills.
 - If the user specifically asks for plugins, map to /plugins.
