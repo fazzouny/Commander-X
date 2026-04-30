@@ -3010,19 +3010,44 @@ def command_open(args: list[str]) -> str:
     return f"I could not tell whether that is a URL or app.\nUsage: /open url <url> or /open app <name>"
 
 
+def parse_volume_command(args: list[str]) -> tuple[str, int] | None:
+    text = " ".join(args).strip().lower()
+    if not text:
+        return None
+    if re.search(r"\b(mute|silent|silence|off|zero|0)\b", text):
+        return "mute", 1
+    if re.search(r"\b(max|maximize|maximum|full|100|hundred|crank)\b", text):
+        return "up", 25
+
+    action = args[0].lower() if args else ""
+    if action in {"lower", "decrease", "reduce", "quieter", "down"}:
+        normalized = "down"
+    elif action in {"raise", "increase", "louder", "up"}:
+        normalized = "up"
+    else:
+        return None
+
+    steps = 1
+    match = re.search(r"\b(\d{1,3})\s*x?\b|x\s*(\d{1,3})\b", text)
+    if match:
+        value = int(match.group(1) or match.group(2))
+        if re.search(r"\bto\s+\d{1,3}\b", text) and value > 25:
+            if normalized == "down":
+                steps = max(1, min(25, round((100 - min(value, 100)) / 2)))
+            else:
+                steps = max(1, min(25, round((min(value, 100)) / 4)))
+        else:
+            steps = value
+    return normalized, max(1, min(25, steps))
+
+
 def command_volume(args: list[str]) -> str:
     if not env_bool("COMMANDER_ALLOW_VOLUME_KEYS", True):
         return "Volume control is disabled by COMMANDER_ALLOW_VOLUME_KEYS."
-    if not args:
-        return "Usage: /volume up [steps], /volume down [steps], or /volume mute"
-    action = args[0].lower()
-    if action in {"lower", "decrease", "quieter"}:
-        action = "down"
-    if action in {"raise", "increase", "louder"}:
-        action = "up"
-    steps = 1
-    if len(args) > 1 and args[1].isdigit():
-        steps = int(args[1])
+    parsed = parse_volume_command(args)
+    if not parsed:
+        return "Usage: /volume up [steps], /volume down [steps], /volume max, or /volume mute"
+    action, steps = parsed
     ok, message = press_volume_key(action, steps)
     return message
 
@@ -3040,7 +3065,7 @@ def command_computer(args: list[str], user_id: str) -> str:
             "- /open url <url>",
             "- /open app <name>",
             "- /file <project> <relative_path> [lines]",
-            "- /volume up|down|mute [steps]",
+            "- /volume up|down|max|mute [steps]",
             "- /computer codex",
             "- /computer processes [name...]",
             "- /computer screenshot",
@@ -3690,7 +3715,7 @@ def command_help() -> str:
 /open url <url>
 /open app <name>
 /file <project> <relative_path> [lines]
-/volume up|down|mute [steps]
+/volume up|down|max|mute [steps]
 /focus <project>
 /context [project]
 /start <project> "<task>"
@@ -3742,6 +3767,9 @@ def normalize_voice_command(transcript: str) -> str:
     text = re.sub(r"^slash\s+", "/", text, flags=re.IGNORECASE)
     text = text.replace(" forward slash ", " /")
     text = replace_project_aliases(text)
+    volume_command = volume_command_from_natural_text(text)
+    if volume_command:
+        return volume_command
 
     replacements = [
         (r"^(show me the )?status$", "/status"),
@@ -3968,9 +3996,36 @@ def looks_like_brief_request(text: str) -> bool:
     )
 
 
+def volume_command_from_natural_text(text: str) -> str | None:
+    lowered = text.lower()
+    if not re.search(r"\b(volume|sound|audio)\b", lowered):
+        return None
+    if re.search(r"\b(mute|silence|silent|off)\b", lowered):
+        return "/volume mute"
+    if re.search(r"\b(max|maximize|maximum|full|100|hundred|crank)\b", lowered):
+        return "/volume max"
+    action = ""
+    if re.search(r"\b(lower|decrease|reduce|turn down|down|quieter)\b", lowered):
+        action = "down"
+    elif re.search(r"\b(raise|increase|turn up|up|louder)\b", lowered):
+        action = "up"
+    if not action:
+        return None
+    parsed = parse_volume_command([action, *parse_message(text)])
+    if not parsed:
+        return f"/volume {action} 5"
+    _parsed_action, steps = parsed
+    if not re.search(r"\d|max|maximum|full|100|hundred|crank", lowered):
+        steps = 5
+    return f"/volume {action} {steps}"
+
+
 def natural_computer_command(text: str) -> str | None:
     lowered = text.lower()
     url_match = re.search(r"\b((?:https?://)?(?:www\.)?[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(?:/[^\s\"']*)?)", text)
+    volume_command = volume_command_from_natural_text(text)
+    if volume_command:
+        return volume_command
     if re.search(r"\b(mcp|mcps)\b", lowered) and re.search(r"\b(connect|install|add|setup|set up|request|wire|enable|find|search|research)\b", lowered):
         return f"/mcp request {text}"
     if re.search(r"\b(mcp|mcps)\b", lowered) and re.search(r"\b(show|list|what|available|have|status|help|how)\b", lowered):
@@ -4018,12 +4073,6 @@ def natural_computer_command(text: str) -> str | None:
         return f"/clickup recent {query}".strip()
     if url_match and re.search(r"\b(open|visit|go to|browse|launch|pull up)\b", lowered):
         return f"/open url {url_match.group(1).rstrip('.,)')}"
-    if re.search(r"\b(mute|silence)\b.*\b(volume|sound|audio)\b|\b(volume|sound|audio)\b.*\b(mute|silence)\b", lowered):
-        return "/volume mute"
-    if re.search(r"\b(lower|decrease|reduce|turn down)\b.*\b(volume|sound|audio)\b", lowered):
-        return "/volume down 5"
-    if re.search(r"\b(raise|increase|turn up)\b.*\b(volume|sound|audio)\b", lowered):
-        return "/volume up 5"
     if re.search(r"\b(screenshot|screen shot|capture my screen|capture the screen)\b", lowered):
         return "/computer screenshot"
     if re.search(r"\b(check|inspect|what is|what's|status)\b.*\bcodex\b", lowered):
@@ -4119,7 +4168,7 @@ Allowed commands:
 /open url <url>
 /open app <allowlisted_app>
 /file <project> <relative_path> [lines]
-/volume up|down|mute [steps]
+/volume up|down|max|mute [steps]
 /focus <project>
 /context [project]
 /start <project> "<task>"
@@ -4176,7 +4225,7 @@ Rules:
 - If the user asks to inspect, check, or summarize a website, map to /browser inspect <url>.
 - If the user asks to check ClickUp, map to /clickup recent with query terms if present.
 - If the user asks to open an app, map to /open app <allowlisted_app>.
-- If the user asks to lower, raise, or mute system volume, map to /volume.
+- If the user asks to lower, raise, maximize, set to 100, or mute system volume, map to /volume with the requested direction/steps.
 - If the user asks for a screenshot or screen capture, map to /computer screenshot.
 - If the user asks what Codex is doing at computer/process level, map to /computer codex.
 - If the user asks to read a local file, map to /file only when a registered project and relative path are clear.

@@ -7,7 +7,7 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - `/open url <url>` opens a website in the default browser.
 - `/open app <name>` opens an allowlisted local app.
 - `/file <project> <relative_path> [lines]` reads a file inside a registered project.
-- `/volume up|down|mute [steps]` sends Windows media-key volume controls.
+- `/volume up|down|max|mute [steps]` sends Windows media-key volume controls.
 - `/computer codex` reports Codex Commander sessions, Codex CLI MCPs, and local Codex processes.
 - `/computer processes [name...]` checks local processes by allowlisted-style names.
 - `/computer screenshot` captures the current primary screen to `logs/screenshots`.

@@ -290,7 +290,7 @@ Commander X intentionally does not expose a raw `/run` shell over Telegram. Devi
 /open url <url>
 /open app <allowlisted_app>
 /file <project> <relative_path> [lines]
-/volume up|down|mute [steps]
+/volume up|down|max|mute [steps]
 /computer codex
 /computer processes [name...]
 /computer screenshot

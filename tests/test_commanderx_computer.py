@@ -46,6 +46,8 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("give me my morning brief"), "/morning")
         self.assertEqual(commander.natural_computer_command("what should I do next"), "/next")
         self.assertEqual(commander.natural_computer_command("lower the volume"), "/volume down 5")
+        self.assertEqual(commander.natural_computer_command("Volume up 20x"), "/volume up 20")
+        self.assertEqual(commander.natural_computer_command("Volume to the Max"), "/volume max")
         self.assertEqual(commander.natural_computer_command("take a screenshot"), "/computer screenshot")
         self.assertEqual(commander.natural_computer_command("check codex"), "/computer codex")
 
@@ -53,6 +55,14 @@ class ComputerToolTests(unittest.TestCase):
         self.assertTrue(commander.is_sensitive_relative_path(commander.Path(".env")))
         self.assertTrue(commander.is_sensitive_relative_path(commander.Path("config/private.key")))
         self.assertFalse(commander.is_sensitive_relative_path(commander.Path("README.md")))
+
+    def test_volume_parser_handles_voice_style_requests(self) -> None:
+        self.assertEqual(commander.parse_volume_command(["up", "20x"]), ("up", 20))
+        self.assertEqual(commander.parse_volume_command(["down", "to", "50"]), ("down", 25))
+        self.assertEqual(commander.parse_volume_command(["to", "the", "max"]), ("up", 25))
+        self.assertEqual(commander.parse_volume_command(["mute", "sound"]), ("mute", 1))
+        self.assertEqual(commander.normalize_voice_command("Volume up 20x."), "/volume up 20")
+        self.assertEqual(commander.normalize_voice_command("Volume to the Max."), "/volume max")
 
 
 class BrowserAndClickUpTests(unittest.TestCase):
