@@ -62,6 +62,7 @@ Commander X now follows that shape:
 - The computer broker is the first device-control layer.
 - The dashboard is the control UI and can approve/cancel prepared actions plus start/done/cancel queued tasks through token-gated buttons.
 - The dashboard includes a capabilities snapshot so an operator can see what Commander can do before digging into raw logs or file names.
+- The dashboard serves cached snapshots immediately and refreshes in the background, so slow Git/MCP/OpenClaw checks do not block the control room.
 - Session timelines show phases like task received, planned, launched, stopped, failed, or finished.
 - Work plans are deterministic and stored with new sessions, so the dashboard can show intent before raw logs.
 - Approval cards keep high-impact actions explicit: Commander prepares the action, then Telegram buttons or `/approve` execute it.

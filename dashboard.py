@@ -8,6 +8,7 @@ import os
 import platform
 import shutil
 import subprocess
+import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,6 +19,7 @@ import commander
 from commanderx.system_info import disk_summary
 
 
+commander.load_env_file()
 HOST = os.environ.get("COMMANDER_DASHBOARD_HOST", "127.0.0.1")
 PORT = int(os.environ.get("COMMANDER_DASHBOARD_PORT", "8787"))
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -25,7 +27,17 @@ MCP_CACHE_SECONDS = int(os.environ.get("COMMANDER_DASHBOARD_MCP_CACHE_SECONDS", 
 MCP_TIMEOUT_SECONDS = int(os.environ.get("COMMANDER_DASHBOARD_MCP_TIMEOUT_SECONDS", "8"))
 MCP_CACHE: dict[str, Any] = {"value": None, "at": 0.0}
 DASHBOARD_CACHE_SECONDS = int(os.environ.get("COMMANDER_DASHBOARD_CACHE_SECONDS", "8"))
-DASHBOARD_CACHE: dict[str, Any] = {"value": None, "at": 0.0}
+DASHBOARD_BACKGROUND_REFRESH_SECONDS = int(os.environ.get("COMMANDER_DASHBOARD_BACKGROUND_REFRESH_SECONDS", "45"))
+DASHBOARD_WARM_CACHE_ON_START = commander.env_bool("COMMANDER_DASHBOARD_WARM_CACHE_ON_START", True)
+DASHBOARD_CACHE: dict[str, Any] = {
+    "value": None,
+    "at": 0.0,
+    "generated_at": "",
+    "refreshing": False,
+    "last_error": "",
+    "last_error_at": "",
+}
+DASHBOARD_CACHE_LOCK = threading.Lock()
 
 
 def json_bytes(payload: Any) -> bytes:
@@ -50,8 +62,133 @@ def cached_mcp_summary() -> str:
 
 
 def invalidate_dashboard_cache() -> None:
-    DASHBOARD_CACHE["value"] = None
-    DASHBOARD_CACHE["at"] = 0.0
+    with DASHBOARD_CACHE_LOCK:
+        DASHBOARD_CACHE["at"] = 0.0
+    refresh_dashboard_cache_async(force=True)
+
+
+def dashboard_cache_metadata(now: float | None = None, stale: bool | None = None) -> dict[str, Any]:
+    current = now or time.monotonic()
+    with DASHBOARD_CACHE_LOCK:
+        generated_at = str(DASHBOARD_CACHE.get("generated_at") or "")
+        at = float(DASHBOARD_CACHE.get("at") or 0.0)
+        refreshing = bool(DASHBOARD_CACHE.get("refreshing"))
+        last_error = str(DASHBOARD_CACHE.get("last_error") or "")
+        last_error_at = str(DASHBOARD_CACHE.get("last_error_at") or "")
+    age = max(0.0, current - at) if at else 0.0
+    is_stale = bool(stale) if stale is not None else bool(at and age >= DASHBOARD_CACHE_SECONDS)
+    return {
+        "generated_at": generated_at,
+        "age_seconds": round(age, 1),
+        "stale": is_stale,
+        "refreshing": refreshing,
+        "ttl_seconds": DASHBOARD_CACHE_SECONDS,
+        "background_refresh_seconds": DASHBOARD_BACKGROUND_REFRESH_SECONDS,
+        "last_error": last_error,
+        "last_error_at": last_error_at,
+    }
+
+
+def attach_dashboard_cache_metadata(payload: dict[str, Any], now: float | None = None, stale: bool | None = None) -> dict[str, Any]:
+    enriched = dict(payload)
+    enriched["dashboard_cache"] = dashboard_cache_metadata(now=now, stale=stale)
+    return enriched
+
+
+def fallback_dashboard_payload(message: str) -> dict[str, Any]:
+    return {
+        "status": message,
+        "doctor": {"score": "warming", "checks": []},
+        "projects": {},
+        "sessions": {},
+        "tasks": [],
+        "memory_count": 0,
+        "approvals": [],
+        "inbox": [{"kind": "system", "priority": "low", "title": "Dashboard warming up", "detail": message}],
+        "changes": [],
+        "recommendations": [message],
+        "state": {"updated_at": "", "telegram_update_offset": None, "users": {}},
+        "heartbeat": {},
+        "tools": {
+            "apps": sorted(commander.app_catalog(commander.computer_tools_config())),
+            "mcp": "Dashboard snapshot is warming up.",
+            "skills": commander.skill_catalog(limit=12),
+            "plugins": commander.plugin_catalog(limit=12),
+            "clickup_configured": commander.clickup_settings_from_env().configured,
+        },
+        "capabilities": capabilities_payload("checking"),
+        "openclaw": {
+            "state": "checking",
+            "skills_count": 0,
+            "plugin_cache": False,
+            "legacy_checkout": False,
+            "configured_launcher": "",
+            "launcher_error": "",
+            "available_launchers": [],
+            "processes": [],
+            "repo_configured": bool(os.environ.get("COMMANDER_OPENCLAW_REPO_URL")),
+            "web_research": os.environ.get("COMMANDER_OPENCLAW_WEB_RESEARCH", "true"),
+        },
+        "env": commander.env_readiness(),
+        "system": fast_system_snapshot([commander.BASE_DIR]),
+        "logs": [],
+    }
+
+
+def store_dashboard_cache(payload: dict[str, Any]) -> None:
+    with DASHBOARD_CACHE_LOCK:
+        DASHBOARD_CACHE["value"] = payload
+        DASHBOARD_CACHE["at"] = time.monotonic()
+        DASHBOARD_CACHE["generated_at"] = commander.utc_now()
+        DASHBOARD_CACHE["refreshing"] = False
+        DASHBOARD_CACHE["last_error"] = ""
+        DASHBOARD_CACHE["last_error_at"] = ""
+
+
+def mark_dashboard_cache_error(error: Exception) -> None:
+    with DASHBOARD_CACHE_LOCK:
+        DASHBOARD_CACHE["refreshing"] = False
+        DASHBOARD_CACHE["last_error"] = f"{type(error).__name__}: {error}"
+        DASHBOARD_CACHE["last_error_at"] = commander.utc_now()
+
+
+def refresh_dashboard_cache_worker() -> None:
+    try:
+        store_dashboard_cache(build_dashboard_payload())
+    except Exception as exc:  # pragma: no cover - defensive background guard
+        mark_dashboard_cache_error(exc)
+        print(f"{commander.utc_now()} dashboard cache refresh failed: {type(exc).__name__}: {exc}", flush=True)
+
+
+def refresh_dashboard_cache_async(force: bool = False) -> bool:
+    now = time.monotonic()
+    with DASHBOARD_CACHE_LOCK:
+        at = float(DASHBOARD_CACHE.get("at") or 0.0)
+        value = DASHBOARD_CACHE.get("value")
+        if DASHBOARD_CACHE.get("refreshing"):
+            return False
+        if not force and value and at and now - at < DASHBOARD_CACHE_SECONDS:
+            return False
+        DASHBOARD_CACHE["refreshing"] = True
+    thread = threading.Thread(target=refresh_dashboard_cache_worker, name="commander-dashboard-cache", daemon=True)
+    thread.start()
+    return True
+
+
+def dashboard_cache_loop() -> None:
+    interval = max(5, DASHBOARD_BACKGROUND_REFRESH_SECONDS)
+    while True:
+        time.sleep(interval)
+        refresh_dashboard_cache_async(force=False)
+
+
+def start_dashboard_cache_workers() -> None:
+    if not DASHBOARD_WARM_CACHE_ON_START:
+        return
+    refresh_dashboard_cache_async(force=True)
+    if DASHBOARD_BACKGROUND_REFRESH_SECONDS > 0:
+        thread = threading.Thread(target=dashboard_cache_loop, name="commander-dashboard-cache-loop", daemon=True)
+        thread.start()
 
 
 def light_project_profile(project_id: str, project: dict[str, Any], path: Path) -> dict[str, Any]:
@@ -395,12 +532,20 @@ def build_dashboard_payload() -> dict[str, Any]:
 
 def dashboard_payload() -> dict[str, Any]:
     now = time.monotonic()
-    if DASHBOARD_CACHE["value"] and now - float(DASHBOARD_CACHE["at"]) < DASHBOARD_CACHE_SECONDS:
-        return DASHBOARD_CACHE["value"]
-    payload = build_dashboard_payload()
-    DASHBOARD_CACHE["value"] = payload
-    DASHBOARD_CACHE["at"] = now
-    return payload
+    with DASHBOARD_CACHE_LOCK:
+        payload = DASHBOARD_CACHE.get("value")
+        at = float(DASHBOARD_CACHE.get("at") or 0.0)
+    if isinstance(payload, dict) and at:
+        stale = now - at >= DASHBOARD_CACHE_SECONDS
+        if stale:
+            refresh_dashboard_cache_async(force=True)
+        return attach_dashboard_cache_metadata(payload, now=now, stale=stale)
+    refresh_dashboard_cache_async(force=True)
+    return attach_dashboard_cache_metadata(
+        fallback_dashboard_payload("Dashboard snapshot is warming up. Refresh again in a few seconds."),
+        now=now,
+        stale=True,
+    )
 
 
 def require_dashboard_token(headers: Any) -> tuple[bool, str]:
@@ -604,9 +749,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    commander.load_env_file()
     server = ThreadingHTTPServer((HOST, PORT), DashboardHandler)
     print(f"Commander X dashboard listening on http://{HOST}:{PORT}", flush=True)
+    start_dashboard_cache_workers()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

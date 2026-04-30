@@ -65,6 +65,8 @@ function renderMetrics(data) {
   const heartbeat = Object.values(data.heartbeat)[0] || {};
   const mode = heartbeat.assistant_mode || "free";
   const doctorScore = data.doctor ? data.doctor.score : "-";
+  const cache = data.dashboard_cache || {};
+  const cacheStatus = cache.refreshing ? "Refreshing" : cache.stale ? "Stale" : "Fresh";
   qs("#metrics").innerHTML = `
     <div class="metric"><strong>${projects.length}</strong><span>Registered projects</span></div>
     <div class="metric"><strong>${running}</strong><span>Running sessions</span></div>
@@ -74,6 +76,7 @@ function renderMetrics(data) {
     <div class="metric"><strong>${escapeHtml(doctorScore)}</strong><span>Doctor score</span></div>
     <div class="metric"><strong>${escapeHtml(mode)}</strong><span>Assistant mode</span></div>
     <div class="metric"><strong>${heartbeat.enabled ? "On" : "Off"}</strong><span>Heartbeat</span></div>
+    <div class="metric"><strong>${escapeHtml(cacheStatus)}</strong><span>Dashboard cache ${cache.age_seconds || 0}s old</span></div>
   `;
 }
 

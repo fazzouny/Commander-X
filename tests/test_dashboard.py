@@ -1,12 +1,74 @@
 from __future__ import annotations
 
 import subprocess
+import time
 import unittest
 
 import dashboard
 
 
 class DashboardCapabilityTests(unittest.TestCase):
+    def test_dashboard_payload_returns_stale_cache_and_schedules_refresh(self) -> None:
+        original_cache = dashboard.DASHBOARD_CACHE.copy()
+        original_refresh = dashboard.refresh_dashboard_cache_async
+        calls: list[bool] = []
+        try:
+            with dashboard.DASHBOARD_CACHE_LOCK:
+                dashboard.DASHBOARD_CACHE.clear()
+                dashboard.DASHBOARD_CACHE.update(
+                    {
+                        "value": {"status": "cached snapshot"},
+                        "at": time.monotonic() - dashboard.DASHBOARD_CACHE_SECONDS - 1,
+                        "generated_at": "2026-04-30T00:00:00+00:00",
+                        "refreshing": False,
+                        "last_error": "",
+                        "last_error_at": "",
+                    }
+                )
+            dashboard.refresh_dashboard_cache_async = lambda force=False: calls.append(force) or True  # type: ignore[assignment]
+
+            payload = dashboard.dashboard_payload()
+        finally:
+            dashboard.refresh_dashboard_cache_async = original_refresh  # type: ignore[assignment]
+            with dashboard.DASHBOARD_CACHE_LOCK:
+                dashboard.DASHBOARD_CACHE.clear()
+                dashboard.DASHBOARD_CACHE.update(original_cache)
+
+        self.assertEqual(payload["status"], "cached snapshot")
+        self.assertTrue(payload["dashboard_cache"]["stale"])
+        self.assertEqual(calls, [True])
+
+    def test_dashboard_payload_falls_back_while_first_snapshot_warms(self) -> None:
+        original_cache = dashboard.DASHBOARD_CACHE.copy()
+        original_refresh = dashboard.refresh_dashboard_cache_async
+        calls: list[bool] = []
+        try:
+            with dashboard.DASHBOARD_CACHE_LOCK:
+                dashboard.DASHBOARD_CACHE.clear()
+                dashboard.DASHBOARD_CACHE.update(
+                    {
+                        "value": None,
+                        "at": 0.0,
+                        "generated_at": "",
+                        "refreshing": False,
+                        "last_error": "",
+                        "last_error_at": "",
+                    }
+                )
+            dashboard.refresh_dashboard_cache_async = lambda force=False: calls.append(force) or True  # type: ignore[assignment]
+
+            payload = dashboard.dashboard_payload()
+        finally:
+            dashboard.refresh_dashboard_cache_async = original_refresh  # type: ignore[assignment]
+            with dashboard.DASHBOARD_CACHE_LOCK:
+                dashboard.DASHBOARD_CACHE.clear()
+                dashboard.DASHBOARD_CACHE.update(original_cache)
+
+        self.assertIn("warming up", payload["status"])
+        self.assertEqual(payload["doctor"]["score"], "warming")
+        self.assertTrue(payload["dashboard_cache"]["stale"])
+        self.assertEqual(calls, [True])
+
     def test_cached_mcp_summary_uses_dashboard_timeout_and_cache(self) -> None:
         original_run = dashboard.commander.run_command
         original_args = dashboard.commander.codex_command_args

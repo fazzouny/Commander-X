@@ -457,6 +457,15 @@ Task queue cards can start queued tasks, mark review/failed/stopped tasks done, 
 
 The Capabilities card gives a quick operator-readable snapshot of what Commander can currently do and exposes copyable command chips for common checks.
 
+The dashboard serves the latest cached snapshot immediately and refreshes stale snapshots in the background. The top metrics show whether the snapshot is fresh, stale, or refreshing. Tune it with:
+
+```text
+COMMANDER_DASHBOARD_CACHE_SECONDS=8
+COMMANDER_DASHBOARD_BACKGROUND_REFRESH_SECONDS=45
+COMMANDER_DASHBOARD_WARM_CACHE_ON_START=true
+COMMANDER_DASHBOARD_MCP_TIMEOUT_SECONDS=8
+```
+
 ## Project Registry
 
 Copy `projects.example.json` to `projects.json`, then add or disable projects. Commander will not operate outside enabled project IDs.
