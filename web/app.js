@@ -1,6 +1,7 @@
 const state = {
   dashboard: null,
 };
+const tokenStorageKey = "commanderDashboardToken";
 
 const qs = (selector) => document.querySelector(selector);
 
@@ -17,14 +18,42 @@ function escapeHtml(value) {
 }
 
 async function api(path, options = {}) {
+  const token = localStorage.getItem(tokenStorageKey) || "";
+  const headers = { "Content-Type": "application/json", ...(token ? { "X-Commander-Token": token } : {}) };
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
+    headers,
     ...options,
   });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
   return response.json();
+}
+
+function hydrateDashboardToken() {
+  const input = qs("#dashboard-token");
+  const params = new URLSearchParams(window.location.search);
+  const urlToken = params.get("token");
+  if (urlToken) {
+    localStorage.setItem(tokenStorageKey, urlToken);
+    window.history.replaceState({}, "", window.location.pathname);
+  }
+  input.value = localStorage.getItem(tokenStorageKey) || "";
+}
+
+function saveDashboardToken() {
+  const value = qs("#dashboard-token").value.trim();
+  if (value) {
+    localStorage.setItem(tokenStorageKey, value);
+  }
+  refresh().catch((error) => {
+    qs("#metrics").innerHTML = `<div class="metric"><strong>Error</strong><span>${escapeHtml(error.message)}</span></div>`;
+  });
+}
+
+function clearDashboardToken() {
+  localStorage.removeItem(tokenStorageKey);
+  qs("#dashboard-token").value = "";
 }
 
 function renderMetrics(data) {
@@ -496,7 +525,10 @@ qs("#start-task-button").addEventListener("click", startTask);
 qs("#save-memory").addEventListener("click", saveMemory);
 qs("#openclaw-recover").addEventListener("click", openClawRecover);
 qs("#openclaw-start").addEventListener("click", openClawStart);
+qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);
+qs("#clear-dashboard-token").addEventListener("click", clearDashboardToken);
 
+hydrateDashboardToken();
 refresh().catch((error) => {
   qs("#metrics").innerHTML = `<div class="metric"><strong>Error</strong><span>${escapeHtml(error.message)}</span></div>`;
 });

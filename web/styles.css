@@ -26,6 +26,7 @@ body {
 
 button,
 select,
+input,
 textarea {
   font: inherit;
 }
@@ -44,6 +45,7 @@ button:hover {
 }
 
 select,
+input,
 textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -72,6 +74,17 @@ label {
   align-items: center;
   gap: 18px;
   margin-bottom: 18px;
+}
+
+.top-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.top-actions input {
+  width: min(220px, 100%);
 }
 
 h1,
