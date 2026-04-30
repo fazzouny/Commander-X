@@ -91,6 +91,7 @@ Remove it later with:
 /help
 /projects
 /status
+/service
 /doctor
 /inbox
 /approvals

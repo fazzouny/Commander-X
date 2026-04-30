@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
 
 import commander
 from commanderx.browser import PageSummaryParser, format_inspection, BrowserInspection
@@ -206,6 +208,19 @@ class BrowserAndClickUpTests(unittest.TestCase):
     def test_polling_treats_connection_reset_as_transient(self) -> None:
         self.assertTrue(commander.is_transient_poll_exception(ConnectionResetError("reset")))
         self.assertFalse(commander.is_transient_poll_exception(ValueError("bug")))
+
+    def test_service_helpers_hide_paths_and_detect_processes(self) -> None:
+        self.assertEqual(
+            commander.service_process_state(["123 python.exe python commander.py --poll"], "commander.py --poll"),
+            "running, PID 123",
+        )
+        self.assertEqual(commander.service_process_state([], "dashboard.py"), "not found")
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "service.log"
+            log.write_text("ignored\nTraceback from C:\\Users\\someone\\secret\\file.py\n", encoding="utf-8")
+            line = commander.service_log_line(log, ["Traceback"])
+        self.assertIn("[local path]", line)
+        self.assertNotIn("someone", line)
 
     def test_inbox_items_include_pending_approvals(self) -> None:
         original_sessions = commander.sessions_data

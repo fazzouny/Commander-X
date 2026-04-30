@@ -100,6 +100,7 @@ NL_ALLOWED_COMMANDS = {
     "/help",
     "/projects",
     "/status",
+    "/service",
     "/doctor",
     "/inbox",
     "/approvals",
@@ -149,6 +150,7 @@ TELEGRAM_COMMANDS = [
     ("help", "Show Commander commands"),
     ("projects", "List registered projects"),
     ("status", "Show active Codex sessions"),
+    ("service", "Show Commander service health"),
     ("doctor", "Run Commander health check"),
     ("inbox", "Show decision inbox"),
     ("approvals", "List pending approvals"),
@@ -197,6 +199,7 @@ TELEGRAM_COMMANDS = [
 ]
 DEFAULT_BUTTON_ROWS = [
     [("Status", "cmd:/status"), ("Projects", "cmd:/projects")],
+    [("Service", "cmd:/service"), ("Doctor", "cmd:/doctor")],
     [("Mode", "cmd:/mode"), ("Free Mode", "cmd:/free")],
     [("Morning", "cmd:/morning"), ("Next", "cmd:/next")],
     [("Inbox", "cmd:/inbox"), ("Approvals", "cmd:/approvals")],
@@ -2408,6 +2411,61 @@ def command_doctor(user_id: str | None = None) -> str:
     return compact("\n".join(lines), limit=3600)
 
 
+def sanitize_service_line(line: str) -> str:
+    clean = redact((line or "").strip())
+    clean = re.sub(r"[A-Za-z]:\\[^\s\"']+", "[local path]", clean)
+    clean = re.sub(r"\s+", " ", clean)
+    return clean[:220]
+
+
+def service_process_state(process_lines: list[str], marker: str) -> str:
+    marker_lower = marker.lower()
+    for line in process_lines:
+        if marker_lower not in line.lower():
+            continue
+        pid = line.strip().split(maxsplit=1)[0] if line.strip() else "-"
+        return f"running, PID {pid}"
+    return "not found"
+
+
+def service_log_line(path: Path, patterns: list[str] | None = None) -> str:
+    if not path.exists():
+        return "missing"
+    try:
+        recent = path.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
+    except OSError as exc:
+        return f"unreadable: {sanitize_service_line(str(exc))}"
+    lines = [line for line in recent if line.strip()]
+    if not lines:
+        return "empty"
+    if patterns:
+        regex = re.compile("|".join(patterns), flags=re.IGNORECASE)
+        matches = [line for line in lines if regex.search(line)]
+        if matches:
+            return sanitize_service_line(matches[-1])
+    return sanitize_service_line(lines[-1])
+
+
+def command_service() -> str:
+    process_lines = computer_process_lines(["commander.py --poll", "dashboard.py"])
+    poller = service_process_state(process_lines, "commander.py --poll")
+    dashboard = service_process_state(process_lines, "dashboard.py")
+    lines = [
+        "Commander X service status",
+        f"Poller: {poller}",
+        f"Dashboard: {dashboard}",
+        "",
+        "Recent service signals:",
+        "- Poller: " + service_log_line(LOG_DIR / "commander-service.out.log", ["started", "configured", "Polling error", "Heartbeat error"]),
+        "- Poller errors: " + service_log_line(LOG_DIR / "commander-service.err.log", ["Traceback", "Error", "Exception", "failed", "ConnectionReset"]),
+        "- Dashboard: " + service_log_line(LOG_DIR / "dashboard.out.log", ["listening", "GET /api/dashboard", "error"]),
+        "- Dashboard errors: " + service_log_line(LOG_DIR / "dashboard.err.log", ["Traceback", "Error", "Exception", "failed"]),
+        "",
+        "No secrets or raw process command lines are shown here.",
+    ]
+    return compact("\n".join(lines), limit=2600)
+
+
 def active_user_id(default: str = "dashboard") -> str:
     allowed = sorted(allowed_user_ids())
     if allowed:
@@ -3604,6 +3662,7 @@ def command_help() -> str:
 /help
 /projects
 /status
+/service
 /doctor
 /inbox
 /approvals
@@ -3688,6 +3747,7 @@ def normalize_voice_command(transcript: str) -> str:
         (r"^(show me the )?status$", "/status"),
         (r"^(show me )?(the )?projects$", "/projects"),
         (r"^(list|show) projects$", "/projects"),
+        (r"^(show me )?(the )?(service|daemon|poller) status$", "/service"),
         (r"^(show me )?(the )?help$", "/help"),
         (r"^(run )?check$", "/check"),
         (r"^(show me the |show the |show )?log for ", "/log "),
@@ -3714,6 +3774,7 @@ def normalize_voice_command(transcript: str) -> str:
         "help",
         "projects",
         "status",
+        "service",
         "start",
         "log",
         "diff",
@@ -3920,6 +3981,8 @@ def natural_computer_command(text: str) -> str | None:
         return "/plugins"
     if re.search(r"\b(doctor|health check|diagnose|diagnostic|self[- ]?test)\b", lowered):
         return "/doctor"
+    if re.search(r"\b(service|daemon|poller|dashboard)\b", lowered) and re.search(r"\b(status|health|running|check|alive|up)\b", lowered):
+        return "/service"
     if re.search(r"\b(approvals?|approve list|pending approvals?|decisions? to approve|approve or cancel)\b", lowered):
         return "/approvals"
     if re.search(r"\b(inbox|what needs my attention|needs attention|pending items|what needs me|decision inbox)\b", lowered):
@@ -4030,6 +4093,7 @@ Allowed commands:
 /help
 /projects
 /status
+/service
 /doctor
 /inbox
 /approvals
@@ -4098,6 +4162,7 @@ Rules:
 - If the user specifically asks for MCP status/list/help, map to /mcp.
 - If the user specifically asks for skills, map to /skills.
 - If the user specifically asks for plugins, map to /plugins.
+- If the user asks whether Commander, the poller, service, daemon, or dashboard is running, map to /service.
 - If the user asks for a health check, doctor, diagnostic, or self-test, map to /doctor.
 - If the user asks what needs their attention, decisions, inbox, or pending items, map to /inbox.
 - If the user asks for approvals, pending approvals, approve list, or decisions to approve/cancel, map to /approvals.
@@ -4234,6 +4299,8 @@ def handle_text(
         return [command_projects(show_details=show_details)]
     if command == "/status":
         return [command_status()]
+    if command == "/service":
+        return [command_service()]
     if command == "/doctor":
         return [command_doctor(user_id=user_id)]
     if command == "/inbox":

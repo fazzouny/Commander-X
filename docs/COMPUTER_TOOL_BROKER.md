@@ -22,6 +22,7 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - `/clipboard show|set|clear` provides guarded clipboard utility actions.
 - `/cleanup` estimates safe disk-cleanup candidates without deleting files.
 - `/doctor` runs a full Commander health check and produces an open-source-friendly readiness score.
+- `/service` reports whether the Telegram poller and dashboard are running, plus sanitized recent service signals.
 - `/inbox` aggregates approvals, running/failed sessions, queued tasks, and recommendations.
 - `/approvals` lists every pending approval with exact approve/cancel commands.
 - `/changes` summarizes changed projects by human work area, hiding filenames unless `files/details` is requested.
