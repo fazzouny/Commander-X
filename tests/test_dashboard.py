@@ -1,11 +1,38 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 
 import dashboard
 
 
 class DashboardCapabilityTests(unittest.TestCase):
+    def test_cached_mcp_summary_uses_dashboard_timeout_and_cache(self) -> None:
+        original_run = dashboard.commander.run_command
+        original_args = dashboard.commander.codex_command_args
+        original_cache = dashboard.MCP_CACHE.copy()
+        calls: list[int] = []
+        try:
+            dashboard.MCP_CACHE["value"] = None
+            dashboard.MCP_CACHE["at"] = 0.0
+            dashboard.commander.codex_command_args = lambda args: ["codex", *args]  # type: ignore[assignment]
+            dashboard.commander.run_command = (  # type: ignore[assignment]
+                lambda args, timeout=60: calls.append(timeout)
+                or subprocess.CompletedProcess(args, 0, "context7 ready\n", "")
+            )
+
+            first = dashboard.cached_mcp_summary()
+            second = dashboard.cached_mcp_summary()
+        finally:
+            dashboard.commander.run_command = original_run  # type: ignore[assignment]
+            dashboard.commander.codex_command_args = original_args  # type: ignore[assignment]
+            dashboard.MCP_CACHE.clear()
+            dashboard.MCP_CACHE.update(original_cache)
+
+        self.assertEqual(first, "context7 ready")
+        self.assertEqual(second, "context7 ready")
+        self.assertEqual(calls, [dashboard.MCP_TIMEOUT_SECONDS])
+
     def test_capabilities_payload_summarizes_tools_without_secret_values(self) -> None:
         original_computer_tools_config = dashboard.commander.computer_tools_config
         original_app_catalog = dashboard.commander.app_catalog

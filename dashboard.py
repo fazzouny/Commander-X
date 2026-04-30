@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import shutil
+import subprocess
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +22,7 @@ HOST = os.environ.get("COMMANDER_DASHBOARD_HOST", "127.0.0.1")
 PORT = int(os.environ.get("COMMANDER_DASHBOARD_PORT", "8787"))
 WEB_DIR = Path(__file__).resolve().parent / "web"
 MCP_CACHE_SECONDS = int(os.environ.get("COMMANDER_DASHBOARD_MCP_CACHE_SECONDS", "300"))
+MCP_TIMEOUT_SECONDS = int(os.environ.get("COMMANDER_DASHBOARD_MCP_TIMEOUT_SECONDS", "8"))
 MCP_CACHE: dict[str, Any] = {"value": None, "at": 0.0}
 DASHBOARD_CACHE_SECONDS = int(os.environ.get("COMMANDER_DASHBOARD_CACHE_SECONDS", "8"))
 DASHBOARD_CACHE: dict[str, Any] = {"value": None, "at": 0.0}
@@ -34,7 +36,14 @@ def cached_mcp_summary() -> str:
     now = time.monotonic()
     if MCP_CACHE["value"] and now - float(MCP_CACHE["at"]) < MCP_CACHE_SECONDS:
         return str(MCP_CACHE["value"])
-    value = commander.codex_mcp_summary()
+    try:
+        result = commander.run_command(commander.codex_command_args(["mcp", "list"]), timeout=MCP_TIMEOUT_SECONDS)
+        if result.returncode == 0 and result.stdout.strip():
+            value = result.stdout.strip()
+        else:
+            value = (result.stderr or result.stdout or "Could not read Codex MCP list.").strip()
+    except subprocess.TimeoutExpired:
+        value = f"Codex MCP list did not respond within {MCP_TIMEOUT_SECONDS}s. Use /mcp for a full live read."
     MCP_CACHE["value"] = value
     MCP_CACHE["at"] = now
     return value
@@ -125,12 +134,12 @@ def openclaw_dashboard_payload() -> dict[str, Any]:
     }
 
 
-def capabilities_payload() -> dict[str, Any]:
+def capabilities_payload(openclaw_status: str | None = None) -> dict[str, Any]:
     apps = sorted(commander.app_catalog(commander.computer_tools_config()))
     skills = commander.skill_catalog(limit=12)
     plugins = commander.plugin_catalog(limit=12)
     clickup_configured = commander.clickup_settings_from_env().configured
-    openclaw = commander.openclaw_brief_status()
+    openclaw = openclaw_status or commander.openclaw_brief_status()
     return {
         "highlights": [
             "Telegram text, buttons, and voice notes",
@@ -215,7 +224,13 @@ def dashboard_doctor_checks(changes: list[dict[str, Any]], snapshot: dict[str, A
     return checks
 
 
-def dashboard_recommendations(user_id: str, changes: list[dict[str, Any]], snapshot: dict[str, Any], sessions: dict[str, Any]) -> list[str]:
+def dashboard_recommendations(
+    user_id: str,
+    changes: list[dict[str, Any]],
+    snapshot: dict[str, Any],
+    sessions: dict[str, Any],
+    openclaw: dict[str, Any] | None = None,
+) -> list[str]:
     items: list[str] = []
     for disk in snapshot.get("disk", []):
         used = float(disk.get("used_percent") or 0)
@@ -242,7 +257,7 @@ def dashboard_recommendations(user_id: str, changes: list[dict[str, Any]], snaps
         items.append("Enable Commander heartbeat with /heartbeat on 30 for proactive updates.")
     if not commander.get_project(str(state.get("active_project") or "")) and commander.assistant_mode(user_id) == "focused":
         items.append("Set a focused project with /focus <project>, or switch to /free for general computer work.")
-    openclaw = openclaw_dashboard_payload()
+    openclaw = openclaw or openclaw_dashboard_payload()
     if openclaw["state"] == "traces":
         items.append("OpenClaw traces exist but no trusted launcher is configured. Use /openclaw recover or set COMMANDER_OPENCLAW_LAUNCHER.")
     elif openclaw["state"] in {"startable", "launchable"}:
@@ -323,7 +338,8 @@ def build_dashboard_payload() -> dict[str, Any]:
     user_id = commander.active_user_id()
     snapshot = fast_system_snapshot([commander.BASE_DIR])
     sessions = sessions_payload().get("sessions", {})
-    recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions)
+    openclaw = openclaw_dashboard_payload()
+    recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw)
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
     return {
         "status": commander.command_status(),
@@ -362,8 +378,8 @@ def build_dashboard_payload() -> dict[str, Any]:
             "plugins": commander.plugin_catalog(limit=24),
             "clickup_configured": commander.clickup_settings_from_env().configured,
         },
-        "capabilities": capabilities_payload(),
-        "openclaw": openclaw_dashboard_payload(),
+        "capabilities": capabilities_payload(str(openclaw.get("state") or "")),
+        "openclaw": openclaw,
         "env": commander.env_readiness(),
         "system": snapshot,
         "logs": [
