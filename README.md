@@ -124,6 +124,8 @@ Remove it later with:
 /mcp add example-server npx -y @vendor/mcp-server
 /openclaw
 /openclaw details
+/openclaw recover
+/openclaw prepare https://github.com/owner/repo
 /env
 /system
 /clipboard show
@@ -185,6 +187,8 @@ Show me a cleanup plan.
 Open Notepad.
 Lower the volume.
 Check Codex on this computer.
+Where is OpenClaw installed?
+Recover OpenClaw.
 ```
 
 ## Voice Commands
@@ -367,15 +371,28 @@ Running `codex mcp add` always requires an explicit `/approve commander <approva
 
 ## OpenClaw Detection
 
-Commander can report local OpenClaw traces without starting it:
+Commander can report local OpenClaw traces and prepare a guarded recovery path without starting it:
 
 ```text
 /openclaw
 /openclaw details
+/openclaw recover
+/openclaw prepare https://github.com/owner/repo
 /openclaw doctor
 ```
 
 It checks PATH, common npm shims, `.openclaw` skills, `.claw` plugin cache, and the legacy `claw-code` checkout shape. If OpenClaw is installed in a custom location, set `COMMANDER_OPENCLAW_LAUNCHER` in `.env`.
+
+`/openclaw recover` searches GitHub repository candidates and README install clues as review leads. It does not install anything. `/openclaw prepare <github-url>` creates a pending approval to clone the repository source only; it does not run installer scripts, launch OpenClaw, or modify credentials.
+
+Optional OpenClaw recovery settings:
+
+```text
+COMMANDER_OPENCLAW_REPO_URL=https://github.com/owner/repo
+COMMANDER_OPENCLAW_INSTALL_TARGET=~/claw-code
+COMMANDER_OPENCLAW_WEB_RESEARCH=true
+COMMANDER_OPENCLAW_RESEARCH_TIMEOUT_SECONDS=12
+```
 
 ## Memory, Profiles, and Queue
 

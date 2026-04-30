@@ -33,6 +33,11 @@ class ComputerToolTests(unittest.TestCase):
         )
         self.assertEqual(commander.natural_computer_command("show available skills"), "/skills")
         self.assertEqual(commander.natural_computer_command("run commander doctor"), "/doctor")
+        self.assertEqual(commander.natural_computer_command("recover OpenClaw"), "/openclaw recover")
+        self.assertEqual(
+            commander.natural_computer_command("prepare OpenClaw https://github.com/openclaw/openclaw"),
+            "/openclaw prepare https://github.com/openclaw/openclaw",
+        )
         self.assertEqual(commander.natural_computer_command("what needs my attention"), "/inbox")
         self.assertEqual(commander.natural_computer_command("show pending approvals"), "/approvals")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
@@ -92,6 +97,64 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.summarize_process_rows(snapshot["process_rows"]), ["123 openclaw.exe"])
         self.assertFalse(commander.is_openclaw_process_row("456 python.exe commander.py --local /openclaw"))
         self.assertFalse(commander.is_openclaw_process_row("789 powershell.exe C:\\Repos\\codex-commander /openclaw"))
+
+    def test_openclaw_recovery_report_is_research_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            (home / ".openclaw" / "skills" / "browser").mkdir(parents=True)
+            report = commander.openclaw_recovery_report(
+                home=home,
+                env={"APPDATA": str(home / "AppData" / "Roaming")},
+                candidates=[
+                    {
+                        "full_name": "openclaw/openclaw",
+                        "url": "https://github.com/openclaw/openclaw",
+                        "description": "Candidate repo",
+                        "stars": 10,
+                        "archived": False,
+                        "pushed_at": "2026-04-01T00:00:00Z",
+                    }
+                ],
+                readme_text="Install:\ngit clone https://github.com/openclaw/openclaw.git ~/.openclaw\npnpm install",
+            )
+        self.assertIn("OpenClaw recovery", report)
+        self.assertIn("GitHub candidates", report)
+        self.assertIn("/openclaw prepare https://github.com/openclaw/openclaw", report)
+        self.assertIn("git clone https://github.com/openclaw/openclaw.git ~/.openclaw", report)
+        self.assertIn("Nothing was installed or started", report)
+
+    def test_openclaw_prepare_clone_creates_commander_approval(self) -> None:
+        original_add = commander.add_pending_action
+        original_which = commander.shutil.which
+        actions = []
+        try:
+            commander.add_pending_action = lambda project_id, action: actions.append((project_id, action)) or "abc123"  # type: ignore[assignment]
+            commander.shutil.which = lambda name: "git.exe" if name == "git" else original_which(name)  # type: ignore[assignment]
+            with tempfile.TemporaryDirectory() as temp:
+                home = Path(temp)
+                text = commander.prepare_openclaw_clone_response(
+                    "https://github.com/openclaw/openclaw",
+                    home=home,
+                    env={"APPDATA": str(home / "AppData" / "Roaming")},
+                )
+        finally:
+            commander.add_pending_action = original_add  # type: ignore[assignment]
+            commander.shutil.which = original_which  # type: ignore[assignment]
+        self.assertIn("OpenClaw clone prepared", text)
+        self.assertIn("Pending approval ID: abc123", text)
+        self.assertEqual(actions[0][0], "commander")
+        self.assertEqual(actions[0][1]["type"], "openclaw_clone")
+        self.assertEqual(actions[0][1]["repo_url"], "https://github.com/openclaw/openclaw")
+
+    def test_openclaw_pending_response_gets_approval_buttons(self) -> None:
+        rows = commander.contextual_button_rows(
+            "OpenClaw clone prepared.\nPending approval ID: abc123\n\nApprove with /approve commander abc123"
+        )
+        labels = [button["text"] for row in rows for button in row]
+        callbacks = [button["callback_data"] for row in rows for button in row]
+        self.assertIn("Approve openclaw clone", labels)
+        self.assertIn("OpenClaw status", labels)
+        self.assertIn("cmd:/approve commander abc123", callbacks)
 
 
 class BrowserAndClickUpTests(unittest.TestCase):

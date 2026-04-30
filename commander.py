@@ -12,6 +12,7 @@ This service intentionally exposes a small command surface:
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import html
 import json
@@ -392,6 +393,13 @@ def response_pending_hint(text: str) -> tuple[str, str, str] | None:
     )
     if match:
         return "mcp add", "commander", match.group(2)
+    match = re.search(
+        r"^OpenClaw clone prepared\b.*?Pending approval ID:\s*([A-Za-z0-9]+)",
+        stripped,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        return "openclaw clone", "commander", match.group(1)
     return None
 
 
@@ -407,7 +415,10 @@ def contextual_button_rows(text: str, user_id: str | None = None) -> list[list[d
             ]
         )
         if project_id == "commander":
-            rows.append([telegram_button("MCP status", "/mcp"), telegram_button("MCP help", "/mcp help")])
+            if "openclaw" in action_type:
+                rows.append([telegram_button("OpenClaw status", "/openclaw"), telegram_button("Recovery", "/openclaw recover")])
+            else:
+                rows.append([telegram_button("MCP status", "/mcp"), telegram_button("MCP help", "/mcp help")])
         else:
             rows.append(
                 [
@@ -493,6 +504,7 @@ def env_readiness() -> dict[str, dict[str, str]]:
         "whatsapp": ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET"],
         "github": ["GITHUB_TOKEN", "GITHUB_OWNER", "GITHUB_DEFAULT_REPO"],
         "browser": ["COMMANDER_BROWSER_HEADLESS", "COMMANDER_BROWSER_TIMEOUT_SECONDS"],
+        "openclaw": ["COMMANDER_OPENCLAW_LAUNCHER", "COMMANDER_OPENCLAW_REPO_URL", "COMMANDER_OPENCLAW_INSTALL_TARGET"],
         "cloud": ["NETLIFY_AUTH_TOKEN", "NETLIFY_SITE_ID", "RENDER_API_KEY", "CLOUDINARY_URL"],
         "data": ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_ACCESS_TOKEN"],
         "business": ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_ACCOUNT_ID"],
@@ -1856,6 +1868,320 @@ def summarize_process_rows(rows: list[str], limit: int = 8) -> list[str]:
     return summary
 
 
+def openclaw_research_timeout(env: dict[str, str] | None = None) -> int:
+    env = os.environ if env is None else env
+    raw = env.get("COMMANDER_OPENCLAW_RESEARCH_TIMEOUT_SECONDS") or env.get("COMMANDER_MCP_RESEARCH_TIMEOUT_SECONDS", "12")
+    try:
+        return max(3, min(45, int(raw)))
+    except ValueError:
+        return 12
+
+
+def normalize_github_repo_url(url: str) -> tuple[bool, str, str]:
+    value = (url or "").strip().rstrip("/").removesuffix(".git")
+    if not value:
+        return False, "", ""
+    parsed = urllib.parse.urlparse(value)
+    if not parsed.scheme and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value):
+        owner, repo = value.split("/", 1)
+    elif parsed.scheme in {"http", "https"} and parsed.netloc.lower() in {"github.com", "www.github.com"}:
+        parts = [part for part in parsed.path.strip("/").split("/") if part]
+        if len(parts) < 2:
+            return False, "", ""
+        owner, repo = parts[0], parts[1].removesuffix(".git")
+    else:
+        return False, "", ""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", owner) or not re.fullmatch(r"[A-Za-z0-9_.-]+", repo):
+        return False, "", ""
+    full_name = f"{owner}/{repo}"
+    return True, f"https://github.com/{full_name}", full_name
+
+
+def github_api_json(url: str, env: dict[str, str] | None = None) -> tuple[dict[str, Any] | None, str]:
+    env = os.environ if env is None else env
+    headers = {
+        "User-Agent": "CommanderX/1.0 (+https://github.com/fazzouny/Commander-X)",
+        "Accept": "application/vnd.github+json",
+    }
+    token = env.get("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=openclaw_research_timeout(env)) as response:
+            data = json.loads(response.read(500_000).decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        return None, f"GitHub API returned HTTP {exc.code}."
+    except Exception as exc:
+        return None, f"GitHub API lookup failed: {redact(str(exc))}."
+    if isinstance(data, dict):
+        return data, "GitHub API lookup succeeded."
+    return None, "GitHub API returned an unexpected payload."
+
+
+def github_search_openclaw_repos(limit: int = 5, env: dict[str, str] | None = None) -> tuple[list[dict[str, Any]], str]:
+    env = os.environ if env is None else env
+    raw_enabled = env.get("COMMANDER_OPENCLAW_WEB_RESEARCH")
+    if raw_enabled is not None and raw_enabled.strip().lower() in {"0", "false", "no", "off"}:
+        return [], "OpenClaw web research is disabled by COMMANDER_OPENCLAW_WEB_RESEARCH."
+    query = urllib.parse.urlencode(
+        {
+            "q": "openclaw in:name,description",
+            "sort": "stars",
+            "order": "desc",
+            "per_page": str(max(1, min(10, limit))),
+        }
+    )
+    data, detail = github_api_json(f"https://api.github.com/search/repositories?{query}", env=env)
+    if not data:
+        return [], detail
+    candidates: list[dict[str, Any]] = []
+    for item in data.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        html_url = str(item.get("html_url") or "")
+        ok, normalized, full_name = normalize_github_repo_url(html_url)
+        if not ok:
+            continue
+        candidates.append(
+            {
+                "full_name": full_name,
+                "url": normalized,
+                "description": str(item.get("description") or "").strip(),
+                "stars": int(item.get("stargazers_count") or 0),
+                "archived": bool(item.get("archived")),
+                "pushed_at": str(item.get("pushed_at") or ""),
+                "source": "GitHub search",
+            }
+        )
+        if len(candidates) >= limit:
+            break
+    return candidates, f"Searched GitHub repositories for OpenClaw; found {len(candidates)} candidate(s)."
+
+
+def github_repo_readme_text(full_name: str, env: dict[str, str] | None = None) -> tuple[str, str]:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", full_name or ""):
+        return "", "Invalid GitHub repository name."
+    data, detail = github_api_json(f"https://api.github.com/repos/{full_name}/readme", env=env)
+    if not data:
+        return "", detail
+    content = str(data.get("content") or "")
+    encoding = str(data.get("encoding") or "").lower()
+    if encoding != "base64" or not content:
+        return "", "README was found but could not be decoded."
+    try:
+        decoded = base64.b64decode(content).decode("utf-8", errors="replace")
+    except Exception as exc:
+        return "", f"README decode failed: {redact(str(exc))}."
+    return decoded, f"Read README from {full_name}."
+
+
+def openclaw_install_command_hints(text: str, limit: int = 8) -> list[str]:
+    hints: list[str] = []
+    seen: set[str] = set()
+    lower_prefixes = (
+        "git clone",
+        "npm install",
+        "npm i ",
+        "pnpm install",
+        "pnpm i ",
+        "cargo install",
+        "run-claw",
+        "powershell ",
+        "pwsh ",
+        "irm ",
+        "iwr ",
+        "curl ",
+        "bash ",
+        "winget ",
+        "docker run",
+        "docker compose",
+    )
+    for raw in re.split(r"[\r\n]+", text or ""):
+        line = raw.strip().strip("`").strip()
+        line = re.sub(r"^\s*[$>]\s*", "", line)
+        if not line or len(line) > 220:
+            continue
+        lower_line = line.lower()
+        if lower_line in {"bash", "shell", "sh", "cmd", "powershell", "pwsh"}:
+            continue
+        is_openclaw_setup_command = False
+        if line.startswith("openclaw "):
+            parts = line.split()
+            is_openclaw_setup_command = len(parts) > 1 and parts[1] in {"onboard", "gateway", "doctor", "install", "setup", "init"}
+        if not (is_openclaw_setup_command or lower_line.startswith(lower_prefixes)):
+            continue
+        safe = redact(line)
+        key = safe.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        hints.append(safe)
+        if len(hints) >= limit:
+            break
+    return hints
+
+
+def openclaw_install_target(home: Path | None = None, env: dict[str, str] | None = None) -> Path:
+    home = home or Path.home()
+    env = os.environ if env is None else env
+    configured = env.get("COMMANDER_OPENCLAW_INSTALL_TARGET", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return home / "claw-code"
+
+
+def format_openclaw_repo_candidate(candidate: dict[str, Any], index: int) -> str:
+    archived = " archived" if candidate.get("archived") else ""
+    pushed = str(candidate.get("pushed_at") or "")[:10] or "unknown"
+    return "\n".join(
+        [
+            f"{index}. {candidate.get('full_name')} - {candidate.get('stars', 0)} stars{archived}, updated {pushed}",
+            f"   URL: {candidate.get('url')}",
+            f"   Prepare clone: /openclaw prepare {candidate.get('url')}",
+        ]
+    )
+
+
+def openclaw_recovery_report(
+    home: Path | None = None,
+    env: dict[str, str] | None = None,
+    candidates: list[dict[str, Any]] | None = None,
+    readme_text: str | None = None,
+) -> str:
+    env = os.environ if env is None else env
+    snapshot = openclaw_status_snapshot(home=home, env=env)
+    launchable = bool(snapshot["available_launchers"])
+    lines = [
+        "OpenClaw recovery",
+        "",
+        f"Current status: {'launchable' if launchable else 'not launchable'}",
+        f"Local traces: skills={snapshot['skills_count']}, plugin cache={'yes' if snapshot['claw_home_exists'] else 'no'}, legacy checkout={'yes' if snapshot['legacy_checkout_exists'] else 'no'}",
+        "",
+    ]
+    if launchable:
+        lines.extend(
+            [
+                "OpenClaw already has a launch candidate.",
+                "Use /openclaw details before changing anything.",
+                "Nothing was installed.",
+            ]
+        )
+        return "\n".join(lines)
+
+    repo_url = env.get("COMMANDER_OPENCLAW_REPO_URL", "").strip()
+    discovered: list[dict[str, Any]] = []
+    research_detail = ""
+    if repo_url:
+        ok, normalized, full_name = normalize_github_repo_url(repo_url)
+        if ok:
+            discovered = [{"full_name": full_name, "url": normalized, "description": "Configured in .env", "stars": 0, "archived": False, "pushed_at": "", "source": "COMMANDER_OPENCLAW_REPO_URL"}]
+            research_detail = "Using COMMANDER_OPENCLAW_REPO_URL from .env."
+        else:
+            research_detail = "COMMANDER_OPENCLAW_REPO_URL is set, but it is not a valid GitHub repository URL."
+    elif candidates is not None:
+        discovered = candidates
+        research_detail = "Using supplied OpenClaw repository candidates."
+    else:
+        discovered, research_detail = github_search_openclaw_repos(env=env)
+
+    lines.extend(["Candidate source research:", research_detail, ""])
+    if discovered:
+        lines.append("GitHub candidates. Treat these as leads, not proof of official ownership:")
+        lines.extend(format_openclaw_repo_candidate(item, index + 1) for index, item in enumerate(discovered[:5]))
+        top = discovered[0]
+        text = readme_text
+        readme_detail = ""
+        if text is None and top.get("full_name"):
+            text, readme_detail = github_repo_readme_text(str(top["full_name"]), env=env)
+        hints = openclaw_install_command_hints(text or "")
+        if hints:
+            lines.extend(["", f"Install clues from README: {readme_detail or 'provided README text'}"])
+            lines.extend(f"- {hint}" for hint in hints)
+        elif readme_detail:
+            lines.extend(["", f"{readme_detail} I did not find concise install command clues."])
+    else:
+        lines.extend(
+            [
+                "No GitHub candidate was found automatically.",
+                "If you know the repo, send:",
+                "/openclaw prepare https://github.com/owner/repo",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "Safety:",
+            "- Nothing was installed or started.",
+            "- /openclaw prepare only creates an approval to clone source code.",
+            "- Running installer scripts or launchers should remain a separate approval-gated step.",
+        ]
+    )
+    return compact("\n".join(lines), limit=3600)
+
+
+def prepare_openclaw_clone_response(repo_url: str, home: Path | None = None, env: dict[str, str] | None = None) -> str:
+    env = os.environ if env is None else env
+    ok, normalized, full_name = normalize_github_repo_url(repo_url or env.get("COMMANDER_OPENCLAW_REPO_URL", ""))
+    if not ok:
+        return "Usage: /openclaw prepare https://github.com/owner/repo"
+    if not shutil.which("git"):
+        return "OpenClaw clone cannot be prepared because git is missing from PATH."
+    target = openclaw_install_target(home=home, env=env).expanduser().resolve()
+    if target.exists():
+        return f"OpenClaw clone blocked because the target already exists: {friendly_local_path(target)}"
+    pending_id = add_pending_action(
+        "commander",
+        {
+            "type": "openclaw_clone",
+            "repo_url": normalized,
+            "full_name": full_name,
+            "target": str(target),
+            "message": f"Clone OpenClaw source from {full_name}",
+        },
+    )
+    return (
+        "OpenClaw clone prepared.\n"
+        f"Pending approval ID: {pending_id}\n\n"
+        f"Repository: {normalized}\n"
+        f"Target: {friendly_local_path(target)}\n"
+        f"Command: git clone --depth 1 {normalized} {friendly_local_path(target)}\n\n"
+        "This only clones source code. It does not run install scripts, start OpenClaw, or change credentials.\n\n"
+        f"Approve with /approve commander {pending_id}\n"
+        f"Cancel with /cancel commander {pending_id}"
+    )
+
+
+def execute_openclaw_clone(action: dict[str, Any]) -> tuple[bool, str]:
+    ok, normalized, _full_name = normalize_github_repo_url(str(action.get("repo_url") or ""))
+    if not ok:
+        return False, "OpenClaw clone blocked because the repository URL is invalid."
+    target = Path(str(action.get("target") or "")).expanduser().resolve()
+    if not str(target):
+        return False, "OpenClaw clone blocked because the target path is missing."
+    if target.exists():
+        return False, f"OpenClaw clone blocked because the target already exists: {friendly_local_path(target)}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    clone = run_command(["git", "clone", "--depth", "1", normalized, str(target)], timeout=600)
+    if clone.returncode != 0:
+        return False, "OpenClaw clone failed:\n" + compact(clone.stderr or clone.stdout)
+    launcher_hints = [
+        target / "rust" / "run-claw.cmd",
+        target / "run-claw.cmd",
+        target / "bin" / "openclaw.cmd",
+    ]
+    found_launchers = [friendly_local_path(path) for path in launcher_hints if path.exists()]
+    lines = [compact((clone.stdout + clone.stderr).strip() or f"Cloned {normalized}.")]
+    if found_launchers:
+        lines.extend(["", "Launcher candidates found:"])
+        lines.extend(f"- {item}" for item in found_launchers)
+        lines.append("Set COMMANDER_OPENCLAW_LAUNCHER to the launcher you trust before starting it.")
+    else:
+        lines.append("No known Windows launcher was detected yet. Review the repository README before running anything.")
+    return True, "\n".join(lines)
+
+
 def command_openclaw(args: list[str]) -> str:
     action = args[0].lower() if args else "status"
     snapshot = openclaw_status_snapshot()
@@ -1917,7 +2243,13 @@ def command_openclaw(args: list[str]) -> str:
             return compact((result.stdout + result.stderr).strip() or "openclaw doctor returned no output.", limit=3400)
         return "OpenClaw launcher exists, but there is no PATH CLI. Configure COMMANDER_OPENCLAW_LAUNCHER or reinstall OpenClaw before running doctor."
 
-    return "Usage: /openclaw, /openclaw details, or /openclaw doctor"
+    if action in {"recover", "recovery", "install", "setup", "reinstall", "repair"}:
+        return openclaw_recovery_report()
+
+    if action in {"prepare", "clone"}:
+        return prepare_openclaw_clone_response(args[1] if len(args) > 1 else "")
+
+    return "Usage: /openclaw, /openclaw details, /openclaw recover, /openclaw prepare <github-url>, or /openclaw doctor"
 
 
 def mcp_usage() -> str:
@@ -3834,6 +4166,10 @@ def execute_pending(project_id: str, pending_id: str | None) -> str:
         if add.returncode != 0:
             return "codex mcp add failed:\n" + compact(add.stderr or add.stdout)
         result = compact((add.stdout + add.stderr).strip() or f"Added MCP server {name}.")
+    elif action_type == "openclaw_clone":
+        ok_clone, result = execute_openclaw_clone(action)
+        if not ok_clone:
+            return result
     else:
         return f"Unsupported pending action type: {action_type}"
 
@@ -3919,7 +4255,7 @@ def command_help() -> str:
 /skills [query]
 /plugins
 /mcp [help|request|find|add]
-/openclaw [details|doctor]
+/openclaw [details|recover|prepare|doctor]
 /env
 /system
 /clipboard [show|set|clear]
@@ -4243,6 +4579,11 @@ def natural_computer_command(text: str) -> str | None:
         return f"/mcp request {text}"
     if re.search(r"\b(mcp|mcps)\b", lowered) and re.search(r"\b(show|list|what|available|have|status|help|how)\b", lowered):
         return "/mcp"
+    if re.search(r"\b(openclaw|open claw|claw)\b", lowered) and re.search(r"\b(install|setup|set up|reinstall|recover|repair|fix|download)\b", lowered):
+        return "/openclaw recover"
+    if re.search(r"\b(openclaw|open claw|claw)\b", lowered) and re.search(r"\b(prepare|clone)\b", lowered):
+        url_match = re.search(r"https?://\S+", text)
+        return f"/openclaw prepare {url_match.group(0).rstrip('.,)')}" if url_match else "/openclaw recover"
     if re.search(r"\b(openclaw|open claw|claw)\b", lowered) and re.search(r"\b(status|where|find|check|doctor|installed|running|available|launch|turn on|start)\b", lowered):
         return "/openclaw details" if re.search(r"\b(where|find|installed|available)\b", lowered) else "/openclaw"
     if re.search(r"\b(skills?)\b", lowered) and re.search(r"\b(show|list|what|available|have)\b", lowered):
@@ -4376,7 +4717,7 @@ Allowed commands:
 /skills [query]
 /plugins
 /mcp [help|request|find|add]
-/openclaw [details|doctor]
+/openclaw [details|recover|prepare|doctor]
 /env
 /system
 /clipboard [show|set|clear]
@@ -4426,6 +4767,7 @@ Rules:
 - If the user asks to install, connect, add, set up, wire, research, or find an MCP, map to /mcp request <original request>.
 - If the user specifically asks for MCP status/list/help, map to /mcp.
 - If the user asks where OpenClaw is, whether OpenClaw is installed/running, or how to turn OpenClaw on, map to /openclaw details.
+- If the user asks to install, recover, repair, or set up OpenClaw, map to /openclaw recover unless they provide a GitHub URL and explicitly ask to prepare/clone it.
 - If the user specifically asks for skills, map to /skills.
 - If the user specifically asks for plugins, map to /plugins.
 - If the user asks whether Commander, the poller, service, daemon, or dashboard is running, map to /service.
