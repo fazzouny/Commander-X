@@ -25,6 +25,10 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("inspect website example.com"), "/browser inspect example.com")
         self.assertEqual(commander.natural_computer_command("check clickup campaigns"), "/clickup recent campaigns")
         self.assertEqual(commander.natural_computer_command("what MCPs are available"), "/mcp")
+        self.assertEqual(
+            commander.natural_computer_command("Can you connect this mcp https://example.com/mcp"),
+            "/mcp request Can you connect this mcp https://example.com/mcp",
+        )
         self.assertEqual(commander.natural_computer_command("show available skills"), "/skills")
         self.assertEqual(commander.natural_computer_command("run commander doctor"), "/doctor")
         self.assertEqual(commander.natural_computer_command("what needs my attention"), "/inbox")
@@ -137,6 +141,20 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("Cancel", labels)
         self.assertIn("cmd:/approve taalam-campaigns abc123", callbacks)
         self.assertIn("cmd:/cancel taalam-campaigns abc123", callbacks)
+
+    def test_mcp_url_request_does_not_attempt_install(self) -> None:
+        text = commander.command_mcp(["request", "https://www.facebook.com/business/news/meta-ads-ai-connectors"])
+        self.assertIn("cannot safely install", text)
+        self.assertIn("actual server package", text)
+        self.assertIn("Meta Ads", text)
+
+    def test_mcp_add_requires_safe_runner(self) -> None:
+        ok, error = commander.validate_mcp_command(["bash", "-c", "echo hi"])
+        self.assertFalse(ok)
+        self.assertIn("Allowed MCP runners", error)
+        ok, error = commander.validate_mcp_command(["npx", "-y", "@vendor/mcp-server"])
+        self.assertTrue(ok)
+        self.assertEqual(error, "")
 
     def test_inbox_items_include_pending_approvals(self) -> None:
         original_sessions = commander.sessions_data

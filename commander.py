@@ -165,7 +165,7 @@ TELEGRAM_COMMANDS = [
     ("clickup", "Show ClickUp bridge status/tasks"),
     ("skills", "List local Commander-visible skills"),
     ("plugins", "List local plugin cache"),
-    ("mcp", "Show Codex CLI MCPs"),
+    ("mcp", "Show or prepare MCP setup"),
     ("system", "Show device/system status"),
     ("env", "Show setup readiness"),
     ("clipboard", "Use guarded clipboard tools"),
@@ -375,9 +375,16 @@ def response_pending_hint(text: str) -> tuple[str, str, str] | None:
         stripped,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    if not match:
-        return None
-    return match.group(1).lower(), match.group(2), match.group(3)
+    if match:
+        return match.group(1).lower(), match.group(2), match.group(3)
+    match = re.search(
+        r"^MCP install prepared for\s+([A-Za-z0-9_.-]+).*?Pending approval ID:\s*([A-Za-z0-9]+)",
+        stripped,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        return "mcp add", "commander", match.group(2)
+    return None
 
 
 def contextual_button_rows(text: str, user_id: str | None = None) -> list[list[dict[str, str]]]:
@@ -391,12 +398,15 @@ def contextual_button_rows(text: str, user_id: str | None = None) -> list[list[d
                 telegram_button("Cancel", f"/cancel {project_id} {pending_id}"),
             ]
         )
-        rows.append(
-            [
-                telegram_button("Show diff", f"/diff {project_id}"),
-                telegram_button("Watch", f"/watch {project_id}"),
-            ]
-        )
+        if project_id == "commander":
+            rows.append([telegram_button("MCP status", "/mcp"), telegram_button("MCP help", "/mcp help")])
+        else:
+            rows.append(
+                [
+                    telegram_button("Show diff", f"/diff {project_id}"),
+                    telegram_button("Watch", f"/watch {project_id}"),
+                ]
+            )
 
     project_id = response_project_hint(text)
     if project_id:
@@ -471,6 +481,7 @@ def env_readiness() -> dict[str, dict[str, str]]:
         "models": ["OPENAI_COMMAND_MODEL", "OPENAI_TRANSCRIBE_MODEL", "OPENAI_VOICE_MODEL", "OPENAI_VOICE"],
         "dashboard": ["COMMANDER_DASHBOARD_HOST", "COMMANDER_DASHBOARD_PORT", "COMMANDER_DASHBOARD_TOKEN"],
         "clickup": ["CLICKUP_API_TOKEN", "CLICKUP_WORKSPACE_ID"],
+        "meta_ads": ["META_APP_ID", "META_APP_SECRET", "META_ACCESS_TOKEN", "META_AD_ACCOUNT_ID", "META_BUSINESS_ID"],
         "whatsapp": ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET"],
         "github": ["GITHUB_TOKEN", "GITHUB_OWNER", "GITHUB_DEFAULT_REPO"],
         "browser": ["COMMANDER_BROWSER_HEADLESS", "COMMANDER_BROWSER_TIMEOUT_SECONDS"],
@@ -1692,6 +1703,153 @@ def codex_mcp_summary() -> str:
     return (result.stderr or result.stdout or "Could not read Codex MCP list.").strip()
 
 
+def mcp_usage() -> str:
+    return "\n".join(
+        [
+            "MCP setup",
+            "",
+            "Commands:",
+            "- /mcp",
+            "- /mcp help",
+            "- /mcp request <docs URL or install command>",
+            "- /mcp add <server-name> npx -y <package> [args...]",
+            "- /mcp add <server-name> uvx <package> [args...]",
+            "",
+            "Guardrails:",
+            "- Web pages are treated as research/setup requests, not install commands.",
+            "- Adding a server prepares an approval; it does not run from Telegram immediately.",
+            "- Raw shell, pipes, redirects, chained commands, and unknown runners are blocked.",
+        ]
+    )
+
+
+def normalize_mcp_server_name(value: str) -> str:
+    name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-").lower()
+    return name[:48]
+
+
+def mcp_package_hint(args: list[str]) -> str | None:
+    if not args:
+        return None
+    if args[0].lower() == "npx" and len(args) >= 3 and args[1] in {"-y", "--yes"}:
+        return args[2]
+    if args[0].lower() == "uvx" and len(args) >= 2:
+        return args[1]
+    return None
+
+
+def is_safe_mcp_package(value: str) -> bool:
+    return bool(re.fullmatch(r"(?:@[a-zA-Z0-9_.-]+/)?[a-zA-Z0-9_.-]+", value.strip()))
+
+
+def validate_mcp_command(command: list[str]) -> tuple[bool, str]:
+    if not command:
+        return False, "MCP command is required."
+    blocked = {";", "&&", "||", "|", ">", "<", "`", "$(", "${"}
+    for token in command:
+        if token in blocked or any(marker in token for marker in {"&&", "||", "|", ">", "<", "`", "$("}):
+            return False, "Blocked: MCP command contains shell control syntax."
+    runner = command[0].lower()
+    if runner == "npx":
+        if len(command) < 3 or command[1] not in {"-y", "--yes"}:
+            return False, "Use npx only as: npx -y <package> [args...]"
+    elif runner == "uvx":
+        if len(command) < 2:
+            return False, "Use uvx only as: uvx <package> [args...]"
+    else:
+        return False, "Allowed MCP runners are currently npx -y and uvx."
+    package = mcp_package_hint(command)
+    if not package or not is_safe_mcp_package(package):
+        return False, "MCP package name is missing or unsafe."
+    return True, ""
+
+
+def mcp_request_response(request: str) -> str:
+    request = request.strip()
+    if not request:
+        return mcp_usage()
+    url_match = re.search(r"https?://\S+", request)
+    if url_match:
+        url = url_match.group(0).rstrip(".,)")
+        lines = [
+            "MCP request received",
+            "",
+            f"URL: {url}",
+            "",
+            "I cannot safely install an MCP server from a web page alone.",
+            "Send the actual server package or command from the connector docs, then I can prepare an approval.",
+            "",
+            "Accepted examples:",
+            "- /mcp add meta-ads npx -y <official-package-name>",
+            "- /mcp add meta-ads uvx <official-package-name>",
+            "",
+            "I will not infer an install command from a marketing/news URL, and this path does not depend on OpenAI routing.",
+        ]
+        if "facebook.com" in url.lower() or "meta" in url.lower():
+            lines.extend(
+                [
+                    "",
+                    "For a Meta Ads connector, expect to add Meta app/ad-account credentials in .env after you confirm the official MCP server.",
+                ]
+            )
+        return "\n".join(lines)
+
+    tokens = parse_message(request)
+    package = mcp_package_hint(tokens)
+    if package:
+        suggested_name = normalize_mcp_server_name(package.split("/")[-1].replace("mcp", "mcp"))
+        return (
+            "MCP install command detected.\n\n"
+            f"Package: {package}\n"
+            "To prepare approval, send:\n"
+            f"/mcp add {suggested_name} {request}\n\n"
+            "Commander will show an approval card before running codex mcp add."
+        )
+    return (
+        "MCP request received, but I need an actual MCP server package/command.\n\n"
+        + mcp_usage()
+    )
+
+
+def command_mcp(args: list[str] | None = None) -> str:
+    args = args or []
+    action = args[0].lower() if args else "list"
+    if action in {"list", "status"}:
+        return "Codex CLI MCPs\n\n" + codex_mcp_summary() + "\n\n" + "Use /mcp help for setup commands."
+    if action in {"help", "usage"}:
+        return mcp_usage()
+    if action in {"request", "connect", "install", "setup"}:
+        return compact(mcp_request_response(" ".join(args[1:])), limit=3200)
+    if action == "add":
+        if len(args) < 3:
+            return "Usage: /mcp add <server-name> npx -y <package> [args...]\nUse /mcp help for details."
+        server_name = normalize_mcp_server_name(args[1])
+        if not server_name:
+            return "MCP server name is required."
+        command = args[2:]
+        ok, error = validate_mcp_command(command)
+        if not ok:
+            return error
+        pending_id = add_pending_action(
+            "commander",
+            {
+                "type": "mcp_add",
+                "name": server_name,
+                "command": command,
+                "message": f"Add MCP server {server_name}: {' '.join(command)}",
+            },
+        )
+        return (
+            f"MCP install prepared for {server_name}.\n"
+            f"Pending approval ID: {pending_id}\n\n"
+            f"Command: codex mcp add {server_name} -- {' '.join(command)}\n\n"
+            "This changes your local Codex MCP configuration.\n"
+            f"Approve with /approve commander {pending_id}\n"
+            f"Cancel with /cancel commander {pending_id}"
+        )
+    return mcp_request_response(" ".join(args))
+
+
 def skill_catalog(limit: int = 20) -> list[str]:
     names = [label for label, _path in skill_entries(limit=limit)]
     return sorted(names)
@@ -1730,10 +1888,6 @@ def plugin_catalog(limit: int = 20) -> list[str]:
         if len(names) >= limit:
             break
     return sorted(names)
-
-
-def command_mcp() -> str:
-    return "Codex CLI MCPs\n\n" + codex_mcp_summary()
 
 
 def command_plugins() -> str:
@@ -2992,9 +3146,9 @@ def execute_pending(project_id: str, pending_id: str | None) -> str:
     if not action:
         return f"No pending action {pending_id} for {project_id}."
 
-    path = Path(action["path"]).resolve()
     action_type = action.get("type")
     if action_type == "commit":
+        path = Path(action["path"]).resolve()
         sensitive = sensitive_changed_files(path)
         if sensitive:
             return "Approval blocked because sensitive-looking files changed:\n" + "\n".join(f"- {item}" for item in sensitive)
@@ -3006,6 +3160,7 @@ def execute_pending(project_id: str, pending_id: str | None) -> str:
             return "git commit failed:\n" + compact(commit.stderr or commit.stdout)
         result = compact(commit.stdout + commit.stderr)
     elif action_type == "push":
+        path = Path(action["path"]).resolve()
         if has_changes(path):
             return "Push approval blocked because the worktree now has uncommitted changes."
         branch = str(action["branch"])
@@ -3014,6 +3169,16 @@ def execute_pending(project_id: str, pending_id: str | None) -> str:
         if push.returncode != 0:
             return "git push failed:\n" + compact(push.stderr or push.stdout)
         result = compact(push.stdout + push.stderr)
+    elif action_type == "mcp_add":
+        name = normalize_mcp_server_name(str(action.get("name", "")))
+        command = [str(item) for item in action.get("command", [])]
+        ok, error = validate_mcp_command(command)
+        if not name or not ok:
+            return f"MCP approval blocked: {error or 'invalid server name'}"
+        add = run_command(codex_command_args(["mcp", "add", name, "--", *command]), timeout=120)
+        if add.returncode != 0:
+            return "codex mcp add failed:\n" + compact(add.stderr or add.stdout)
+        result = compact((add.stdout + add.stderr).strip() or f"Added MCP server {name}.")
     else:
         return f"Unsupported pending action type: {action_type}"
 
@@ -3097,7 +3262,7 @@ def command_help() -> str:
 /clickup [status|recent] [query]
 /skills [query]
 /plugins
-/mcp
+/mcp [help|request|add]
 /env
 /system
 /clipboard [show|set|clear]
@@ -3384,7 +3549,9 @@ def looks_like_brief_request(text: str) -> bool:
 def natural_computer_command(text: str) -> str | None:
     lowered = text.lower()
     url_match = re.search(r"\b((?:https?://)?(?:www\.)?[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(?:/[^\s\"']*)?)", text)
-    if re.search(r"\b(mcp|mcps)\b", lowered) and re.search(r"\b(show|list|what|available|have|status)\b", lowered):
+    if re.search(r"\b(mcp|mcps)\b", lowered) and re.search(r"\b(connect|install|add|setup|set up|request|wire|enable)\b", lowered):
+        return f"/mcp request {text}"
+    if re.search(r"\b(mcp|mcps)\b", lowered) and re.search(r"\b(show|list|what|available|have|status|help|how)\b", lowered):
         return "/mcp"
     if re.search(r"\b(skills?)\b", lowered) and re.search(r"\b(show|list|what|available|have)\b", lowered):
         return "/skills"
@@ -3519,7 +3686,7 @@ Allowed commands:
 /clickup [status|recent] [query]
 /skills [query]
 /plugins
-/mcp
+/mcp [help|request|add]
 /env
 /system
 /clipboard [show|set|clear]
@@ -3566,7 +3733,8 @@ Rules:
 - If the user asks to switch to free/general/computer mode, map to /mode free.
 - If the user asks to focus on a project or use focused mode, map to /mode focused <project> when a project is named.
 - If the user asks what tools, MCPs, skills, plugins, connectors, or integrations are available, map to /tools.
-- If the user specifically asks for MCPs, map to /mcp.
+- If the user asks to install, connect, add, set up, or wire an MCP, map to /mcp request <original request>.
+- If the user specifically asks for MCP status/list/help, map to /mcp.
 - If the user specifically asks for skills, map to /skills.
 - If the user specifically asks for plugins, map to /plugins.
 - If the user asks for a health check, doctor, diagnostic, or self-test, map to /doctor.
@@ -3623,7 +3791,10 @@ Active project context:
             temperature=0.0,
         )
     except Exception as exc:
-        return [f"I could not route that natural-language request: {redact(str(exc))}\nUse /help or a slash command for now."]
+        print(f"{utc_now()} natural router unavailable: {redact(str(exc))}", flush=True)
+        if re.search(r"\b(mcp|mcps)\b", lowered):
+            return handle_text(f"/mcp request {text}", user_id=user_id, user_name=user_name, channel=channel, chat_id=chat_id, allow_natural=False)
+        return ["Natural-language routing is temporarily unavailable. I did not run anything.\nUse /help or a slash command for now."]
 
     kind = str(routed.get("kind", "")).lower()
     if kind == "reply":
@@ -3743,7 +3914,7 @@ def handle_text(
     if command == "/plugins":
         return [command_plugins()]
     if command == "/mcp":
-        return [command_mcp()]
+        return [command_mcp(args)]
     if command == "/env":
         return [command_env()]
     if command == "/system":
@@ -3815,6 +3986,8 @@ def handle_text(
     if command == "/approve":
         if not args:
             return ["Usage: /approve <project> [approval_id]"]
+        if args[0].lower() in {"commander", "mcp", "global"}:
+            return [execute_pending("commander", args[1] if len(args) > 1 else None)]
         project_id, rest = project_and_rest(args, user_id=user_id)
         if not project_id:
             return ["Usage: /approve <project> [approval_id]"]
@@ -3822,6 +3995,8 @@ def handle_text(
     if command == "/cancel":
         if not args:
             return ["Usage: /cancel <project> [approval_id]"]
+        if args[0].lower() in {"commander", "mcp", "global"}:
+            return [command_cancel("commander", args[1] if len(args) > 1 else None)]
         project_id, rest = project_and_rest(args, user_id=user_id)
         if not project_id:
             return ["Usage: /cancel <project> [approval_id]"]

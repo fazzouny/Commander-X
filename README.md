@@ -117,6 +117,9 @@ Remove it later with:
 /skills playwright
 /plugins
 /mcp
+/mcp help
+/mcp request https://example.com/mcp-docs
+/mcp add example-server npx -y @vendor/mcp-server
 /env
 /system
 /clipboard show
@@ -341,6 +344,19 @@ CLICKUP_WORKSPACE_ID=...
 ```
 
 The ClickUp bridge uses ClickUp's filtered Workspace tasks endpoint and filters query terms locally for simple mobile briefs.
+
+## MCP Setup
+
+MCP setup is controlled and approval-gated:
+
+```text
+/mcp
+/mcp help
+/mcp request https://example.com/mcp-docs
+/mcp add example-server npx -y @vendor/mcp-server
+```
+
+Commander treats URLs as setup/research requests, not install commands. If you send a docs or marketing URL, it asks for the actual MCP server package or command instead of guessing. Running `codex mcp add` requires an explicit `/approve commander <approval_id>`.
 
 ## Memory, Profiles, and Queue
 

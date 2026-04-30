@@ -13,6 +13,9 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - `/computer screenshot` captures the current primary screen to `logs/screenshots`.
 - `/browser inspect <url>` fetches a web page and reports status, title, description, headings, and link count.
 - `/clickup recent [query]` reads recent ClickUp tasks when API credentials are configured.
+- `/mcp` lists Codex CLI MCP servers.
+- `/mcp request <docs URL or install command>` handles MCP install/connect requests without relying on the OpenAI router.
+- `/mcp add <server-name> npx -y <package> [args...]` or `/mcp add <server-name> uvx <package> [args...]` prepares an approval-gated `codex mcp add`.
 - `/system` reports OS, memory, battery, and disk health.
 - `/env` reports which integration keys are configured without printing secret values.
 - `/clipboard show|set|clear` provides guarded clipboard utility actions.
@@ -33,6 +36,7 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - Secret-like files are blocked by filename and suffix.
 - App launching is allowlist-based through `computer_tools.json`.
 - ClickUp uses direct API credentials for the background Telegram service; Desktop MCP connector access is not assumed.
+- MCP install requests are controlled commands. Commander does not install from web pages, marketing URLs, shell pipes, redirects, chained commands, or unknown runners.
 - Clipboard reads, screenshot capture, and volume keys can be disabled by `.env` safety flags.
 - Disk cleanup is intentionally advice-only from Telegram. Deletion should remain a reviewed local action or a future approval-gated workflow.
 - High-impact external actions still require explicit approval.
