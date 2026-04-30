@@ -64,6 +64,35 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.normalize_voice_command("Volume up 20x."), "/volume up 20")
         self.assertEqual(commander.normalize_voice_command("Volume to the Max."), "/volume max")
 
+    def test_openclaw_snapshot_detects_traces_and_launcher(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            launcher = home / "tools" / "run-claw.cmd"
+            launcher.parent.mkdir(parents=True)
+            launcher.write_text("@echo off\n", encoding="utf-8")
+            skills = home / ".openclaw" / "skills" / "frontend-design"
+            skills.mkdir(parents=True)
+            plugins = home / ".claw" / "plugins"
+            plugins.mkdir(parents=True)
+            (plugins / "installed.json").write_text(
+                '{"plugins":{"sample":{"name":"sample","source":{"path":"' + str(launcher).replace("\\", "\\\\") + '"}}}}',
+                encoding="utf-8",
+            )
+            snapshot = commander.openclaw_status_snapshot(
+                home=home,
+                env={"APPDATA": str(home / "AppData" / "Roaming"), "COMMANDER_OPENCLAW_LAUNCHER": str(launcher)},
+                process_rows=[
+                    "123 openclaw.exe openclaw gateway status",
+                    "456 python.exe commander.py --local /openclaw",
+                ],
+            )
+        self.assertEqual(snapshot["skills_count"], 1)
+        self.assertTrue(snapshot["available_launchers"])
+        self.assertEqual(snapshot["plugin_sources"][0]["source_exists"], "yes")
+        self.assertEqual(commander.summarize_process_rows(snapshot["process_rows"]), ["123 openclaw.exe"])
+        self.assertFalse(commander.is_openclaw_process_row("456 python.exe commander.py --local /openclaw"))
+        self.assertFalse(commander.is_openclaw_process_row("789 powershell.exe C:\\Repos\\codex-commander /openclaw"))
+
 
 class BrowserAndClickUpTests(unittest.TestCase):
     def test_page_summary_parser_extracts_basics(self) -> None:

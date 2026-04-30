@@ -121,6 +121,7 @@ NL_ALLOWED_COMMANDS = {
     "/skills",
     "/plugins",
     "/mcp",
+    "/openclaw",
     "/system",
     "/env",
     "/clipboard",
@@ -171,6 +172,7 @@ TELEGRAM_COMMANDS = [
     ("skills", "List local Commander-visible skills"),
     ("plugins", "List local plugin cache"),
     ("mcp", "Research or prepare MCP setup"),
+    ("openclaw", "Show OpenClaw install/status"),
     ("system", "Show device/system status"),
     ("env", "Show setup readiness"),
     ("clipboard", "Use guarded clipboard tools"),
@@ -1679,6 +1681,9 @@ def command_tools() -> str:
     lines.append("Codex CLI MCPs:")
     lines.append(codex_mcp_summary())
     lines.append("")
+    lines.append("OpenClaw:")
+    lines.append(openclaw_brief_status())
+    lines.append("")
     skills = skill_catalog(limit=12)
     lines.append(f"Local skills visible to Commander: {len(skills)}")
     if skills:
@@ -1707,6 +1712,212 @@ def codex_mcp_summary() -> str:
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
     return (result.stderr or result.stdout or "Could not read Codex MCP list.").strip()
+
+
+def friendly_local_path(path: str | Path) -> str:
+    try:
+        resolved = Path(path).expanduser().resolve()
+        home = Path.home().resolve()
+        try:
+            return "~/" + resolved.relative_to(home).as_posix()
+        except ValueError:
+            return str(resolved)
+    except OSError:
+        return str(path)
+
+
+def openclaw_locations(home: Path | None = None, env: dict[str, str] | None = None) -> dict[str, Path]:
+    home = home or Path.home()
+    env = env or os.environ
+    appdata = Path(env.get("APPDATA", home / "AppData" / "Roaming"))
+    configured_launcher = env.get("COMMANDER_OPENCLAW_LAUNCHER", "").strip()
+    return {
+        "home": home,
+        "skills": home / ".openclaw" / "skills",
+        "openclaw_home": home / ".openclaw",
+        "claw_home": home / ".claw",
+        "plugins_json": home / ".claw" / "plugins" / "installed.json",
+        "legacy_checkout": home / "claw-code",
+        "legacy_launcher": Path(configured_launcher) if configured_launcher else home / "claw-code" / "rust" / "run-claw.cmd",
+        "npm_openclaw": appdata / "npm" / "openclaw.cmd",
+    }
+
+
+def openclaw_plugin_sources(plugins_json: Path) -> list[dict[str, str]]:
+    try:
+        data = json.loads(plugins_json.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    rows: list[dict[str, str]] = []
+    plugins = data.get("plugins", {})
+    if not isinstance(plugins, dict):
+        return rows
+    for plugin_id, plugin in plugins.items():
+        if not isinstance(plugin, dict):
+            continue
+        source = plugin.get("source") or {}
+        source_path = source.get("path") if isinstance(source, dict) else ""
+        rows.append(
+            {
+                "id": str(plugin_id),
+                "name": str(plugin.get("name") or plugin_id),
+                "source": str(source_path or ""),
+                "source_exists": "yes" if source_path and Path(str(source_path)).exists() else "no",
+            }
+        )
+    return rows
+
+
+def is_openclaw_process_row(row: str) -> bool:
+    lowered = row.lower()
+    if "commander.py" in lowered or "codex-commander" in lowered:
+        return False
+    parts = row.strip().split(maxsplit=2)
+    name = parts[1].lower() if len(parts) >= 2 else ""
+    if name in {"powershell.exe", "pwsh.exe", "cmd.exe", "python.exe"}:
+        return bool(
+            "run-claw.cmd" in lowered
+            or "\\claw-code\\" in lowered
+            or "/claw-code/" in lowered
+            or "node_modules\\openclaw" in lowered
+            or "node_modules/openclaw" in lowered
+        )
+    return bool(
+        re.search(r"\bopenclaw(?:\.exe)?\b", lowered)
+        or "run-claw.cmd" in lowered
+        or "\\claw-code\\" in lowered
+        or "/claw-code/" in lowered
+    )
+
+
+def openclaw_status_snapshot(
+    home: Path | None = None,
+    env: dict[str, str] | None = None,
+    process_rows: list[str] | None = None,
+) -> dict[str, Any]:
+    locations = openclaw_locations(home=home, env=env)
+    cli = shutil.which("openclaw") or shutil.which("claw")
+    skills_path = locations["skills"]
+    skills_count = 0
+    if skills_path.exists():
+        try:
+            skills_count = sum(1 for child in skills_path.iterdir() if child.is_dir())
+        except OSError:
+            skills_count = 0
+    plugin_sources = openclaw_plugin_sources(locations["plugins_json"])
+    raw_process_rows = process_rows if process_rows is not None else computer_process_lines(["openclaw", "claw-code", "run-claw"])
+    process_rows = [row for row in raw_process_rows if is_openclaw_process_row(row)]
+    launchers = [
+        ("PATH command", Path(cli) if cli else None),
+        ("npm shim", locations["npm_openclaw"]),
+        ("legacy launcher", locations["legacy_launcher"]),
+    ]
+    available_launchers = [
+        {"label": label, "path": str(path)}
+        for label, path in launchers
+        if path and Path(path).exists()
+    ]
+    return {
+        "cli": cli or "",
+        "locations": locations,
+        "skills_count": skills_count,
+        "plugin_sources": plugin_sources,
+        "process_rows": process_rows,
+        "available_launchers": available_launchers,
+        "legacy_checkout_exists": locations["legacy_checkout"].exists(),
+        "openclaw_home_exists": locations["openclaw_home"].exists(),
+        "claw_home_exists": locations["claw_home"].exists(),
+    }
+
+
+def openclaw_brief_status() -> str:
+    snapshot = openclaw_status_snapshot()
+    if snapshot["available_launchers"]:
+        label = snapshot["available_launchers"][0]["label"]
+        return f"launchable via {label}; skills: {snapshot['skills_count']}"
+    traces = []
+    if snapshot["openclaw_home_exists"]:
+        traces.append(".openclaw")
+    if snapshot["claw_home_exists"]:
+        traces.append(".claw")
+    if traces:
+        return f"traces found ({', '.join(traces)}), but no launcher found"
+    return "not detected"
+
+
+def summarize_process_rows(rows: list[str], limit: int = 8) -> list[str]:
+    summary: list[str] = []
+    for row in rows[:limit]:
+        parts = row.strip().split(maxsplit=2)
+        if len(parts) >= 2 and parts[0].isdigit():
+            summary.append(f"{parts[0]} {parts[1]}")
+        elif row.strip():
+            summary.append(redact(row.strip())[:80])
+    return summary
+
+
+def command_openclaw(args: list[str]) -> str:
+    action = args[0].lower() if args else "status"
+    snapshot = openclaw_status_snapshot()
+    locations = snapshot["locations"]
+    if action in {"status", "check", "find", "where", "details"}:
+        launchable = bool(snapshot["available_launchers"])
+        lines = [
+            "OpenClaw status",
+            f"Runtime: {'launchable' if launchable else 'not launchable'}",
+            f"CLI on PATH: {'yes' if snapshot['cli'] else 'no'}",
+            f"Skills cache: {'found' if snapshot['openclaw_home_exists'] else 'missing'} ({snapshot['skills_count']} skill folder(s))",
+            f"Plugin cache: {'found' if snapshot['claw_home_exists'] else 'missing'}",
+            f"Legacy checkout: {'found' if snapshot['legacy_checkout_exists'] else 'missing'}",
+            "",
+        ]
+        if snapshot["available_launchers"]:
+            lines.append("Launch candidates:")
+            for item in snapshot["available_launchers"][:4]:
+                lines.append(f"- {item['label']}: {friendly_local_path(item['path'])}")
+        else:
+            lines.extend(
+                [
+                    "No OpenClaw launcher is currently available.",
+                    "Commander found traces, but cannot turn it on until OpenClaw is reinstalled or a launcher path is configured.",
+                    "",
+                    "Useful next steps:",
+                    "- Reinstall/clone OpenClaw cleanly.",
+                    "- Or set COMMANDER_OPENCLAW_LAUNCHER to the local launcher path.",
+                ]
+            )
+        if action == "details":
+            lines.extend(
+                [
+                    "",
+                    "Known locations:",
+                    f"- OpenClaw home: {friendly_local_path(locations['openclaw_home'])}",
+                    f"- Claw plugin cache: {friendly_local_path(locations['claw_home'])}",
+                    f"- Legacy launcher: {friendly_local_path(locations['legacy_launcher'])}",
+                    f"- NPM shim: {friendly_local_path(locations['npm_openclaw'])}",
+                ]
+            )
+            if snapshot["plugin_sources"]:
+                lines.extend(["", "Plugin source references:"])
+                for row in snapshot["plugin_sources"][:6]:
+                    source = row["source"]
+                    label = friendly_local_path(source) if source else "none"
+                    lines.append(f"- {row['name']}: {label} ({'exists' if row['source_exists'] == 'yes' else 'missing'})")
+        lines.extend(["", "Running processes:"])
+        lines.extend(summarize_process_rows(snapshot["process_rows"]) or ["none"])
+        lines.append("")
+        lines.append("No OpenClaw process was started by this command.")
+        return compact("\n".join(lines), limit=3400)
+
+    if action == "doctor":
+        if not snapshot["available_launchers"]:
+            return "OpenClaw doctor cannot run because no OpenClaw launcher was found.\nUse /openclaw details for traces and recovery paths."
+        if snapshot["cli"]:
+            result = run_command(["openclaw", "doctor"], timeout=120)
+            return compact((result.stdout + result.stderr).strip() or "openclaw doctor returned no output.", limit=3400)
+        return "OpenClaw launcher exists, but there is no PATH CLI. Configure COMMANDER_OPENCLAW_LAUNCHER or reinstall OpenClaw before running doctor."
+
+    return "Usage: /openclaw, /openclaw details, or /openclaw doctor"
 
 
 def mcp_usage() -> str:
@@ -3708,6 +3919,7 @@ def command_help() -> str:
 /skills [query]
 /plugins
 /mcp [help|request|find|add]
+/openclaw [details|doctor]
 /env
 /system
 /clipboard [show|set|clear]
@@ -3824,6 +4036,7 @@ def normalize_voice_command(transcript: str) -> str:
         "skills",
         "plugins",
         "mcp",
+        "openclaw",
         "env",
         "system",
         "clipboard",
@@ -4030,6 +4243,8 @@ def natural_computer_command(text: str) -> str | None:
         return f"/mcp request {text}"
     if re.search(r"\b(mcp|mcps)\b", lowered) and re.search(r"\b(show|list|what|available|have|status|help|how)\b", lowered):
         return "/mcp"
+    if re.search(r"\b(openclaw|open claw|claw)\b", lowered) and re.search(r"\b(status|where|find|check|doctor|installed|running|available|launch|turn on|start)\b", lowered):
+        return "/openclaw details" if re.search(r"\b(where|find|installed|available)\b", lowered) else "/openclaw"
     if re.search(r"\b(skills?)\b", lowered) and re.search(r"\b(show|list|what|available|have)\b", lowered):
         return "/skills"
     if re.search(r"\b(plugins?)\b", lowered) and re.search(r"\b(show|list|what|available|have)\b", lowered):
@@ -4161,6 +4376,7 @@ Allowed commands:
 /skills [query]
 /plugins
 /mcp [help|request|find|add]
+/openclaw [details|doctor]
 /env
 /system
 /clipboard [show|set|clear]
@@ -4209,6 +4425,7 @@ Rules:
 - If the user asks what tools, MCPs, skills, plugins, connectors, or integrations are available, map to /tools.
 - If the user asks to install, connect, add, set up, wire, research, or find an MCP, map to /mcp request <original request>.
 - If the user specifically asks for MCP status/list/help, map to /mcp.
+- If the user asks where OpenClaw is, whether OpenClaw is installed/running, or how to turn OpenClaw on, map to /openclaw details.
 - If the user specifically asks for skills, map to /skills.
 - If the user specifically asks for plugins, map to /plugins.
 - If the user asks whether Commander, the poller, service, daemon, or dashboard is running, map to /service.
@@ -4392,6 +4609,8 @@ def handle_text(
         return [command_plugins()]
     if command == "/mcp":
         return [command_mcp(args)]
+    if command == "/openclaw":
+        return [command_openclaw(args)]
     if command == "/env":
         return [command_env()]
     if command == "/system":

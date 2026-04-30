@@ -122,6 +122,8 @@ Remove it later with:
 /mcp request https://example.com/mcp-docs
 /mcp find meta ads
 /mcp add example-server npx -y @vendor/mcp-server
+/openclaw
+/openclaw details
 /env
 /system
 /clipboard show
@@ -362,6 +364,18 @@ MCP setup is controlled and approval-gated:
 Commander treats URLs as setup/research requests, not raw install commands. If you send a docs URL, it fetches the page, looks for explicit `codex mcp add`, `npx -y`, or `uvx` install commands, and prepares an approval only when it finds a single safe candidate. If the page does not contain an install command, Commander can search npm package metadata with `/mcp find <connector name>` and show candidate packages as review leads with a basic source-trust label.
 
 Running `codex mcp add` always requires an explicit `/approve commander <approval_id>`.
+
+## OpenClaw Detection
+
+Commander can report local OpenClaw traces without starting it:
+
+```text
+/openclaw
+/openclaw details
+/openclaw doctor
+```
+
+It checks PATH, common npm shims, `.openclaw` skills, `.claw` plugin cache, and the legacy `claw-code` checkout shape. If OpenClaw is installed in a custom location, set `COMMANDER_OPENCLAW_LAUNCHER` in `.env`.
 
 ## Memory, Profiles, and Queue
 

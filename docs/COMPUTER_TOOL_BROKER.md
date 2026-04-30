@@ -17,6 +17,7 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - `/mcp request <docs URL, package search, or install command>` handles MCP install/connect requests without relying on the OpenAI router.
 - `/mcp find <package or connector name>` searches npm package metadata for MCP candidates as review leads with a basic source-trust label.
 - `/mcp add <server-name> npx -y <package> [args...]` or `/mcp add <server-name> uvx <package> [args...]` prepares an approval-gated `codex mcp add`.
+- `/openclaw` reports OpenClaw CLI/config/cache traces and launcher availability without starting it.
 - `/system` reports OS, memory, battery, and disk health.
 - `/env` reports which integration keys are configured without printing secret values.
 - `/clipboard show|set|clear` provides guarded clipboard utility actions.
@@ -39,6 +40,7 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - App launching is allowlist-based through `computer_tools.json`.
 - ClickUp uses direct API credentials for the background Telegram service; Desktop MCP connector access is not assumed.
 - MCP install requests are controlled commands. Commander can research web pages and npm package metadata, but it does not execute from shell pipes, redirects, chained commands, unknown runners, or registry search results without an explicit `/mcp add` and approval. NPM trust labels are conservative hints only, not security guarantees.
+- OpenClaw detection is read-only. Launching or delegating to OpenClaw should become an explicit approval-gated workflow.
 - Clipboard reads, screenshot capture, and volume keys can be disabled by `.env` safety flags.
 - Disk cleanup is intentionally advice-only from Telegram. Deletion should remain a reviewed local action or a future approval-gated workflow.
 - High-impact external actions still require explicit approval.
