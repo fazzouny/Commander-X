@@ -5,6 +5,41 @@ import unittest
 import dashboard
 
 
+class DashboardCapabilityTests(unittest.TestCase):
+    def test_capabilities_payload_summarizes_tools_without_secret_values(self) -> None:
+        original_computer_tools_config = dashboard.commander.computer_tools_config
+        original_app_catalog = dashboard.commander.app_catalog
+        original_skill_catalog = dashboard.commander.skill_catalog
+        original_plugin_catalog = dashboard.commander.plugin_catalog
+        original_clickup_settings = dashboard.commander.clickup_settings_from_env
+        original_openclaw_status = dashboard.commander.openclaw_brief_status
+
+        class FakeClickUpSettings:
+            configured = True
+
+        try:
+            dashboard.commander.computer_tools_config = lambda: {}  # type: ignore[assignment]
+            dashboard.commander.app_catalog = lambda config: ["browser", "volume"]  # type: ignore[assignment]
+            dashboard.commander.skill_catalog = lambda limit=12: ["playwright", "github"]  # type: ignore[assignment]
+            dashboard.commander.plugin_catalog = lambda limit=12: ["GitHub"]  # type: ignore[assignment]
+            dashboard.commander.clickup_settings_from_env = lambda: FakeClickUpSettings()  # type: ignore[assignment]
+            dashboard.commander.openclaw_brief_status = lambda: "startable"  # type: ignore[assignment]
+
+            payload = dashboard.capabilities_payload()
+        finally:
+            dashboard.commander.computer_tools_config = original_computer_tools_config  # type: ignore[assignment]
+            dashboard.commander.app_catalog = original_app_catalog  # type: ignore[assignment]
+            dashboard.commander.skill_catalog = original_skill_catalog  # type: ignore[assignment]
+            dashboard.commander.plugin_catalog = original_plugin_catalog  # type: ignore[assignment]
+            dashboard.commander.clickup_settings_from_env = original_clickup_settings  # type: ignore[assignment]
+            dashboard.commander.openclaw_brief_status = original_openclaw_status  # type: ignore[assignment]
+
+        self.assertEqual(payload["counts"], {"apps": 2, "skills": 2, "plugins": 1})
+        self.assertIn("/tools", payload["commands"])
+        self.assertIn("OpenClaw status: startable", payload["highlights"])
+        self.assertTrue(payload["clickup_configured"])
+
+
 class DashboardApprovalTests(unittest.TestCase):
     def test_dashboard_approval_action_requires_identifiers(self) -> None:
         payload, status = dashboard.dashboard_approval_action({"project": "example"}, "approve")

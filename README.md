@@ -14,7 +14,7 @@ It is intentionally narrow:
 - Commander memory stores durable preferences and project facts
 - project profiles detect stack, useful scripts, verification commands, and risk notes
 - a task queue tracks queued/running/review/done work
-- a local dashboard exposes sessions, Git state, queue, memory, and evidence
+- a local dashboard exposes sessions, Git state, queue, memory, evidence, capabilities, and approval/task controls
 - a safe computer tool broker can open URLs, open allowlisted apps, read registered-project files, adjust volume, capture screenshots, and inspect Codex processes
 - a browser broker can inspect websites without opening an unsafe raw shell
 - a ClickUp API bridge can read recent tasks when `CLICKUP_API_TOKEN` and `CLICKUP_WORKSPACE_ID` are configured
@@ -447,13 +447,15 @@ Open:
 http://127.0.0.1:8787
 ```
 
-The dashboard shows registered projects, sessions, approvals, task queue, memory count, Git evidence, logs, OpenClaw status, and profiles. It binds to localhost by default. If you expose it through Tailscale, Cloudflare Tunnel, or another remote path, set `COMMANDER_DASHBOARD_TOKEN` in `.env`.
+The dashboard shows registered projects, sessions, approvals, task queue, memory count, Git evidence, logs, capabilities, OpenClaw status, and profiles. It binds to localhost by default. If you expose it through Tailscale, Cloudflare Tunnel, or another remote path, set `COMMANDER_DASHBOARD_TOKEN` in `.env`.
 
 When a dashboard token is configured, paste it into the local dashboard token field once. The browser stores it locally and sends it as `X-Commander-Token` for dashboard actions.
 
 Approval cards in the dashboard can approve or cancel pending Commander actions. These buttons call the same approval executor as `/approve` and remain protected by `COMMANDER_DASHBOARD_TOKEN`.
 
 Task queue cards can start queued tasks, mark review/failed/stopped tasks done, or cancel queued/review/failed tasks. These buttons call the same `/queue` commands as Telegram and remain protected by the dashboard token.
+
+The Capabilities card gives a quick operator-readable snapshot of what Commander can currently do and exposes copyable command chips for common checks.
 
 ## Project Registry
 

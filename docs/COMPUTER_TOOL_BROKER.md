@@ -35,6 +35,7 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - `/timeline` is an alias for the same live run view and shows the managed session phases.
 - `/plan [project] [task]` shows the plain-English goal, approach, risk, expected checks, and approval boundaries before work starts.
 - Telegram replies now attach contextual buttons for approval/cancel, watch, plan, stop, diff, and the usual command shortcuts when the message is short enough.
+- The dashboard Capabilities card summarizes available brokers, integrations, OpenClaw status, and copyable command shortcuts without exposing local project paths or secrets.
 
 ## Guardrails
 
@@ -60,6 +61,7 @@ Commander X now follows that shape:
 - Codex CLI sessions are the coding runtime.
 - The computer broker is the first device-control layer.
 - The dashboard is the control UI and can approve/cancel prepared actions plus start/done/cancel queued tasks through token-gated buttons.
+- The dashboard includes a capabilities snapshot so an operator can see what Commander can do before digging into raw logs or file names.
 - Session timelines show phases like task received, planned, launched, stopped, failed, or finished.
 - Work plans are deterministic and stored with new sessions, so the dashboard can show intent before raw logs.
 - Approval cards keep high-impact actions explicit: Commander prepares the action, then Telegram buttons or `/approve` execute it.

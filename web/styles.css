@@ -170,10 +170,28 @@ span {
 .doctor-list,
 .inbox-list,
 .approval-list,
+.capability-list,
 .openclaw-list,
 .logs {
   display: grid;
   gap: 8px;
+}
+
+.capability-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.command-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.command-chips button {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
 }
 
 .tools {

@@ -322,6 +322,34 @@ function renderTools(data) {
   `;
 }
 
+function renderCapabilities(data) {
+  const capabilities = data.capabilities || {};
+  const highlights = capabilities.highlights || [];
+  const commands = capabilities.commands || [];
+  const counts = capabilities.counts || {};
+  qs("#capability-count").textContent = `${counts.apps || 0} apps, ${counts.skills || 0} skills, ${counts.plugins || 0} plugins`;
+  qs("#capabilities").innerHTML = `
+    <div class="capability-summary">
+      ${
+        highlights
+          .map(
+            (item) => `
+              <div class="row">
+                <div class="row-main">
+                  <div class="row-title">${escapeHtml(item)}</div>
+                </div>
+              </div>
+            `,
+          )
+          .join("") || `<p>No capability snapshot yet.</p>`
+      }
+    </div>
+    <div class="command-chips">
+      ${commands.map((command) => `<button data-command="${escapeHtml(command)}">${escapeHtml(command)}</button>`).join("")}
+    </div>
+  `;
+}
+
 function renderOpenClaw(data) {
   const openclaw = data.openclaw || {};
   const stateText = openclaw.state || "unknown";
@@ -453,6 +481,7 @@ async function refresh() {
   renderDoctor(data);
   renderLogs(data);
   renderTools(data);
+  renderCapabilities(data);
   renderOpenClaw(data);
   renderEnv(data);
   renderSystem(data);
@@ -518,6 +547,19 @@ async function handleTaskClick(event) {
     button.disabled = false;
   }
   await refresh();
+}
+
+async function handleCapabilityClick(event) {
+  const button = event.target.closest("[data-command]");
+  if (!button) return;
+  const command = button.dataset.command;
+  if (!command) return;
+  try {
+    await navigator.clipboard.writeText(command);
+    qs("#action-output").textContent = `Copied ${command}`;
+  } catch {
+    qs("#action-output").textContent = command;
+  }
 }
 
 async function showDiff() {
@@ -588,6 +630,7 @@ qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);
 qs("#clear-dashboard-token").addEventListener("click", clearDashboardToken);
 qs("#approvals").addEventListener("click", handleApprovalClick);
 qs("#tasks").addEventListener("click", handleTaskClick);
+qs("#capabilities").addEventListener("click", handleCapabilityClick);
 
 hydrateDashboardToken();
 refresh().catch((error) => {

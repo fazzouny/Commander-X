@@ -125,6 +125,45 @@ def openclaw_dashboard_payload() -> dict[str, Any]:
     }
 
 
+def capabilities_payload() -> dict[str, Any]:
+    apps = sorted(commander.app_catalog(commander.computer_tools_config()))
+    skills = commander.skill_catalog(limit=12)
+    plugins = commander.plugin_catalog(limit=12)
+    clickup_configured = commander.clickup_settings_from_env().configured
+    openclaw = commander.openclaw_brief_status()
+    return {
+        "highlights": [
+            "Telegram text, buttons, and voice notes",
+            "Codex CLI sessions with logs, watch view, and task plans",
+            "Dashboard control room with approvals and task controls",
+            "Git diff, commit, and push approval gates",
+            "Safe computer broker for URLs, apps, files, volume, screenshots, and process checks",
+            "Browser inspection for websites",
+            "ClickUp campaign/task bridge" if clickup_configured else "ClickUp bridge ready after API keys are configured",
+            f"OpenClaw status: {openclaw}",
+        ],
+        "commands": [
+            "/tools",
+            "/status",
+            "/watch",
+            "/queue",
+            "/approvals",
+            "/changes",
+            "/openclaw",
+            "/clickup recent campaigns",
+            "/computer codex",
+            "/browser inspect https://example.com",
+        ],
+        "counts": {
+            "apps": len(apps),
+            "skills": len(skills),
+            "plugins": len(plugins),
+        },
+        "openclaw": openclaw,
+        "clickup_configured": clickup_configured,
+    }
+
+
 def sessions_payload() -> dict[str, Any]:
     commander.refresh_session_states()
     return commander.sessions_data()
@@ -323,6 +362,7 @@ def build_dashboard_payload() -> dict[str, Any]:
             "plugins": commander.plugin_catalog(limit=24),
             "clickup_configured": commander.clickup_settings_from_env().configured,
         },
+        "capabilities": capabilities_payload(),
         "openclaw": openclaw_dashboard_payload(),
         "env": commander.env_readiness(),
         "system": snapshot,
@@ -526,7 +566,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            return
 
     def send_json(self, payload: Any, status: int = 200) -> None:
         body = json_bytes(payload)
@@ -535,7 +578,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            return
 
     def log_message(self, format: str, *args: Any) -> None:
         print(f"{commander.utc_now()} dashboard {self.address_string()} {format % args}", flush=True)
