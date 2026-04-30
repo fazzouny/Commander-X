@@ -143,10 +143,51 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("cmd:/cancel taalam-campaigns abc123", callbacks)
 
     def test_mcp_url_request_does_not_attempt_install(self) -> None:
-        text = commander.command_mcp(["request", "https://www.facebook.com/business/news/meta-ads-ai-connectors"])
-        self.assertIn("cannot safely install", text)
-        self.assertIn("actual server package", text)
+        original_fetch = commander.fetch_mcp_url_text
+        original_search = commander.npm_search_mcp_packages
+        try:
+            commander.fetch_mcp_url_text = lambda url: (True, "Meta Ads AI connectors", "Read 23 bytes")  # type: ignore[assignment]
+            commander.npm_search_mcp_packages = lambda query, limit=5: ([], f"Searched npm for: {query} mcp")  # type: ignore[assignment]
+            text = commander.command_mcp(["request", "https://www.facebook.com/business/news/meta-ads-ai-connectors"])
+        finally:
+            commander.fetch_mcp_url_text = original_fetch  # type: ignore[assignment]
+            commander.npm_search_mcp_packages = original_search  # type: ignore[assignment]
+        self.assertIn("did not find an explicit", text)
+        self.assertIn("Nothing was installed", text)
         self.assertIn("Meta Ads", text)
+
+    def test_mcp_research_extracts_install_command(self) -> None:
+        candidates = commander.mcp_install_candidates_from_text(
+            "Install with: codex mcp add meta-ads -- npx -y @vendor/mcp-server",
+            source="docs",
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["name"], "meta-ads")
+        self.assertEqual(candidates[0]["command"], ["npx", "-y", "@vendor/mcp-server"])
+
+    def test_mcp_url_request_prepares_single_found_command(self) -> None:
+        original_fetch = commander.fetch_mcp_url_text
+        original_add = commander.add_pending_action
+        try:
+            commander.fetch_mcp_url_text = lambda url: (True, "codex mcp add vendor -- uvx vendor-mcp", "Read 40 bytes")  # type: ignore[assignment]
+            commander.add_pending_action = lambda project_id, action: "abc123"  # type: ignore[assignment]
+            text = commander.command_mcp(["request", "https://docs.example.test/mcp"])
+        finally:
+            commander.fetch_mcp_url_text = original_fetch  # type: ignore[assignment]
+            commander.add_pending_action = original_add  # type: ignore[assignment]
+        self.assertIn("MCP install prepared for vendor", text)
+        self.assertIn("Pending approval ID: abc123", text)
+        self.assertIn("codex mcp add vendor -- uvx vendor-mcp", text)
+
+    def test_mcp_request_extracts_inline_install_command(self) -> None:
+        original_add = commander.add_pending_action
+        try:
+            commander.add_pending_action = lambda project_id, action: "xyz789"  # type: ignore[assignment]
+            text = commander.command_mcp(["request", "the", "docs", "say", "npx", "-y", "@vendor/mcp-server"])
+        finally:
+            commander.add_pending_action = original_add  # type: ignore[assignment]
+        self.assertIn("MCP install prepared", text)
+        self.assertIn("Pending approval ID: xyz789", text)
 
     def test_mcp_add_requires_safe_runner(self) -> None:
         ok, error = commander.validate_mcp_command(["bash", "-c", "echo hi"])

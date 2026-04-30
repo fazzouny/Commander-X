@@ -119,6 +119,7 @@ Remove it later with:
 /mcp
 /mcp help
 /mcp request https://example.com/mcp-docs
+/mcp find meta ads
 /mcp add example-server npx -y @vendor/mcp-server
 /env
 /system
@@ -353,10 +354,13 @@ MCP setup is controlled and approval-gated:
 /mcp
 /mcp help
 /mcp request https://example.com/mcp-docs
+/mcp find meta ads
 /mcp add example-server npx -y @vendor/mcp-server
 ```
 
-Commander treats URLs as setup/research requests, not install commands. If you send a docs or marketing URL, it asks for the actual MCP server package or command instead of guessing. Running `codex mcp add` requires an explicit `/approve commander <approval_id>`.
+Commander treats URLs as setup/research requests, not raw install commands. If you send a docs URL, it fetches the page, looks for explicit `codex mcp add`, `npx -y`, or `uvx` install commands, and prepares an approval only when it finds a single safe candidate. If the page does not contain an install command, Commander can search npm package metadata with `/mcp find <connector name>` and show candidate packages as review leads.
+
+Running `codex mcp add` always requires an explicit `/approve commander <approval_id>`.
 
 ## Memory, Profiles, and Queue
 

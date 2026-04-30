@@ -24,7 +24,9 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -165,7 +167,7 @@ TELEGRAM_COMMANDS = [
     ("clickup", "Show ClickUp bridge status/tasks"),
     ("skills", "List local Commander-visible skills"),
     ("plugins", "List local plugin cache"),
-    ("mcp", "Show or prepare MCP setup"),
+    ("mcp", "Research or prepare MCP setup"),
     ("system", "Show device/system status"),
     ("env", "Show setup readiness"),
     ("clipboard", "Use guarded clipboard tools"),
@@ -1711,12 +1713,14 @@ def mcp_usage() -> str:
             "Commands:",
             "- /mcp",
             "- /mcp help",
-            "- /mcp request <docs URL or install command>",
+            "- /mcp request <docs URL, package search, or install command>",
+            "- /mcp find <package or connector name>",
             "- /mcp add <server-name> npx -y <package> [args...]",
             "- /mcp add <server-name> uvx <package> [args...]",
             "",
             "Guardrails:",
-            "- Web pages are treated as research/setup requests, not install commands.",
+            "- Web pages are researched for explicit MCP install commands before any approval is prepared.",
+            "- Package registry search is treated as a lead, not proof that a package is official.",
             "- Adding a server prepares an approval; it does not run from Telegram immediately.",
             "- Raw shell, pipes, redirects, chained commands, and unknown runners are blocked.",
         ]
@@ -1764,6 +1768,298 @@ def validate_mcp_command(command: list[str]) -> tuple[bool, str]:
     return True, ""
 
 
+class MCPTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+        self.skip_stack: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "noscript", "svg"}:
+            self.skip_stack.append(tag)
+        if tag in {"br", "p", "div", "li", "tr", "pre", "code", "h1", "h2", "h3"}:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.skip_stack and self.skip_stack[-1] == tag:
+            self.skip_stack.pop()
+        if tag in {"p", "div", "li", "tr", "pre", "code", "h1", "h2", "h3"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self.skip_stack:
+            return
+        cleaned = data.strip()
+        if cleaned:
+            self.parts.append(cleaned)
+
+    def text(self) -> str:
+        return html.unescape(" ".join(self.parts))
+
+
+def html_to_text(source: str) -> str:
+    parser = MCPTextExtractor()
+    try:
+        parser.feed(source)
+        return parser.text()
+    except Exception:
+        return re.sub(r"<[^>]+>", " ", html.unescape(source))
+
+
+def mcp_research_timeout() -> int:
+    raw = os.environ.get("COMMANDER_MCP_RESEARCH_TIMEOUT_SECONDS", "12")
+    try:
+        return max(3, min(45, int(raw)))
+    except ValueError:
+        return 12
+
+
+def fetch_mcp_url_text(url: str, max_bytes: int = 250_000) -> tuple[bool, str, str]:
+    if not env_bool("COMMANDER_MCP_WEB_RESEARCH", True):
+        return False, "", "MCP web research is disabled by COMMANDER_MCP_WEB_RESEARCH."
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False, "", "Unsupported URL."
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "CommanderX/1.0 (+https://github.com/fazzouny/Commander-X)",
+            "Accept": "text/html,text/plain,application/json;q=0.9,*/*;q=0.5",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=mcp_research_timeout()) as response:
+            content_type = response.headers.get("content-type", "")
+            charset = response.headers.get_content_charset() or "utf-8"
+            raw = response.read(max_bytes + 1)
+    except urllib.error.HTTPError as exc:
+        return False, "", f"HTTP {exc.code} while reading the page."
+    except urllib.error.URLError as exc:
+        return False, "", f"Could not reach the page: {redact(str(exc.reason))}."
+    except TimeoutError:
+        return False, "", "Timed out while reading the page."
+    except Exception as exc:
+        return False, "", f"Could not inspect the page: {redact(str(exc))}."
+    truncated = len(raw) > max_bytes
+    raw = raw[:max_bytes]
+    text = raw.decode(charset, errors="replace")
+    if "html" in content_type.lower() or "<html" in text[:500].lower():
+        text = html_to_text(text)
+    detail = f"Read {len(raw):,} bytes"
+    if truncated:
+        detail += " (truncated)"
+    return True, text, detail
+
+
+def mcp_command_from_codex_tokens(tokens: list[str]) -> tuple[str | None, list[str] | None]:
+    lowered = [item.lower() for item in tokens]
+    for index in range(0, max(0, len(tokens) - 3)):
+        if lowered[index : index + 3] != ["codex", "mcp", "add"]:
+            continue
+        name = tokens[index + 3] if len(tokens) > index + 3 else ""
+        try:
+            sep = tokens.index("--", index + 4)
+        except ValueError:
+            return normalize_mcp_server_name(name), None
+        return normalize_mcp_server_name(name), tokens[sep + 1 :]
+    return None, None
+
+
+def mcp_candidate_name(package: str) -> str:
+    base = package.split("/")[-1]
+    base = re.sub(r"^(mcp[-_.]?server[-_.]?|server[-_.]?mcp[-_.]?|mcp[-_.]?)", "", base, flags=re.IGNORECASE)
+    base = re.sub(r"[-_.]?(mcp[-_.]?server|server[-_.]?mcp)$", "", base, flags=re.IGNORECASE)
+    return normalize_mcp_server_name(base or package)
+
+
+def mcp_candidate_from_tokens(command: list[str], name_hint: str | None = None, source: str = "") -> dict[str, Any] | None:
+    ok, _error = validate_mcp_command(command)
+    if not ok:
+        return None
+    package = mcp_package_hint(command)
+    if not package:
+        return None
+    return {
+        "name": normalize_mcp_server_name(name_hint or mcp_candidate_name(package)),
+        "command": command,
+        "package": package,
+        "source": source,
+    }
+
+
+MCP_RUNNER_PATTERN = re.compile(
+    r"(?P<command>\b(?:npx\s+(?:-y|--yes)\s+(?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+|uvx\s+(?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+)(?:\s+(?![;&|<>`$])[A-Za-z0-9_@./:=,+-]+){0,16})",
+    flags=re.IGNORECASE,
+)
+
+
+def mcp_install_candidates_from_text(text: str, source: str = "") -> list[dict[str, Any]]:
+    cleaned = html.unescape(text or "")
+    cleaned = cleaned.replace("\u2013", "-").replace("\u2014", "-")
+    candidates: list[dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+
+    for line in re.split(r"[\r\n]+", cleaned):
+        line = line.strip().strip("$").strip()
+        if not line:
+            continue
+        tokens = parse_message(line)
+        name_hint, command = mcp_command_from_codex_tokens(tokens)
+        if command:
+            candidate = mcp_candidate_from_tokens(command, name_hint=name_hint, source=source or "explicit codex mcp command")
+            if candidate:
+                key = tuple(candidate["command"])
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append(candidate)
+        for match in MCP_RUNNER_PATTERN.finditer(line):
+            command_tokens = parse_message(match.group("command"))
+            candidate = mcp_candidate_from_tokens(command_tokens, source=source or "explicit runner command")
+            if candidate:
+                key = tuple(candidate["command"])
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append(candidate)
+        if len(candidates) >= 5:
+            break
+    return candidates[:5]
+
+
+def mcp_research_terms(request: str, fetched_text: str = "") -> str:
+    words: list[str] = []
+    for url in re.findall(r"https?://\S+", request):
+        parsed = urllib.parse.urlparse(url.rstrip(".,)"))
+        words.extend(re.split(r"[^A-Za-z0-9]+", parsed.netloc + " " + parsed.path))
+    without_urls = re.sub(r"https?://\S+", " ", request)
+    words.extend(re.split(r"[^A-Za-z0-9]+", without_urls))
+    title_match = re.search(r"\b([A-Z][A-Za-z0-9 ]{5,80})\b", fetched_text[:1000])
+    if title_match:
+        words.extend(title_match.group(1).split())
+    stop = {
+        "www",
+        "com",
+        "org",
+        "net",
+        "https",
+        "http",
+        "business",
+        "news",
+        "docs",
+        "documentation",
+        "install",
+        "connect",
+        "connector",
+        "connectors",
+        "setup",
+        "this",
+        "that",
+        "can",
+        "you",
+        "the",
+        "and",
+        "for",
+        "with",
+        "please",
+        "introducing",
+        "mcp",
+        "ai",
+    }
+    selected: list[str] = []
+    for word in words:
+        word = word.lower()
+        if len(word) < 3 or word in stop or word in selected:
+            continue
+        selected.append(word)
+        if len(selected) >= 8:
+            break
+    return " ".join(selected)
+
+
+def npm_search_mcp_packages(query: str, limit: int = 5) -> tuple[list[dict[str, Any]], str]:
+    query = " ".join((query or "").split())
+    if not query:
+        return [], "No package search terms were available."
+    encoded = urllib.parse.urlencode({"text": f"{query} mcp", "size": str(max(1, min(10, limit)))})
+    url = f"https://registry.npmjs.org/-/v1/search?{encoded}"
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "CommanderX/1.0 (+https://github.com/fazzouny/Commander-X)",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=mcp_research_timeout()) as response:
+            data = json.loads(response.read(250_000).decode("utf-8", errors="replace"))
+    except Exception as exc:
+        return [], f"NPM registry search failed: {redact(str(exc))}."
+
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in data.get("objects", []):
+        package = (item.get("package") or {}).get("name", "")
+        description = ((item.get("package") or {}).get("description") or "").strip()
+        haystack = f"{package} {description}".lower()
+        if not is_safe_mcp_package(package) or "mcp" not in haystack:
+            continue
+        if package in seen:
+            continue
+        seen.add(package)
+        candidate = mcp_candidate_from_tokens(["npx", "-y", package], source="npm registry search")
+        if candidate:
+            candidate["description"] = description[:160]
+            candidates.append(candidate)
+        if len(candidates) >= limit:
+            break
+    return candidates, f"Searched npm for: {query} mcp"
+
+
+def format_mcp_candidate(candidate: dict[str, Any], index: int) -> str:
+    name = str(candidate.get("name", "mcp-server"))
+    command = " ".join(str(item) for item in candidate.get("command", []))
+    package = str(candidate.get("package", "unknown"))
+    line = f"{index}. {package}\n   Prepare: /mcp add {name} {command}"
+    description = str(candidate.get("description") or "").strip()
+    if description:
+        line += f"\n   Note: {description}"
+    return line
+
+
+def prepare_mcp_add_response(server_name: str, command: list[str], source: str = "") -> str:
+    server_name = normalize_mcp_server_name(server_name)
+    ok, error = validate_mcp_command(command)
+    if not server_name:
+        return "MCP server name is required."
+    if not ok:
+        return error
+    pending_action: dict[str, Any] = {
+        "type": "mcp_add",
+        "name": server_name,
+        "command": command,
+        "message": f"Add MCP server {server_name}: {' '.join(command)}",
+    }
+    if source:
+        pending_action["source"] = source
+    pending_id = add_pending_action("commander", pending_action)
+    lines = [
+        f"MCP install prepared for {server_name}.",
+        f"Pending approval ID: {pending_id}",
+        "",
+        f"Command: codex mcp add {server_name} -- {' '.join(command)}",
+    ]
+    if source:
+        lines.extend(["", f"Source: {source}"])
+    lines.extend(
+        [
+            "",
+            "This changes your local Codex MCP configuration.",
+            f"Approve with /approve commander {pending_id}",
+            f"Cancel with /cancel commander {pending_id}",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def mcp_request_response(request: str) -> str:
     request = request.strip()
     if not request:
@@ -1771,42 +2067,100 @@ def mcp_request_response(request: str) -> str:
     url_match = re.search(r"https?://\S+", request)
     if url_match:
         url = url_match.group(0).rstrip(".,)")
-        lines = [
-            "MCP request received",
-            "",
-            f"URL: {url}",
-            "",
-            "I cannot safely install an MCP server from a web page alone.",
-            "Send the actual server package or command from the connector docs, then I can prepare an approval.",
-            "",
-            "Accepted examples:",
-            "- /mcp add meta-ads npx -y <official-package-name>",
-            "- /mcp add meta-ads uvx <official-package-name>",
-            "",
-            "I will not infer an install command from a marketing/news URL, and this path does not depend on OpenAI routing.",
-        ]
+        ok, text, detail = fetch_mcp_url_text(url)
+        lines = ["MCP research result", "", f"URL: {url}", ""]
+        if ok:
+            candidates = mcp_install_candidates_from_text(text, source=url)
+            if len(candidates) == 1:
+                candidate = candidates[0]
+                return prepare_mcp_add_response(
+                    str(candidate["name"]),
+                    [str(item) for item in candidate["command"]],
+                    source=url,
+                )
+            if len(candidates) > 1:
+                lines.extend(
+                    [
+                        f"{detail}. I found multiple possible install commands.",
+                        "Choose the one you trust and send its Prepare command:",
+                        "",
+                    ]
+                )
+                lines.extend(format_mcp_candidate(candidate, index + 1) for index, candidate in enumerate(candidates))
+                lines.extend(["", "Nothing was installed."])
+                return "\n".join(lines)
+            terms = mcp_research_terms(request, text)
+            registry_candidates, registry_detail = npm_search_mcp_packages(terms)
+            lines.append(f"{detail}. I did not find an explicit npx/uvx/codex MCP install command on the page.")
+            if registry_candidates:
+                lines.extend(
+                    [
+                        "",
+                        registry_detail,
+                        "These are registry leads, not proof of an official Meta/OpenAI/vendor connector. Review before preparing approval:",
+                        "",
+                    ]
+                )
+                lines.extend(format_mcp_candidate(candidate, index + 1) for index, candidate in enumerate(registry_candidates))
+            else:
+                lines.extend(["", registry_detail, "I did not find a safe package candidate automatically.", "Nothing was installed."])
+        else:
+            lines.extend(
+                [
+                    f"I tried to inspect the page but could not fetch it: {detail}",
+                    "Nothing was installed.",
+                    "",
+                    "You can also ask me to search a package name directly:",
+                    "/mcp find meta ads",
+                ]
+            )
         if "facebook.com" in url.lower() or "meta" in url.lower():
             lines.extend(
                 [
                     "",
-                    "For a Meta Ads connector, expect to add Meta app/ad-account credentials in .env after you confirm the official MCP server.",
+                    "For a Meta Ads connector, expect to add Meta app/ad-account credentials in .env after an official package is identified.",
                 ]
             )
+        return "\n".join(lines)
+
+    inline_candidates = mcp_install_candidates_from_text(request, source="operator message")
+    if len(inline_candidates) == 1:
+        candidate = inline_candidates[0]
+        return prepare_mcp_add_response(
+            str(candidate["name"]),
+            [str(item) for item in candidate["command"]],
+            source="operator-provided install command",
+        )
+    if len(inline_candidates) > 1:
+        lines = [
+            "MCP install commands detected",
+            "",
+            "I found multiple possible install commands. Choose the one you trust and send its Prepare command:",
+            "",
+        ]
+        lines.extend(format_mcp_candidate(candidate, index + 1) for index, candidate in enumerate(inline_candidates))
+        lines.extend(["", "Nothing was installed."])
         return "\n".join(lines)
 
     tokens = parse_message(request)
     package = mcp_package_hint(tokens)
     if package:
-        suggested_name = normalize_mcp_server_name(package.split("/")[-1].replace("mcp", "mcp"))
-        return (
-            "MCP install command detected.\n\n"
-            f"Package: {package}\n"
-            "To prepare approval, send:\n"
-            f"/mcp add {suggested_name} {request}\n\n"
-            "Commander will show an approval card before running codex mcp add."
-        )
+        suggested_name = mcp_candidate_name(package)
+        return prepare_mcp_add_response(suggested_name, tokens, source="operator-provided install command")
+
+    candidates, detail = npm_search_mcp_packages(request)
+    if candidates:
+        lines = [
+            "MCP package research",
+            "",
+            detail,
+            "These are registry leads, not proof that a package is official. Choose one only if you trust the publisher/source.",
+            "",
+        ]
+        lines.extend(format_mcp_candidate(candidate, index + 1) for index, candidate in enumerate(candidates))
+        return "\n".join(lines)
     return (
-        "MCP request received, but I need an actual MCP server package/command.\n\n"
+        "MCP request received, but I could not find a safe MCP package/command automatically.\n\n"
         + mcp_usage()
     )
 
@@ -1818,7 +2172,7 @@ def command_mcp(args: list[str] | None = None) -> str:
         return "Codex CLI MCPs\n\n" + codex_mcp_summary() + "\n\n" + "Use /mcp help for setup commands."
     if action in {"help", "usage"}:
         return mcp_usage()
-    if action in {"request", "connect", "install", "setup"}:
+    if action in {"request", "connect", "install", "setup", "find", "search"}:
         return compact(mcp_request_response(" ".join(args[1:])), limit=3200)
     if action == "add":
         if len(args) < 3:
@@ -1830,23 +2184,7 @@ def command_mcp(args: list[str] | None = None) -> str:
         ok, error = validate_mcp_command(command)
         if not ok:
             return error
-        pending_id = add_pending_action(
-            "commander",
-            {
-                "type": "mcp_add",
-                "name": server_name,
-                "command": command,
-                "message": f"Add MCP server {server_name}: {' '.join(command)}",
-            },
-        )
-        return (
-            f"MCP install prepared for {server_name}.\n"
-            f"Pending approval ID: {pending_id}\n\n"
-            f"Command: codex mcp add {server_name} -- {' '.join(command)}\n\n"
-            "This changes your local Codex MCP configuration.\n"
-            f"Approve with /approve commander {pending_id}\n"
-            f"Cancel with /cancel commander {pending_id}"
-        )
+        return prepare_mcp_add_response(server_name, command, source="operator /mcp add command")
     return mcp_request_response(" ".join(args))
 
 
@@ -3262,7 +3600,7 @@ def command_help() -> str:
 /clickup [status|recent] [query]
 /skills [query]
 /plugins
-/mcp [help|request|add]
+/mcp [help|request|find|add]
 /env
 /system
 /clipboard [show|set|clear]
@@ -3549,7 +3887,7 @@ def looks_like_brief_request(text: str) -> bool:
 def natural_computer_command(text: str) -> str | None:
     lowered = text.lower()
     url_match = re.search(r"\b((?:https?://)?(?:www\.)?[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(?:/[^\s\"']*)?)", text)
-    if re.search(r"\b(mcp|mcps)\b", lowered) and re.search(r"\b(connect|install|add|setup|set up|request|wire|enable)\b", lowered):
+    if re.search(r"\b(mcp|mcps)\b", lowered) and re.search(r"\b(connect|install|add|setup|set up|request|wire|enable|find|search|research)\b", lowered):
         return f"/mcp request {text}"
     if re.search(r"\b(mcp|mcps)\b", lowered) and re.search(r"\b(show|list|what|available|have|status|help|how)\b", lowered):
         return "/mcp"
@@ -3686,7 +4024,7 @@ Allowed commands:
 /clickup [status|recent] [query]
 /skills [query]
 /plugins
-/mcp [help|request|add]
+/mcp [help|request|find|add]
 /env
 /system
 /clipboard [show|set|clear]
@@ -3733,7 +4071,7 @@ Rules:
 - If the user asks to switch to free/general/computer mode, map to /mode free.
 - If the user asks to focus on a project or use focused mode, map to /mode focused <project> when a project is named.
 - If the user asks what tools, MCPs, skills, plugins, connectors, or integrations are available, map to /tools.
-- If the user asks to install, connect, add, set up, or wire an MCP, map to /mcp request <original request>.
+- If the user asks to install, connect, add, set up, wire, research, or find an MCP, map to /mcp request <original request>.
 - If the user specifically asks for MCP status/list/help, map to /mcp.
 - If the user specifically asks for skills, map to /skills.
 - If the user specifically asks for plugins, map to /plugins.
