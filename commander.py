@@ -4700,6 +4700,8 @@ def natural_computer_command(text: str) -> str | None:
         return "/doctor"
     if re.search(r"\b(service|daemon|poller|dashboard)\b", lowered) and re.search(r"\b(status|health|running|check|alive|up)\b", lowered):
         return "/service"
+    if re.search(r"\b(capabilities|new capabilities|what can you do|what are your tools|available tools|features|abilities)\b", lowered):
+        return "/tools"
     if re.search(r"\b(approvals?|approve list|pending approvals?|decisions? to approve|approve or cancel)\b", lowered):
         return "/approvals"
     if re.search(r"\b(inbox|what needs my attention|needs attention|pending items|what needs me|decision inbox)\b", lowered):

@@ -115,13 +115,26 @@ function renderTasks(data) {
       .slice(0, 12)
       .map((task) => {
         const cls = task.status === "running" ? "good" : task.status === "failed" ? "bad" : task.status === "done" ? "good" : "warn";
+        const status = task.status || "queued";
+        const canStart = status === "queued";
+        const canFinish = ["review", "failed", "stopped"].includes(status);
+        const canCancel = ["queued", "review", "failed"].includes(status);
         return `
           <div class="row">
             <div class="row-main">
               <div class="row-title">[${escapeHtml(task.id)}] ${escapeHtml(task.project)}</div>
               <div class="row-meta">${escapeHtml(task.title || "-")}</div>
+              ${
+                canStart || canFinish || canCancel
+                  ? `<div class="task-actions">
+                      ${canStart ? `<button data-task-action="start" data-id="${escapeHtml(task.id)}">Start</button>` : ""}
+                      ${canFinish ? `<button data-task-action="done" data-id="${escapeHtml(task.id)}">Done</button>` : ""}
+                      ${canCancel ? `<button class="danger" data-task-action="cancel" data-id="${escapeHtml(task.id)}">Cancel</button>` : ""}
+                    </div>`
+                  : ""
+              }
             </div>
-            <div>${pill(task.status || "queued", cls)}</div>
+            <div>${pill(status, cls)}</div>
           </div>
         `;
       })
@@ -487,6 +500,26 @@ async function handleApprovalClick(event) {
   await refresh();
 }
 
+async function handleTaskClick(event) {
+  const button = event.target.closest("[data-task-action]");
+  if (!button) return;
+  const action = button.dataset.taskAction;
+  const taskId = button.dataset.id;
+  if (!action || !taskId) return;
+  button.disabled = true;
+  qs("#action-output").textContent = `${action === "done" ? "Marking done" : action === "cancel" ? "Cancelling" : "Starting"} ${taskId}...`;
+  try {
+    const result = await api(`/api/task/${encodeURIComponent(action)}`, {
+      method: "POST",
+      body: JSON.stringify({ task_id: taskId }),
+    });
+    qs("#action-output").textContent = result.text || result.error || JSON.stringify(result, null, 2);
+  } finally {
+    button.disabled = false;
+  }
+  await refresh();
+}
+
 async function showDiff() {
   const project = qs("#evidence-project").value;
   const result = await api(`/api/diff/${encodeURIComponent(project)}`);
@@ -554,6 +587,7 @@ qs("#openclaw-start").addEventListener("click", openClawStart);
 qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);
 qs("#clear-dashboard-token").addEventListener("click", clearDashboardToken);
 qs("#approvals").addEventListener("click", handleApprovalClick);
+qs("#tasks").addEventListener("click", handleTaskClick);
 
 hydrateDashboardToken();
 refresh().catch((error) => {

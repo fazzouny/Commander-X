@@ -283,7 +283,8 @@ span {
   margin: 12px 0;
 }
 
-.approval-actions {
+.approval-actions,
+.task-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;

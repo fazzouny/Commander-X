@@ -59,7 +59,7 @@ Commander X now follows that shape:
 - `commander.py` is the local gateway.
 - Codex CLI sessions are the coding runtime.
 - The computer broker is the first device-control layer.
-- The dashboard is the control UI and can approve or cancel prepared actions through token-gated buttons.
+- The dashboard is the control UI and can approve/cancel prepared actions plus start/done/cancel queued tasks through token-gated buttons.
 - Session timelines show phases like task received, planned, launched, stopped, failed, or finished.
 - Work plans are deterministic and stored with new sessions, so the dashboard can show intent before raw logs.
 - Approval cards keep high-impact actions explicit: Commander prepares the action, then Telegram buttons or `/approve` execute it.

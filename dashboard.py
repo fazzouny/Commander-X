@@ -371,6 +371,18 @@ def dashboard_approval_action(payload: dict[str, Any], action: str) -> tuple[dic
     return {"ok": True, "text": result}, 200
 
 
+def dashboard_task_action(payload: dict[str, Any], action: str) -> tuple[dict[str, Any], int]:
+    task_id = str(payload.get("task_id", "")).strip()
+    if not task_id:
+        return {"ok": False, "error": "task_id is required"}, 400
+    allowed = {"start": "start", "done": "done", "cancel": "cancel"}
+    command_action = allowed.get(action)
+    if not command_action:
+        return {"ok": False, "error": "Unknown task action"}, 400
+    result = commander.command_queue([command_action, task_id], user_id="dashboard")
+    return {"ok": True, "text": result}, 200
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "CommanderXDashboard/0.1"
 
@@ -485,6 +497,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/approval/cancel":
             result, status = dashboard_approval_action(payload, "cancel")
+            invalidate_dashboard_cache()
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/task/start":
+            result, status = dashboard_task_action(payload, "start")
+            invalidate_dashboard_cache()
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/task/done":
+            result, status = dashboard_task_action(payload, "done")
+            invalidate_dashboard_cache()
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/task/cancel":
+            result, status = dashboard_task_action(payload, "cancel")
             invalidate_dashboard_cache()
             self.send_json(result, status=status)
             return

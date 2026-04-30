@@ -453,6 +453,8 @@ When a dashboard token is configured, paste it into the local dashboard token fi
 
 Approval cards in the dashboard can approve or cancel pending Commander actions. These buttons call the same approval executor as `/approve` and remain protected by `COMMANDER_DASHBOARD_TOKEN`.
 
+Task queue cards can start queued tasks, mark review/failed/stopped tasks done, or cancel queued/review/failed tasks. These buttons call the same `/queue` commands as Telegram and remain protected by the dashboard token.
+
 ## Project Registry
 
 Copy `projects.example.json` to `projects.json`, then add or disable projects. Commander will not operate outside enabled project IDs.

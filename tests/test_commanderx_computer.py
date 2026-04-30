@@ -35,6 +35,7 @@ class ComputerToolTests(unittest.TestCase):
         )
         self.assertEqual(commander.natural_computer_command("show available skills"), "/skills")
         self.assertEqual(commander.natural_computer_command("run commander doctor"), "/doctor")
+        self.assertEqual(commander.natural_computer_command("What's your new capabilities?"), "/tools")
         self.assertEqual(commander.natural_computer_command("recover OpenClaw"), "/openclaw recover")
         self.assertEqual(
             commander.natural_computer_command("prepare OpenClaw https://github.com/openclaw/openclaw"),
