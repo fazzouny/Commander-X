@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Commander X</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Commander X</h1>
+          <p>Codex command center</p>
+        </div>
+        <div class="top-actions">
+          <button id="refresh">Refresh</button>
+        </div>
+      </header>
+
+      <section class="band metrics" id="metrics"></section>
+
+      <section class="grid">
+        <article class="panel projects-panel">
+          <div class="panel-head">
+            <h2>Projects</h2>
+            <span id="project-count"></span>
+          </div>
+          <div id="projects" class="project-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Sessions</h2>
+            <span id="session-count"></span>
+          </div>
+          <div id="sessions" class="session-list"></div>
+        </article>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Inbox</h2>
+            <span id="inbox-count"></span>
+          </div>
+          <div id="inbox" class="inbox-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Approvals</h2>
+            <span id="approval-count"></span>
+          </div>
+          <div id="approvals" class="approval-list"></div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Changed Projects</h2>
+          <span id="changes-count"></span>
+        </div>
+        <div id="changes" class="changes-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Doctor</h2>
+          <span id="doctor-score"></span>
+        </div>
+        <div id="doctor" class="doctor-list"></div>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Task Queue</h2>
+            <span id="task-count"></span>
+          </div>
+          <div id="tasks" class="task-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Memory</h2>
+            <span id="memory-count"></span>
+          </div>
+          <label>
+            Note
+            <textarea id="memory-note" rows="4" placeholder="Commander should always verify PID and session state before saying a Codex task started."></textarea>
+          </label>
+          <div class="evidence-actions">
+            <select id="memory-project"></select>
+            <button id="save-memory">Save Project Memory</button>
+          </div>
+          <pre id="memory-output"></pre>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Tool Broker</h2>
+          <span id="tool-count"></span>
+        </div>
+        <div id="tools" class="tools"></div>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Environment</h2>
+            <span id="env-count"></span>
+          </div>
+          <div id="env" class="env-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Device</h2>
+            <span id="system-status"></span>
+          </div>
+          <div id="system" class="system-list"></div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Recommended Next Actions</h2>
+          <span id="recommendation-count"></span>
+        </div>
+        <div id="recommendations" class="recommendation-list"></div>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Start Task</h2>
+          </div>
+          <label>
+            Project
+            <select id="start-project"></select>
+          </label>
+          <label>
+            Task
+            <textarea id="start-task" rows="5" placeholder="Audit the app and fix production blockers."></textarea>
+          </label>
+          <button id="start-task-button">Start Codex</button>
+          <pre id="action-output"></pre>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Evidence</h2>
+            <span>Logs and diffs</span>
+          </div>
+          <div class="evidence-actions">
+            <select id="evidence-project"></select>
+            <button id="show-diff">Diff</button>
+            <button id="show-log">Log</button>
+            <button id="show-profile">Profile</button>
+            <button id="show-evidence">Evidence</button>
+          </div>
+          <pre id="evidence"></pre>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Recent Logs</h2>
+        </div>
+        <div id="logs" class="logs"></div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

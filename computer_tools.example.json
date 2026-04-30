@@ -1,0 +1,9 @@
+{
+  "apps": {
+    "notepad": ["notepad.exe"],
+    "calculator": ["calc.exe"],
+    "paint": ["mspaint.exe"],
+    "explorer": ["explorer.exe"]
+  },
+  "safe_roots": []
+}

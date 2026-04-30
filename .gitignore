@@ -1,0 +1,14 @@
+.env
+allowlist.json
+projects.json
+memory.json
+tasks.json
+project_profiles.json
+computer_tools.json
+logs/*
+!logs/.gitkeep
+sessions.json
+commander_state.json
+*.tmp
+__pycache__/
+*.pyc

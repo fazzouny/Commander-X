@@ -1,0 +1,7 @@
+{
+  "allowed_telegram_user_ids": [
+    "123456789"
+  ],
+  "allow_whoami_for_unauthorized": true,
+  "dangerous_commands_require_manual_approval": true
+}

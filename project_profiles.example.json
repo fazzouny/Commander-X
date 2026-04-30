@@ -1,0 +1,23 @@
+{
+  "profiles": {
+    "example-app": {
+      "stack": [
+        "React",
+        "TypeScript",
+        "Supabase"
+      ],
+      "verification_commands": [
+        "npm run typecheck",
+        "npm run lint",
+        "npm run test",
+        "npm run build"
+      ],
+      "notes": [
+        "Keep production credentials out of Telegram and logs."
+      ],
+      "risk_rules": [
+        "Ask for approval before deploys, pushes, package installs, or production data changes."
+      ]
+    }
+  }
+}

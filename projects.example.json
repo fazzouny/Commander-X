@@ -1,0 +1,23 @@
+{
+  "codex": {
+    "sandbox": "workspace-write",
+    "extra_args": []
+  },
+  "projects": {
+    "example-app": {
+      "path": "C:\\path\\to\\your\\project",
+      "allowed": true,
+      "default_branch": "main",
+      "create_branch_on_start": true,
+      "aliases": [
+        "example",
+        "app"
+      ],
+      "context_files": [
+        "AGENTS.md",
+        "README.md",
+        "package.json"
+      ]
+    }
+  }
+}

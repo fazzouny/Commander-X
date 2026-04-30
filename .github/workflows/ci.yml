@@ -1,0 +1,32 @@
+name: Commander X CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  python-checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python files
+        shell: pwsh
+        run: |
+          python -m py_compile commander.py dashboard.py
+          python -m compileall -q commanderx
+      - name: Run unit tests
+        run: python -m unittest discover -s tests
+      - name: Run local command smoke checks
+        shell: pwsh
+        run: |
+          Copy-Item projects.example.json projects.json
+          Copy-Item allowlist.example.json allowlist.json
+          python commander.py --local "/help"
+          python commander.py --local "/projects"
+          python commander.py --local "/queue"
