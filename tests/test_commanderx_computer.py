@@ -45,6 +45,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("what needs my attention"), "/inbox")
         self.assertEqual(commander.natural_computer_command("show pending approvals"), "/approvals")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
+        self.assertEqual(commander.natural_computer_command("show all codex progress"), "/feed")
         self.assertEqual(commander.natural_computer_command("watch codex progress"), "/watch")
         self.assertEqual(commander.natural_computer_command("show the run timeline"), "/timeline")
         self.assertEqual(commander.natural_computer_command("show the work plan"), "/plan")
@@ -259,6 +260,30 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("app/user interface", summary)
         self.assertIn("docs/content", summary)
         self.assertNotIn("App.tsx", summary)
+
+    def test_work_feed_formats_plain_english_without_filenames(self) -> None:
+        sessions = {
+            "example": {
+                "state": "running",
+                "task": "Fix onboarding",
+                "current_phase": "running",
+                "updated_at": commander.utc_now(),
+                "timeline": [
+                    {"title": "Plan prepared", "detail": "Risk: medium", "status": "done"},
+                    {"title": "Codex session launched", "detail": "Commander is watching.", "status": "active"},
+                ],
+                "work_plan": {"risk": "medium"},
+                "pending_actions": {},
+            }
+        }
+        changes = [{"project": "example", "changed_count": 3, "areas": "app/user interface (2), tests (1)"}]
+        items = commander.work_feed_items(user_id=None, sessions=sessions, changes=changes, tasks=[])
+        text = commander.format_work_feed(items)
+        self.assertIn("example - running", text)
+        self.assertIn("Work areas: app/user interface (2), tests (1)", text)
+        self.assertNotIn("src/", text)
+        self.assertNotIn("README.md", text)
+        self.assertNotIn("App.tsx", text)
 
     def test_session_timeline_summarizes_phases(self) -> None:
         plan = commander.build_work_plan("example", "Fix onboarding", {"verification_commands": ["npm test"]})

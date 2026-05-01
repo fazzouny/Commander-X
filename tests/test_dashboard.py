@@ -95,6 +95,12 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(second, "context7 ready")
         self.assertEqual(calls, [dashboard.MCP_TIMEOUT_SECONDS])
 
+    def test_fallback_dashboard_payload_includes_work_feed_shape(self) -> None:
+        payload = dashboard.fallback_dashboard_payload("warming")
+        self.assertIn("work_feed", payload)
+        self.assertEqual(payload["work_feed"], [])
+        self.assertIn("capabilities", payload)
+
     def test_capabilities_payload_summarizes_tools_without_secret_values(self) -> None:
         original_computer_tools_config = dashboard.commander.computer_tools_config
         original_app_catalog = dashboard.commander.app_catalog

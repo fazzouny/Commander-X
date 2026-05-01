@@ -110,6 +110,38 @@ function renderProjects(data) {
   }
 }
 
+function renderWorkFeed(data) {
+  const items = data.work_feed || [];
+  qs("#work-feed-count").textContent = `${items.length} items`;
+  qs("#work-feed").innerHTML =
+    items
+      .slice(0, 10)
+      .map((item) => {
+        const type = item.state === "running" ? "good" : ["failed", "finished_unknown", "stop_failed"].includes(item.state) ? "bad" : item.blocker && item.blocker !== "none reported" ? "warn" : "good";
+        const age = Number.isInteger(item.last_activity_minutes) ? `${item.last_activity_minutes} min ago` : "not available";
+        return `
+          <div class="work-card">
+            <div class="work-card-head">
+              <div>
+                <div class="row-title">${escapeHtml(item.project || "-")}</div>
+                <div class="row-meta">${escapeHtml(item.task || "-")}</div>
+              </div>
+              <div>${pill(item.state || "unknown", type)}</div>
+            </div>
+            <div class="work-grid">
+              <div><span>Now</span><strong>${escapeHtml(item.current_step || "-")}</strong></div>
+              <div><span>Direction</span><strong>${escapeHtml(item.detail || item.phase || "-")}</strong></div>
+              <div><span>Work areas</span><strong>${escapeHtml(item.areas || "no local changes tracked")} (${escapeHtml(item.changed_count || 0)} changed)</strong></div>
+              <div><span>Blocker</span><strong>${escapeHtml(item.blocker || "none reported")}</strong></div>
+              <div><span>Last activity</span><strong>${escapeHtml(age)}</strong></div>
+              <div><span>Next</span><strong>${escapeHtml(item.next_step || item.command || "-")}</strong></div>
+            </div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No active work feed items.</p>`;
+}
+
 function renderTasks(data) {
   const tasks = [...(data.tasks || [])].reverse();
   qs("#task-count").textContent = `${tasks.length} recent`;
@@ -475,6 +507,7 @@ async function refresh() {
   const data = await api("/api/dashboard");
   state.dashboard = data;
   renderMetrics(data);
+  renderWorkFeed(data);
   renderProjects(data);
   renderTasks(data);
   renderSessions(data);

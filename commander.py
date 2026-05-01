@@ -106,6 +106,7 @@ NL_ALLOWED_COMMANDS = {
     "/inbox",
     "/approvals",
     "/changes",
+    "/feed",
     "/watch",
     "/timeline",
     "/plan",
@@ -157,6 +158,7 @@ TELEGRAM_COMMANDS = [
     ("inbox", "Show decision inbox"),
     ("approvals", "List pending approvals"),
     ("changes", "Show changed projects"),
+    ("feed", "Show plain-English work feed"),
     ("watch", "Show live project work view"),
     ("timeline", "Show session timeline"),
     ("plan", "Show pre-work plan"),
@@ -1679,7 +1681,7 @@ def command_tools() -> str:
             "- Codex CLI session start/stop/log/status",
             "- Git diff, commit approval, push approval",
             "- Local dashboard",
-            "- Memory, project profiles, task queue, heartbeats",
+            "- Memory, project profiles, task queue, work feed, heartbeats",
             "- Safe computer broker: URLs, allowlisted apps, files, volume, screenshots, process checks",
             "- Browser broker: open and inspect websites",
             "- ClickUp API bridge when CLICKUP_API_TOKEN and CLICKUP_WORKSPACE_ID are configured",
@@ -3388,6 +3390,213 @@ def task_direction_lines(task: str) -> list[str]:
     ]
 
 
+def session_last_activity_minutes(session: dict[str, Any]) -> int | None:
+    log_file = Path(str(session.get("log_file", "")))
+    if log_file.exists():
+        return max(0, int((time.time() - log_file.stat().st_mtime) // 60))
+    parsed = parse_iso_datetime(str(session.get("updated_at") or session.get("started_at") or ""))
+    if parsed:
+        return max(0, int((dt.datetime.now(dt.timezone.utc) - parsed).total_seconds() // 60))
+    return None
+
+
+def latest_timeline_summary(session: dict[str, Any]) -> tuple[str, str]:
+    timeline = session.get("timeline") if isinstance(session, dict) else []
+    if isinstance(timeline, list):
+        for item in reversed(timeline):
+            if isinstance(item, dict):
+                title = str(item.get("title") or item.get("phase") or "").strip()
+                detail = str(item.get("detail") or "").strip()
+                if title or detail:
+                    return title or "Update", detail
+    return str(session.get("current_phase") or session.get("state") or "Unknown"), ""
+
+
+def feed_item_from_session(project_id: str, session: dict[str, Any], change: dict[str, Any] | None = None) -> dict[str, Any]:
+    state = str(session.get("state") or "unknown")
+    phase = str(session.get("current_phase") or state)
+    title, detail = latest_timeline_summary(session)
+    pending = session.get("pending_actions") or {}
+    age = session_last_activity_minutes(session)
+    plan = session.get("work_plan") if isinstance(session.get("work_plan"), dict) else {}
+    risk = str(plan.get("risk") or "unknown")
+    if pending:
+        blocker = f"{len(pending)} approval(s) waiting"
+        next_step = f"Review /approvals or /watch {project_id}."
+    elif state == "running":
+        blocker = "none reported"
+        next_step = f"Watch progress with /watch {project_id}."
+    elif state in {"failed", "finished_unknown", "stop_failed"}:
+        blocker = "session needs review"
+        next_step = f"Open /watch {project_id} before continuing."
+    elif state in {"stopped", "idle"}:
+        blocker = "idle"
+        next_step = f"Start new work with /start {project_id} \"task\"."
+    else:
+        blocker = "review current state"
+        next_step = f"Use /watch {project_id} for detail."
+    return {
+        "project": project_id,
+        "kind": "session",
+        "state": state,
+        "phase": phase,
+        "task": str(session.get("task") or "-"),
+        "current_step": title,
+        "detail": detail,
+        "risk": risk,
+        "last_activity_minutes": age,
+        "changed_count": int((change or {}).get("changed_count") or 0),
+        "areas": str((change or {}).get("areas") or "no local changes tracked"),
+        "blocker": blocker,
+        "next_step": next_step,
+        "command": f"/watch {project_id}",
+        "priority": 0 if state == "running" else 1 if pending else 2 if state in {"failed", "finished_unknown", "stop_failed"} else 4,
+    }
+
+
+def feed_item_from_task(task: dict[str, Any], change: dict[str, Any] | None = None) -> dict[str, Any]:
+    project_id = str(task.get("project") or "-")
+    status = str(task.get("status") or "queued")
+    next_step = f"Start queued work with /queue start {task.get('id')}" if status == "queued" else f"Review queue state with /queue."
+    return {
+        "project": project_id,
+        "kind": "task",
+        "state": status,
+        "phase": status,
+        "task": str(task.get("title") or "-"),
+        "current_step": "Task is waiting in Commander queue",
+        "detail": str(task.get("title") or ""),
+        "risk": "unknown",
+        "last_activity_minutes": None,
+        "changed_count": int((change or {}).get("changed_count") or 0),
+        "areas": str((change or {}).get("areas") or "no local changes tracked"),
+        "blocker": "waiting to start" if status == "queued" else "needs review",
+        "next_step": next_step,
+        "command": f"/queue start {task.get('id')}" if status == "queued" else "/queue",
+        "priority": 3 if status == "queued" else 2,
+    }
+
+
+def feed_item_from_changes(change: dict[str, Any]) -> dict[str, Any]:
+    project_id = str(change.get("project") or "-")
+    return {
+        "project": project_id,
+        "kind": "changes",
+        "state": "changed",
+        "phase": "review",
+        "task": "Local worktree has changes",
+        "current_step": "Changes are present but no Commander session is active",
+        "detail": "Commander is hiding filenames by default.",
+        "risk": "review",
+        "last_activity_minutes": None,
+        "changed_count": int(change.get("changed_count") or 0),
+        "areas": str(change.get("areas") or "changed areas unavailable"),
+        "blocker": "review before starting more work",
+        "next_step": f"Use /changes for summary or /watch {project_id}.",
+        "command": f"/watch {project_id}",
+        "priority": 4,
+    }
+
+
+def work_feed_items(
+    user_id: str | None = None,
+    limit: int = 12,
+    sessions: dict[str, Any] | None = None,
+    changes: list[dict[str, Any]] | None = None,
+    tasks: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    if sessions is None:
+        refresh_session_states()
+    if tasks is None:
+        sync_tasks_with_sessions()
+    sessions = sessions if sessions is not None else sessions_data().get("sessions", {})
+    changes = changes if changes is not None else changed_project_details(limit=20, max_files=0)
+    tasks = tasks if tasks is not None else tasks_data().get("tasks", [])
+    change_map = {str(row.get("project")): row for row in changes}
+    items: list[dict[str, Any]] = []
+    seen_projects: set[str] = set()
+    for project_id, session in sorted(sessions.items()):
+        if not isinstance(session, dict):
+            continue
+        if session.get("state") in {"archived"}:
+            continue
+        items.append(feed_item_from_session(project_id, session, change_map.get(project_id)))
+        seen_projects.add(project_id)
+    for task in visible_task_records(tasks, limit=20):
+        if not isinstance(task, dict):
+            continue
+        status = str(task.get("status") or "queued")
+        project_id = str(task.get("project") or "")
+        if status not in {"queued", "review", "failed"} or project_id in seen_projects:
+            continue
+        items.append(feed_item_from_task(task, change_map.get(project_id)))
+        seen_projects.add(project_id)
+    for change in changes:
+        project_id = str(change.get("project") or "")
+        if not project_id or project_id in seen_projects:
+            continue
+        items.append(feed_item_from_changes(change))
+        seen_projects.add(project_id)
+    if user_id:
+        active = str(user_state(user_id).get("active_project") or "")
+        if active and active not in seen_projects and get_project(active):
+            profile = project_profile(active)
+            items.append(
+                {
+                    "project": active,
+                    "kind": "focus",
+                    "state": "focused",
+                    "phase": "idle",
+                    "task": "Focused project is selected",
+                    "current_step": "No Commander-started Codex session is active",
+                    "detail": "Commander will use this project when you omit a project name.",
+                    "risk": "low",
+                    "last_activity_minutes": None,
+                    "changed_count": int(profile.get("changed_count") or 0),
+                    "areas": change_bucket_summary(profile.get("changed_preview") or []) if profile.get("changed_preview") else "no local changes tracked",
+                    "blocker": "waiting for instruction",
+                    "next_step": f"Start work with /start {active} \"task\".",
+                    "command": f"/start {active} \"task\"",
+                    "priority": 5,
+                }
+            )
+    items.sort(key=lambda item: (int(item.get("priority") or 9), str(item.get("project") or "")))
+    return items[:limit]
+
+
+def format_work_feed(items: list[dict[str, Any]], title: str = "Commander X work feed") -> str:
+    if not items:
+        return "No active Commander work feed items. Start with /start <project> \"task\" or /queue add <project> \"task\"."
+    lines = [title, "Plain-English view. Technical filenames are hidden unless you ask for /diff.", ""]
+    for index, item in enumerate(items, start=1):
+        age = item.get("last_activity_minutes")
+        activity = f"{age} min ago" if isinstance(age, int) else "not available"
+        lines.extend(
+            [
+                f"{index}. {item.get('project')} - {item.get('state')}",
+                f"   Task: {item.get('task')}",
+                f"   Now: {item.get('current_step')}",
+                f"   Direction: {item.get('detail') or item.get('phase')}",
+                f"   Work areas: {item.get('areas')} ({item.get('changed_count')} changed)",
+                f"   Blocker: {item.get('blocker')}",
+                f"   Last activity: {activity}",
+                f"   Next: {item.get('next_step')}",
+            ]
+        )
+    return compact("\n".join(lines), limit=3600)
+
+
+def command_feed(args: list[str], user_id: str) -> str:
+    project_id = None
+    if args and args[0].lower() not in {"all", "global", "overview", "summary"}:
+        project_id, _rest = project_and_rest(args, user_id=user_id)
+    items = work_feed_items(user_id=user_id, limit=14)
+    if project_id:
+        items = [item for item in items if item.get("project") == project_id]
+        return format_work_feed(items, title=f"Commander X work feed: {project_id}")
+    return format_work_feed(items)
+
+
 def command_plan(project_id: str | None, user_id: str, task: str | None = None) -> str:
     resolved = resolve_project_id(project_id, user_id=user_id) if project_id else resolve_project_id(None, user_id=user_id)
     if not resolved:
@@ -4343,6 +4552,7 @@ def command_help() -> str:
 /inbox
 /approvals
 /changes [project]
+/feed [project]
 /watch [project]
 /timeline [project]
 /plan [project] [task]
@@ -4706,6 +4916,9 @@ def natural_computer_command(text: str) -> str | None:
         return "/approvals"
     if re.search(r"\b(inbox|what needs my attention|needs attention|pending items|what needs me|decision inbox)\b", lowered):
         return "/inbox"
+    if re.search(r"\b(work feed|live feed|codex feed|project feed|all project progress|all codex progress|what is codex doing across)\b", lowered):
+        projects = mentioned_projects(text)
+        return f"/feed {projects[0]}" if projects else "/feed"
     if re.search(r"\b(changed projects?|dirty worktrees?|local changes|all changes|changes across projects|what changed across)\b", lowered):
         return "/changes"
     if re.search(r"\b(timeline|run timeline|work timeline|session timeline)\b", lowered):
@@ -4819,6 +5032,7 @@ Allowed commands:
 /inbox
 /approvals
 /changes [project]
+/feed [project]
 /watch [project]
 /brief [project]
 /morning
@@ -4892,6 +5106,7 @@ Rules:
 - If the user asks what needs their attention, decisions, inbox, or pending items, map to /inbox.
 - If the user asks for approvals, pending approvals, approve list, or decisions to approve/cancel, map to /approvals.
 - If the user asks for changed projects, dirty worktrees, local changes, or changes across projects, map to /changes.
+- If the user asks for a work feed, live feed, or all project/Codex progress, map to /feed.
 - If the user asks to watch progress, see the live view, or understand what Codex is doing, map to /watch.
 - If the user asks what keys/env setup is missing, map to /env.
 - If the user asks device, battery, disk, memory, or system status, map to /system.
@@ -5036,6 +5251,8 @@ def handle_text(
         return [command_approvals()]
     if command == "/changes":
         return [command_changes(args, user_id=user_id)]
+    if command == "/feed":
+        return [command_feed(args, user_id=user_id)]
     if command in {"/watch", "/timeline"}:
         project_id, _rest = project_and_rest(args, user_id=user_id)
         return [command_watch(project_id, user_id=user_id)]

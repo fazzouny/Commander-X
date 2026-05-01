@@ -31,6 +31,7 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - `/inbox` aggregates approvals, running/failed sessions, queued tasks, and recommendations.
 - `/approvals` lists every pending approval with exact approve/cancel commands.
 - `/changes` summarizes changed projects by human work area, hiding filenames unless `files/details` is requested.
+- `/feed` shows a plain-English work feed across projects: task, current step, direction, blocker, activity age, and next useful command.
 - `/watch` gives a Codex-app-like plain-English live view of a managed session.
 - `/timeline` is an alias for the same live run view and shows the managed session phases.
 - `/plan [project] [task]` shows the plain-English goal, approach, risk, expected checks, and approval boundaries before work starts.
@@ -62,6 +63,7 @@ Commander X now follows that shape:
 - The computer broker is the first device-control layer.
 - The dashboard is the control UI and can approve/cancel prepared actions plus start/done/cancel queued tasks through token-gated buttons.
 - The dashboard includes a capabilities snapshot so an operator can see what Commander can do before digging into raw logs or file names.
+- The dashboard includes a Work Feed that approximates the Codex app progress experience without exposing filenames by default.
 - The dashboard serves cached snapshots immediately and refreshes in the background, so slow Git/MCP/OpenClaw checks do not block the control room.
 - Session timelines show phases like task received, planned, launched, stopped, failed, or finished.
 - Work plans are deterministic and stored with new sessions, so the dashboard can show intent before raw logs.
