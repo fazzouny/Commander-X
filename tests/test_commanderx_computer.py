@@ -105,6 +105,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("show pending approvals"), "/approvals")
         self.assertEqual(commander.natural_computer_command("show approval history"), "/audit")
         self.assertEqual(commander.natural_computer_command("make me an operator report"), "/report")
+        self.assertEqual(commander.natural_computer_command("show mission control"), "/mission")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
         self.assertEqual(commander.natural_computer_command("give me a plain English Codex brief"), "/briefs")
         self.assertEqual(commander.natural_computer_command("show all codex progress"), "/feed")
@@ -379,6 +380,34 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn("README.md", text)
         self.assertNotIn("App.tsx", text)
 
+    def test_mission_timeline_formats_direction_without_filenames(self) -> None:
+        sessions = {
+            "example": {
+                "state": "running",
+                "task": "Fix src/components/App.tsx onboarding",
+                "current_phase": "inspect",
+                "updated_at": commander.utc_now(),
+                "timeline": [
+                    {"title": "Reviewed src/components/App.tsx", "detail": "README.md notes updated", "status": "done"},
+                    {"title": "Running checks", "detail": "npm test", "status": "active"},
+                ],
+                "work_plan": {"risk": "medium"},
+                "pending_actions": {},
+            }
+        }
+        changes = [{"project": "example", "changed_count": 2, "areas": "app/user interface (2)"}]
+
+        items = commander.mission_timeline_items(user_id=None, sessions=sessions, changes=changes, tasks=[])
+        text = commander.format_mission_timeline(items)
+
+        self.assertEqual(items[0]["project"], "example")
+        self.assertIn("Working", items[0]["stage"])
+        self.assertIn("Direction:", text)
+        self.assertIn("Evidence:", text)
+        self.assertNotIn("src/", text)
+        self.assertNotIn("README.md", text)
+        self.assertNotIn("App.tsx", text)
+
     def test_log_progress_signals_detect_blockers_without_paths(self) -> None:
         raw = """
         exec "powershell" -Command 'git status' in C:\\AI-Company\\Example
@@ -595,6 +624,16 @@ class BrowserAndClickUpTests(unittest.TestCase):
             "assistant_mode": "free",
             "heartbeat": {"enabled": True, "quiet": "23:00-08:00"},
             "sessions": {"example": {"state": "running"}},
+            "mission_timeline": [
+                {
+                    "project": "example",
+                    "stage": "Working",
+                    "direction": "Editing C:\\Users\\Name\\repo\\secret.py",
+                    "blocker": "none",
+                    "evidence": ["Checked README.md"],
+                    "next_step": "Review config.json",
+                }
+            ],
             "session_briefs": [
                 {
                     "project": "example",

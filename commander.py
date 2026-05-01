@@ -113,6 +113,7 @@ NL_ALLOWED_COMMANDS = {
     "/changes",
     "/feed",
     "/briefs",
+    "/mission",
     "/watch",
     "/timeline",
     "/plan",
@@ -168,6 +169,7 @@ TELEGRAM_COMMANDS = [
     ("changes", "Show changed projects"),
     ("feed", "Show plain-English work feed"),
     ("briefs", "Show executive Codex briefs"),
+    ("mission", "Show mission-control timeline"),
     ("watch", "Show live project work view"),
     ("timeline", "Show session timeline"),
     ("plan", "Show pre-work plan"),
@@ -217,7 +219,7 @@ DEFAULT_BUTTON_ROWS = [
     [("Status", "cmd:/status"), ("Projects", "cmd:/projects")],
     [("Service", "cmd:/service"), ("Doctor", "cmd:/doctor")],
     [("Mode", "cmd:/mode"), ("Free Mode", "cmd:/free")],
-    [("Briefs", "cmd:/briefs"), ("Feed", "cmd:/feed")],
+    [("Mission", "cmd:/mission"), ("Briefs", "cmd:/briefs"), ("Feed", "cmd:/feed")],
     [("Morning", "cmd:/morning"), ("Next", "cmd:/next")],
     [("Inbox", "cmd:/inbox"), ("Approvals", "cmd:/approvals"), ("Audit", "cmd:/audit")],
     [("Report", "cmd:/report"), ("Save Report", "cmd:/report save")],
@@ -3318,6 +3320,7 @@ def operator_report_payload(user_id: str | None = None, limit: int | None = None
     changes = changed_project_details(limit=limit, max_files=0)
     work_feed = work_feed_items(user_id=user_id, limit=limit, sessions=sessions, changes=changes, tasks=tasks)
     briefs = session_brief_items(user_id=user_id, limit=limit, sessions=sessions, changes=changes, tasks=tasks)
+    mission = mission_timeline_items(user_id=user_id, limit=limit, sessions=sessions, changes=changes, tasks=tasks)
     events = audit_data().get("events", [])
     audit_items: list[dict[str, Any]] = []
     for event in reversed(events[-limit:]):
@@ -3356,6 +3359,7 @@ def operator_report_payload(user_id: str | None = None, limit: int | None = None
             "quiet": report_clean(quiet_window_status(state), limit=160),
         },
         "sessions": sessions,
+        "mission_timeline": mission,
         "session_briefs": briefs,
         "work_feed": work_feed,
         "approvals": pending_approvals(),
@@ -3394,6 +3398,24 @@ def format_operator_report(payload: dict[str, Any], source: str | None = None, l
         f"- Heartbeat: {heartbeat_state}; quiet window: {heartbeat_quiet}.",
         "- Safety: secrets, full local paths, and technical filenames are hidden by default.",
     ]
+
+    mission = report_items(payload, "mission_timeline")[:limit]
+    lines.extend(["", "## Mission Timeline"])
+    if mission:
+        for index, item in enumerate(mission, start=1):
+            evidence = item.get("evidence") if isinstance(item.get("evidence"), list) else []
+            evidence_text = "; ".join(report_clean(line, 180) for line in evidence[:3]) or "No detailed evidence yet."
+            lines.extend(
+                [
+                    f"{index}. {report_clean(item.get('project'), 120)} - {report_clean(item.get('stage'), 160)}",
+                    f"   Direction: {report_clean(item.get('direction'), 360)}",
+                    f"   Blocker: {report_clean(item.get('blocker'), 260)}",
+                    f"   Evidence: {evidence_text}",
+                    f"   Next: {report_clean(item.get('next_step'), 260)}",
+                ]
+            )
+    else:
+        lines.append("- No mission timeline items right now.")
 
     briefs = report_items(payload, "session_briefs")[:limit]
     lines.extend(["", "## Session Briefs"])
@@ -4189,6 +4211,101 @@ def format_session_briefs(items: list[dict[str, Any]], title: str = "Commander X
             ]
         )
     return compact("\n".join(lines), limit=3600)
+
+
+def mission_stage_from_brief(item: dict[str, Any]) -> tuple[str, str, int]:
+    state = str(item.get("state") or "unknown")
+    blocker = str(item.get("blocker") or "")
+    phase = str(item.get("phase") or state)
+    if "approval" in blocker.lower():
+        return "Waiting for your approval", "warn", 0
+    if state == "running":
+        return f"Working: {safe_brief_text(phase)}", "good", 1
+    if state in {"failed", "finished_unknown", "stop_failed"}:
+        return "Needs review before continuing", "bad", 2
+    if item.get("needs_attention"):
+        return "Needs operator review", "warn", 3
+    if state in {"queued", "review"}:
+        return "Queued for Commander", "warn", 4
+    if state == "changed":
+        return "Local changes need review", "warn", 5
+    if state in {"completed", "done"}:
+        return "Completed, ready for review", "good", 6
+    if state in {"focused", "idle", "stopped"}:
+        return "Idle and waiting", "good", 7
+    return f"Tracking: {safe_brief_text(state)}", "good", 8
+
+
+def mission_timeline_items(
+    user_id: str | None = None,
+    limit: int = 10,
+    sessions: dict[str, Any] | None = None,
+    changes: list[dict[str, Any]] | None = None,
+    tasks: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    briefs = session_brief_items(user_id=user_id, limit=max(limit * 2, 12), sessions=sessions, changes=changes, tasks=tasks)
+    items: list[dict[str, Any]] = []
+    for brief in briefs:
+        stage, status, stage_order = mission_stage_from_brief(brief)
+        evidence = brief.get("timeline") if isinstance(brief.get("timeline"), list) else []
+        direction = brief.get("summary") or brief.get("task") or "No current direction reported."
+        age = brief.get("last_activity_minutes")
+        if isinstance(age, int):
+            freshness = "fresh" if age <= 10 else "stale" if age >= 60 else "recent"
+        else:
+            freshness = "unknown"
+        items.append(
+            {
+                "project": safe_brief_text(brief.get("project")),
+                "stage": safe_brief_text(stage),
+                "status": status,
+                "direction": safe_brief_text(direction),
+                "blocker": safe_brief_text(brief.get("blocker") or "none reported"),
+                "work_areas": safe_brief_text(brief.get("areas") or "no local changes tracked"),
+                "changed_count": int(brief.get("changed_count") or 0),
+                "freshness": freshness,
+                "last_activity_minutes": age,
+                "evidence": [safe_brief_text(line) for line in evidence[:4] if str(line).strip()],
+                "next_step": safe_brief_text(brief.get("next_step") or "-"),
+                "command": f"/watch {safe_brief_text(brief.get('project'))}",
+                "priority": int(brief.get("priority") or 9) + stage_order,
+            }
+        )
+    items.sort(key=lambda item: (int(item.get("priority") or 9), str(item.get("project") or "")))
+    return items[:limit]
+
+
+def format_mission_timeline(items: list[dict[str, Any]], title: str = "Commander X mission control") -> str:
+    if not items:
+        return "No mission timeline items right now. Start with /start <project> \"task\" or /queue add <project> \"task\"."
+    lines = [title, "Plain-English timeline. Technical filenames and local paths are hidden unless you ask for /diff.", ""]
+    for index, item in enumerate(items, start=1):
+        age = item.get("last_activity_minutes")
+        activity = f"{age} min ago" if isinstance(age, int) else "not available"
+        evidence = "; ".join(str(line) for line in item.get("evidence", [])[:3]) or "No detailed evidence yet."
+        lines.extend(
+            [
+                f"{index}. {item.get('project')} - {item.get('stage')}",
+                f"   Direction: {item.get('direction')}",
+                f"   Work areas: {item.get('work_areas')} ({item.get('changed_count')} changed)",
+                f"   Blocker: {item.get('blocker')}",
+                f"   Evidence: {evidence}",
+                f"   Last activity: {activity} ({item.get('freshness')})",
+                f"   Next: {item.get('next_step')}",
+            ]
+        )
+    return compact("\n".join(lines), limit=3600)
+
+
+def command_mission(args: list[str], user_id: str) -> str:
+    project_id = None
+    if args and args[0].lower() not in {"all", "global", "overview", "summary"}:
+        project_id, _rest = project_and_rest(args, user_id=user_id)
+    items = mission_timeline_items(user_id=user_id, limit=12)
+    if project_id:
+        items = [item for item in items if item.get("project") == project_id]
+        return format_mission_timeline(items, title=f"Commander X mission control: {project_id}")
+    return format_mission_timeline(items)
 
 
 def command_briefs(args: list[str], user_id: str) -> str:
@@ -5185,6 +5302,8 @@ def command_help() -> str:
 /changes [project]
 /feed [project]
 /briefs [project]
+/report [save]
+/mission [project]
 /watch [project]
 /timeline [project]
 /plan [project] [task]
@@ -5780,6 +5899,9 @@ def natural_computer_command(text: str) -> str | None:
     if re.search(r"\b(executive brief|executive update|session briefs?|codex briefs?|plain english summary|non[- ]technical update|what is codex doing right now|what are my codex sessions doing)\b", lowered):
         projects = mentioned_projects(text)
         return f"/briefs {projects[0]}" if projects else "/briefs"
+    if re.search(r"\b(mission control|mission timeline|timeline view|control room|what is the direction|where are we)\b", lowered):
+        projects = mentioned_projects(text)
+        return f"/mission {projects[0]}" if projects else "/mission"
     if re.search(r"\b(work feed|live feed|codex feed|project feed|all project progress|all codex progress|what is codex doing across)\b", lowered):
         projects = mentioned_projects(text)
         return f"/feed {projects[0]}" if projects else "/feed"
@@ -5899,6 +6021,7 @@ Allowed commands:
 /feed [project]
 /briefs [project]
 /report [save]
+/mission [project]
 /watch [project]
 /brief [project]
 /morning
@@ -5934,6 +6057,7 @@ Allowed commands:
 /cancel <project> [approval_id]
 /audit
 /report [save]
+/mission [project]
 /check
 /heartbeat on [minutes]
 /heartbeat off
@@ -5979,6 +6103,7 @@ Rules:
 - If the user asks for changed projects, dirty worktrees, local changes, or changes across projects, map to /changes.
 - If the user asks for a work feed, live feed, or all project/Codex progress, map to /feed.
 - If the user asks for an executive brief, plain-English session update, non-technical update, or what Codex is doing right now, map to /briefs.
+- If the user asks for mission control, mission timeline, a control-room view, direction, or "where are we", map to /mission.
 - If the user asks to watch progress, see the live view, or understand what Codex is doing, map to /watch.
 - If the user asks what keys/env setup is missing, map to /env.
 - If the user asks device, battery, disk, memory, or system status, map to /system.
@@ -6134,6 +6259,8 @@ def handle_text(
         return [command_feed(args, user_id=user_id)]
     if command == "/briefs":
         return [command_briefs(args, user_id=user_id)]
+    if command == "/mission":
+        return [command_mission(args, user_id=user_id)]
     if command in {"/watch", "/timeline"}:
         project_id, _rest = project_and_rest(args, user_id=user_id)
         return [command_watch(project_id, user_id=user_id)]

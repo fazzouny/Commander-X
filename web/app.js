@@ -233,6 +233,48 @@ function renderDecisionSuggestions(data) {
       .join("") || `<p>No new behavior suggestions. Existing memories already cover the current signals.</p>`;
 }
 
+function renderMissionTimeline(data) {
+  const items = data.mission_timeline || [];
+  qs("#mission-count").textContent = `${items.length} items`;
+  qs("#mission-timeline").innerHTML =
+    items
+      .slice(0, 10)
+      .map((item) => {
+        const type = item.status === "bad" ? "bad" : item.status === "warn" ? "warn" : "good";
+        const age = Number.isInteger(item.last_activity_minutes) ? `${item.last_activity_minutes} min ago` : "not available";
+        const evidence = (item.evidence || [])
+          .slice(0, 4)
+          .map((line) => `<span>${escapeHtml(line)}</span>`)
+          .join("");
+        return `
+          <div class="work-card">
+            <div class="work-card-head">
+              <div>
+                <div class="row-title">${escapeHtml(item.project || "-")}</div>
+                <div class="row-meta">${escapeHtml(item.stage || "Tracking")}</div>
+              </div>
+              <div>${pill(item.freshness || item.status || "tracking", type)}</div>
+            </div>
+            <div class="work-grid">
+              <div><span>Direction</span><strong>${escapeHtml(item.direction || "-")}</strong></div>
+              <div><span>Work areas</span><strong>${escapeHtml(item.work_areas || "no local changes tracked")} (${escapeHtml(item.changed_count || 0)} changed)</strong></div>
+              <div><span>Blocker</span><strong>${escapeHtml(item.blocker || "none reported")}</strong></div>
+              <div><span>Last activity</span><strong>${escapeHtml(age)}</strong></div>
+              <div><span>Next</span><strong>${escapeHtml(item.next_step || "-")}</strong></div>
+              <div><span>Command</span><strong>${escapeHtml(item.command || "-")}</strong></div>
+            </div>
+            <div class="timeline-mini">${evidence || "<span>No detailed evidence yet</span>"}</div>
+            <div class="work-actions">
+              <button data-work-action="watch" data-project="${escapeHtml(item.project || "")}">Watch</button>
+              <button data-work-action="plan" data-project="${escapeHtml(item.project || "")}">Plan</button>
+              <button data-work-action="changes" data-project="${escapeHtml(item.project || "")}">Areas</button>
+            </div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No mission timeline items yet.</p>`;
+}
+
 function renderSessionBriefs(data) {
   const items = data.session_briefs || [];
   qs("#session-brief-count").textContent = `${items.length} briefs`;
@@ -717,6 +759,7 @@ async function refresh() {
   renderAuditTrail(data);
   renderConversation(data);
   renderDecisionSuggestions(data);
+  renderMissionTimeline(data);
   renderSessionBriefs(data);
   renderRecentImages(data);
   renderWorkFeed(data);
@@ -1005,6 +1048,7 @@ qs("#action-center").addEventListener("click", handleTaskClick);
 qs("#action-center").addEventListener("click", handleWorkFeedClick);
 qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionClick);
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
+qs("#mission-timeline").addEventListener("click", handleWorkFeedClick);
 qs("#session-briefs").addEventListener("click", handleWorkFeedClick);
 qs("#recent-images").addEventListener("click", handleCapabilityClick);
 qs("#work-feed").addEventListener("click", handleWorkFeedClick);

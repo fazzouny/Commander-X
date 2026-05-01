@@ -112,6 +112,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "conversation": {"summary": message, "counts": {}, "items": []},
         "audit_trail": {"summary": message, "counts": {}, "items": []},
         "decision_suggestions": [],
+        "mission_timeline": [],
         "session_briefs": [],
         "recent_images": [],
         "work_feed": [],
@@ -306,6 +307,7 @@ def capabilities_payload(openclaw_status: str | None = None) -> dict[str, Any]:
         "commands": [
             "/tools",
             "/status",
+            "/mission",
             "/watch",
             "/queue",
             "/approvals",
@@ -856,6 +858,7 @@ def build_dashboard_payload() -> dict[str, Any]:
     sessions = sessions_payload().get("sessions", {})
     work_feed = commander.work_feed_items(user_id=user_id, limit=10, sessions=sessions, changes=changes, tasks=tasks)
     session_briefs = commander.session_brief_items(user_id=user_id, limit=8, sessions=sessions, changes=changes, tasks=tasks)
+    mission_timeline = commander.mission_timeline_items(user_id=user_id, limit=10, sessions=sessions, changes=changes, tasks=tasks)
     openclaw = openclaw_dashboard_payload()
     recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw)
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
@@ -873,6 +876,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "conversation": conversation,
         "audit_trail": audit_trail,
         "decision_suggestions": dashboard_decision_suggestions(conversation, memories),
+        "mission_timeline": mission_timeline,
         "session_briefs": session_briefs,
         "recent_images": dashboard_recent_images(users),
         "work_feed": work_feed,

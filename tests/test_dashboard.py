@@ -105,6 +105,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(payload["audit_trail"]["items"], [])
         self.assertIn("decision_suggestions", payload)
         self.assertEqual(payload["decision_suggestions"], [])
+        self.assertIn("mission_timeline", payload)
+        self.assertEqual(payload["mission_timeline"], [])
         self.assertIn("recent_images", payload)
         self.assertEqual(payload["recent_images"], [])
         self.assertIn("work_feed", payload)
@@ -284,6 +286,16 @@ class DashboardCapabilityTests(unittest.TestCase):
                 "assistant_mode": "free",
                 "heartbeat": {"enabled": False, "quiet": "inactive"},
                 "sessions": {"example": {"state": "running"}},
+                "mission_timeline": [
+                    {
+                        "project": "example",
+                        "stage": "Working",
+                        "direction": "Working in C:\\Users\\Name\\repo\\secret.py",
+                        "blocker": "none",
+                        "evidence": ["Read README.md"],
+                        "next_step": "Review config.json",
+                    }
+                ],
                 "session_briefs": [
                     {
                         "project": "example",
