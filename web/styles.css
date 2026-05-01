@@ -383,6 +383,13 @@ span {
   margin: 12px 0;
 }
 
+.report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .work-actions {
   display: flex;
   flex-wrap: wrap;

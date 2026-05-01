@@ -104,6 +104,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("what needs my attention"), "/inbox")
         self.assertEqual(commander.natural_computer_command("show pending approvals"), "/approvals")
         self.assertEqual(commander.natural_computer_command("show approval history"), "/audit")
+        self.assertEqual(commander.natural_computer_command("make me an operator report"), "/report")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
         self.assertEqual(commander.natural_computer_command("give me a plain English Codex brief"), "/briefs")
         self.assertEqual(commander.natural_computer_command("show all codex progress"), "/feed")
@@ -585,6 +586,79 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn("C:\\Users", str(events[0]))
         self.assertIn("Approval audit:", text)
         self.assertIn("prepared commit for example", text)
+
+    def test_operator_report_sanitizes_paths_and_secrets(self) -> None:
+        payload = {
+            "generated_at": "2026-05-01T12:00:00+00:00",
+            "source": "test",
+            "active_project": "example",
+            "assistant_mode": "free",
+            "heartbeat": {"enabled": True, "quiet": "23:00-08:00"},
+            "sessions": {"example": {"state": "running"}},
+            "session_briefs": [
+                {
+                    "project": "example",
+                    "state": "running",
+                    "summary": "Editing C:\\Users\\Name\\repo\\secret.py",
+                    "task": "Fix api_key=secret123 in settings",
+                    "areas": "src/app.ts",
+                    "changed_count": 1,
+                    "needs_attention": True,
+                    "blocker": "token=abc123",
+                    "next_step": "Review README.md",
+                }
+            ],
+            "work_feed": [
+                {
+                    "project": "example",
+                    "current_step": "Checking C:\\Users\\Name\\repo\\.env",
+                    "detail": "Updated config.json",
+                    "next_step": "/watch example",
+                }
+            ],
+            "approvals": [{"project": "example", "id": "abc123", "type": "commit", "message": "Fix secret.py"}],
+            "conversation": {"items": [{"direction": "User asked", "summary": "Show C:\\Users\\Name\\repo\\.env"}]},
+            "decision_suggestions": [{"title": "Hide files", "note": "No folder/file names by default"}],
+            "audit_trail": {
+                "items": [
+                    {
+                        "at": "2026-05-01T12:01:00+00:00",
+                        "status": "prepared",
+                        "type": "commit",
+                        "project": "example",
+                        "summary": "Commit C:\\Users\\Name\\repo\\.env with token=abc123",
+                    }
+                ]
+            },
+            "recent_images": [{"kind": "photo", "summary": "Visible secret.py", "risk": "medium"}],
+            "changes": [{"project": "example", "changed_count": 1, "areas": "src/app.ts"}],
+            "recommendations": ["Check C:\\Users\\Name\\repo\\.env before push."],
+        }
+
+        text = commander.format_operator_report(payload, source="test")
+
+        self.assertIn("Commander X Operator Report", text)
+        self.assertIn("technical path", text)
+        self.assertIn("technical file", text)
+        self.assertIn("[REDACTED]", text)
+        self.assertNotIn("C:\\Users", text)
+        self.assertNotIn("secret.py", text)
+
+    def test_save_operator_report_uses_configured_report_dir(self) -> None:
+        original = commander.os.environ.get("COMMANDER_REPORT_DIR")
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                commander.os.environ["COMMANDER_REPORT_DIR"] = temp
+                path = commander.save_operator_report("# Report\napi_key=secret123\n")
+            finally:
+                if original is None:
+                    commander.os.environ.pop("COMMANDER_REPORT_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_REPORT_DIR"] = original
+
+            self.assertEqual(path.parent, Path(temp))
+            self.assertTrue(path.exists())
+            self.assertIn("[REDACTED]", path.read_text(encoding="utf-8"))
 
     def test_service_helpers_hide_paths_and_detect_processes(self) -> None:
         self.assertEqual(

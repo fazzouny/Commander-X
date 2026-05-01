@@ -799,6 +799,38 @@ async function analyzeDashboardImage() {
   }
 }
 
+async function generateReport(save = false) {
+  const output = qs("#report-output");
+  const status = qs("#report-status");
+  status.textContent = save ? "Saving..." : "Generating...";
+  output.textContent = save ? "Saving sanitized operator report..." : "Generating sanitized operator report...";
+  try {
+    const result = await api("/api/report", {
+      method: "POST",
+      body: JSON.stringify({ save }),
+    });
+    output.textContent = result.text || result.error || JSON.stringify(result, null, 2);
+    status.textContent = result.saved ? `Saved ${result.report_id || ""}`.trim() : "Preview";
+  } catch (error) {
+    output.textContent = error.message || String(error);
+    status.textContent = "Failed";
+  }
+}
+
+async function copyReport() {
+  const text = qs("#report-output").textContent || "";
+  if (!text.trim()) {
+    qs("#report-status").textContent = "Nothing to copy";
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    qs("#report-status").textContent = "Copied";
+  } catch {
+    qs("#report-status").textContent = "Copy failed";
+  }
+}
+
 async function handleApprovalClick(event) {
   const button = event.target.closest("[data-approval-action]");
   if (!button) return;
@@ -961,6 +993,9 @@ qs("#save-memory").addEventListener("click", saveMemory);
 qs("#openclaw-recover").addEventListener("click", openClawRecover);
 qs("#openclaw-start").addEventListener("click", openClawStart);
 qs("#image-test-button").addEventListener("click", analyzeDashboardImage);
+qs("#preview-report").addEventListener("click", () => generateReport(false));
+qs("#save-report").addEventListener("click", () => generateReport(true));
+qs("#copy-report").addEventListener("click", copyReport);
 qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);
 qs("#clear-dashboard-token").addEventListener("click", clearDashboardToken);
 qs("#approvals").addEventListener("click", handleApprovalClick);

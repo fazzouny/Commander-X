@@ -86,6 +86,7 @@ LOG_DIR = BASE_DIR / "logs"
 VOICE_DIR = LOG_DIR / "voice"
 IMAGE_DIR = LOG_DIR / "images"
 SCREENSHOT_DIR = LOG_DIR / "screenshots"
+DEFAULT_REPORT_DIR = BASE_DIR / "reports"
 ENV_FILE = BASE_DIR / ".env"
 SESSION_LOCK = threading.Lock()
 PROCESSES: dict[str, subprocess.Popen[str]] = {}
@@ -145,6 +146,7 @@ NL_ALLOWED_COMMANDS = {
     "/approve",
     "/cancel",
     "/audit",
+    "/report",
     "/check",
     "/focus",
     "/context",
@@ -201,6 +203,7 @@ TELEGRAM_COMMANDS = [
     ("approve", "Approve a pending action"),
     ("cancel", "Cancel a pending action"),
     ("audit", "Show approval audit history"),
+    ("report", "Show operator report"),
     ("heartbeat", "Manage automatic status updates"),
     ("remember", "Save a Commander memory"),
     ("memory", "Show saved Commander memories"),
@@ -217,6 +220,7 @@ DEFAULT_BUTTON_ROWS = [
     [("Briefs", "cmd:/briefs"), ("Feed", "cmd:/feed")],
     [("Morning", "cmd:/morning"), ("Next", "cmd:/next")],
     [("Inbox", "cmd:/inbox"), ("Approvals", "cmd:/approvals"), ("Audit", "cmd:/audit")],
+    [("Report", "cmd:/report"), ("Save Report", "cmd:/report save")],
     [("Changes", "cmd:/changes"), ("Log", "cmd:/log"), ("Diff", "cmd:/diff")],
     [("Context", "cmd:/context")],
     [("Queue", "cmd:/queue"), ("Profile", "cmd:/profile")],
@@ -3261,6 +3265,263 @@ def command_audit(limit: int = 12) -> str:
     return compact("\n".join(lines), limit=3600)
 
 
+def report_dir() -> Path:
+    configured = str(os.environ.get("COMMANDER_REPORT_DIR") or "").strip()
+    if not configured:
+        return DEFAULT_REPORT_DIR
+    path = Path(os.path.expandvars(os.path.expanduser(configured)))
+    return path if path.is_absolute() else BASE_DIR / path
+
+
+def report_limit() -> int:
+    raw = str(os.environ.get("COMMANDER_REPORT_LIMIT") or "12").strip()
+    if not raw.isdigit():
+        return 12
+    return max(4, min(40, int(raw)))
+
+
+def report_clean(value: Any, limit: int = 500) -> str:
+    return audit_clean(value, limit=limit)
+
+
+def report_items(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    value = payload.get(key)
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict) and isinstance(value.get("items"), list):
+        return [item for item in value["items"] if isinstance(item, dict)]
+    return []
+
+
+def report_counts_line(payload: dict[str, Any]) -> str:
+    sessions = payload.get("sessions") if isinstance(payload.get("sessions"), dict) else {}
+    session_values = [item for item in sessions.values() if isinstance(item, dict)] if isinstance(sessions, dict) else []
+    running = sum(1 for item in session_values if item.get("state") == "running")
+    approvals = report_items(payload, "approvals")
+    changes = report_items(payload, "changes")
+    recommendations = payload.get("recommendations") if isinstance(payload.get("recommendations"), list) else []
+    return (
+        f"Sessions: {len(session_values)} tracked, {running} running. "
+        f"Approvals: {len(approvals)} waiting. "
+        f"Changed projects: {len(changes)}. "
+        f"Recommendations: {len(recommendations)}."
+    )
+
+
+def operator_report_payload(user_id: str | None = None, limit: int | None = None, source: str = "telegram") -> dict[str, Any]:
+    user_id = user_id or active_user_id()
+    limit = limit or report_limit()
+    refresh_session_states()
+    sync_tasks_with_sessions()
+    sessions = sessions_data().get("sessions", {})
+    tasks = tasks_data().get("tasks", [])
+    changes = changed_project_details(limit=limit, max_files=0)
+    work_feed = work_feed_items(user_id=user_id, limit=limit, sessions=sessions, changes=changes, tasks=tasks)
+    briefs = session_brief_items(user_id=user_id, limit=limit, sessions=sessions, changes=changes, tasks=tasks)
+    events = audit_data().get("events", [])
+    audit_items: list[dict[str, Any]] = []
+    for event in reversed(events[-limit:]):
+        if not isinstance(event, dict):
+            continue
+        audit_items.append(
+            {
+                "at": str(event.get("at") or ""),
+                "project": report_clean(event.get("project") or "-", limit=120),
+                "approval_id": report_clean(event.get("approval_id") or "-", limit=80),
+                "type": report_clean(event.get("type") or "action", limit=80),
+                "status": report_clean(event.get("status") or "recorded", limit=80),
+                "summary": report_clean(event.get("summary") or "-", limit=500),
+            }
+        )
+    state = user_state(user_id)
+    image = state.get("last_image") if isinstance(state.get("last_image"), dict) else {}
+    recent_images = []
+    if image:
+        recent_images.append(
+            {
+                "at": str(image.get("at") or ""),
+                "kind": report_clean(image.get("kind") or "image", limit=80),
+                "summary": report_clean(image.get("summary") or "-", limit=360),
+                "risk": report_clean(image.get("risk") or "-", limit=120),
+            }
+        )
+    return {
+        "generated_at": utc_now(),
+        "source": source,
+        "active_project": report_clean(state.get("active_project") or "none", limit=120),
+        "assistant_mode": report_clean(assistant_mode(user_id), limit=80),
+        "heartbeat": {
+            "enabled": bool(state.get("heartbeat_enabled")),
+            "interval_minutes": state.get("heartbeat_interval_minutes"),
+            "quiet": report_clean(quiet_window_status(state), limit=160),
+        },
+        "sessions": sessions,
+        "session_briefs": briefs,
+        "work_feed": work_feed,
+        "approvals": pending_approvals(),
+        "audit_trail": {"items": audit_items},
+        "changes": changes,
+        "recommendations": recommendation_items(user_id=user_id, limit=limit),
+        "recent_images": recent_images,
+    }
+
+
+def format_operator_report(payload: dict[str, Any], source: str | None = None, limit: int | None = None) -> str:
+    limit = limit or report_limit()
+    generated_at = report_clean(payload.get("generated_at") or utc_now(), limit=80)
+    source = report_clean(source or payload.get("source") or "dashboard", limit=80)
+    heartbeat = payload.get("heartbeat") if isinstance(payload.get("heartbeat"), dict) else {}
+    raw_active_project = payload.get("active_project")
+    raw_mode = payload.get("assistant_mode")
+    if heartbeat and all(isinstance(value, dict) for value in heartbeat.values()):
+        heartbeat = next(iter(heartbeat.values()), {})
+        raw_active_project = raw_active_project or heartbeat.get("active_project")
+        raw_mode = raw_mode or heartbeat.get("assistant_mode")
+    active_project = report_clean(raw_active_project or "none", limit=120)
+    mode = report_clean(raw_mode or "unknown", limit=80)
+    heartbeat_state = "on" if isinstance(heartbeat, dict) and heartbeat.get("enabled") else "off"
+    heartbeat_quiet = report_clean(heartbeat.get("quiet") if isinstance(heartbeat, dict) else "-", limit=160)
+
+    lines = [
+        "# Commander X Operator Report",
+        "",
+        f"Generated: {generated_at}",
+        f"Source: {source}",
+        "",
+        "## Executive Snapshot",
+        f"- {report_counts_line(payload)}",
+        f"- Mode: {mode}; focused project: {active_project}.",
+        f"- Heartbeat: {heartbeat_state}; quiet window: {heartbeat_quiet}.",
+        "- Safety: secrets, full local paths, and technical filenames are hidden by default.",
+    ]
+
+    briefs = report_items(payload, "session_briefs")[:limit]
+    lines.extend(["", "## Session Briefs"])
+    if briefs:
+        for index, item in enumerate(briefs, start=1):
+            activity = item.get("last_activity_minutes")
+            activity_text = f"{activity} min ago" if isinstance(activity, int) else "not available"
+            attention = "yes" if item.get("needs_attention") else "no"
+            lines.extend(
+                [
+                    f"{index}. {report_clean(item.get('project'), 120)} - {report_clean(item.get('state'), 80)}",
+                    f"   Update: {report_clean(item.get('summary'), 360)}",
+                    f"   Task: {report_clean(item.get('task'), 360)}",
+                    f"   Work areas: {report_clean(item.get('areas'), 260)} ({int(item.get('changed_count') or 0)} changed)",
+                    f"   Attention needed: {attention}; blocker: {report_clean(item.get('blocker'), 220)}",
+                    f"   Last activity: {activity_text}",
+                    f"   Next: {report_clean(item.get('next_step'), 260)}",
+                ]
+            )
+    else:
+        lines.append("- No active Commander session briefs.")
+
+    feed = report_items(payload, "work_feed")[:limit]
+    lines.extend(["", "## Work Feed"])
+    if feed:
+        for index, item in enumerate(feed, start=1):
+            lines.append(
+                f"{index}. {report_clean(item.get('project'), 120)} - "
+                f"{report_clean(item.get('current_step') or item.get('phase') or item.get('state'), 260)}"
+            )
+            lines.append(f"   Direction: {report_clean(item.get('detail') or item.get('task'), 360)}")
+            lines.append(f"   Next: {report_clean(item.get('next_step') or item.get('command'), 260)}")
+    else:
+        lines.append("- No active work-feed items.")
+
+    approvals = report_items(payload, "approvals")[:limit]
+    lines.extend(["", "## Pending Approvals"])
+    if approvals:
+        for item in approvals:
+            lines.append(
+                f"- {report_clean(item.get('project'), 120)} [{report_clean(item.get('id'), 80)}]: "
+                f"{report_clean(item.get('type'), 80)} - {report_clean(item.get('message') or item.get('branch'), 280)}"
+            )
+    else:
+        lines.append("- None.")
+
+    conversation = report_items(payload, "conversation")[:limit]
+    lines.extend(["", "## Conversation Signals"])
+    if conversation:
+        for item in conversation:
+            lines.append(
+                f"- {report_clean(item.get('direction') or item.get('actor'), 120)}: "
+                f"{report_clean(item.get('summary'), 360)}"
+            )
+    else:
+        lines.append("- No recent conversation signals included in this snapshot.")
+
+    suggestions = report_items(payload, "decision_suggestions")[:limit]
+    lines.extend(["", "## Decision Memory Suggestions"])
+    if suggestions:
+        for item in suggestions:
+            lines.append(f"- {report_clean(item.get('title'), 160)}: {report_clean(item.get('note'), 500)}")
+    else:
+        lines.append("- No unsaved decision-memory suggestions.")
+
+    audit = report_items(payload, "audit_trail")[:limit]
+    lines.extend(["", "## Approval Audit"])
+    if audit:
+        for item in audit:
+            lines.append(
+                f"- {report_clean(item.get('at'), 80)}: {report_clean(item.get('status'), 80)} "
+                f"{report_clean(item.get('type'), 80)} for {report_clean(item.get('project'), 120)}. "
+                f"{report_clean(item.get('summary'), 360)}"
+            )
+    else:
+        lines.append("- No approval audit events recorded.")
+
+    images = report_items(payload, "recent_images")[:limit]
+    lines.extend(["", "## Recent Image Context"])
+    if images:
+        for item in images:
+            lines.append(
+                f"- {report_clean(item.get('kind'), 80)}: {report_clean(item.get('summary'), 360)} "
+                f"(risk: {report_clean(item.get('risk'), 120)})"
+            )
+    else:
+        lines.append("- No recent image context.")
+
+    recommendations = payload.get("recommendations") if isinstance(payload.get("recommendations"), list) else []
+    lines.extend(["", "## Recommended Next Actions"])
+    if recommendations:
+        for index, item in enumerate(recommendations[:limit], start=1):
+            lines.append(f"{index}. {report_clean(item, 420)}")
+    else:
+        lines.append("- No urgent recommendations.")
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def save_operator_report(markdown: str) -> Path:
+    directory = report_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    path = directory / f"commander-x-report-{stamp}.md"
+    path.write_text(redact(markdown), encoding="utf-8")
+    return path
+
+
+def command_report(args: list[str], user_id: str) -> str:
+    save_requested = any(arg.lower() in {"save", "export", "archive", "write"} for arg in args)
+    show_details = any(arg.lower() in {"path", "file", "details", "full"} for arg in args)
+    payload = operator_report_payload(user_id=user_id, source="telegram")
+    markdown = format_operator_report(payload, source="telegram")
+    if not save_requested:
+        return compact(markdown, limit=3600)
+    path = save_operator_report(markdown)
+    report_id = path.stem.removeprefix("commander-x-report-")
+    lines = [
+        "Saved Commander X operator report.",
+        f"Report ID: {report_id}",
+        "Open the dashboard for the full preview, or ask for /report to see the current snapshot.",
+    ]
+    if show_details:
+        lines.append(f"Local file: {path}")
+    lines.extend(["", markdown])
+    return compact("\n".join(lines), limit=3600)
+
+
 def inbox_items(user_id: str | None = None, limit: int = 12) -> list[dict[str, str]]:
     user_id = user_id or active_user_id()
     items: list[dict[str, str]] = []
@@ -4960,6 +5221,7 @@ def command_help() -> str:
 /approve <project> [approval_id]
 /cancel <project> [approval_id]
 /audit
+/report [save]
 /heartbeat on [minutes]
 /heartbeat off
 /heartbeat status
@@ -5509,6 +5771,8 @@ def natural_computer_command(text: str) -> str | None:
         return "/tools"
     if re.search(r"\b(audit|approval history|approved history|what was approved|what got cancelled|decision history)\b", lowered):
         return "/audit"
+    if re.search(r"\b(operator report|commander report|status report|export report|report snapshot|briefing pack)\b", lowered):
+        return "/report"
     if re.search(r"\b(approvals?|approve list|pending approvals?|decisions? to approve|approve or cancel)\b", lowered):
         return "/approvals"
     if re.search(r"\b(inbox|what needs my attention|needs attention|pending items|what needs me|decision inbox)\b", lowered):
@@ -5634,6 +5898,7 @@ Allowed commands:
 /changes [project]
 /feed [project]
 /briefs [project]
+/report [save]
 /watch [project]
 /brief [project]
 /morning
@@ -5668,6 +5933,7 @@ Allowed commands:
 /approve <project> [approval_id]
 /cancel <project> [approval_id]
 /audit
+/report [save]
 /check
 /heartbeat on [minutes]
 /heartbeat off
@@ -5709,6 +5975,7 @@ Rules:
 - If the user asks what needs their attention, decisions, inbox, or pending items, map to /inbox.
 - If the user asks for approvals, pending approvals, approve list, or decisions to approve/cancel, map to /approvals.
 - If the user asks for approval history, audit trail, what was approved, or what was cancelled, map to /audit.
+- If the user asks for an operator report, Commander report, exportable status report, report snapshot, or briefing pack, map to /report.
 - If the user asks for changed projects, dirty worktrees, local changes, or changes across projects, map to /changes.
 - If the user asks for a work feed, live feed, or all project/Codex progress, map to /feed.
 - If the user asks for an executive brief, plain-English session update, non-technical update, or what Codex is doing right now, map to /briefs.
@@ -5859,6 +6126,8 @@ def handle_text(
         return [command_approvals()]
     if command == "/audit":
         return [command_audit()]
+    if command == "/report":
+        return [command_report(args, user_id=user_id)]
     if command == "/changes":
         return [command_changes(args, user_id=user_id)]
     if command == "/feed":

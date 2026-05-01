@@ -8,6 +8,8 @@ project_profiles.json
 computer_tools.json
 logs/*
 !logs/.gitkeep
+reports/*
+!reports/.gitkeep
 sessions.json
 commander_state.json
 *.tmp

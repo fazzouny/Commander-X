@@ -274,6 +274,50 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(images[0]["user"], "Dashboard upload")
         self.assertEqual(images[0]["suggested_commands"], ["/status"])
 
+    def test_dashboard_report_action_builds_sanitized_markdown(self) -> None:
+        original_payload = dashboard.dashboard_payload
+        try:
+            dashboard.dashboard_payload = lambda: {  # type: ignore[assignment]
+                "generated_at": "2026-05-01T12:00:00+00:00",
+                "source": "dashboard",
+                "active_project": "example",
+                "assistant_mode": "free",
+                "heartbeat": {"enabled": False, "quiet": "inactive"},
+                "sessions": {"example": {"state": "running"}},
+                "session_briefs": [
+                    {
+                        "project": "example",
+                        "state": "running",
+                        "summary": "Working in C:\\Users\\Name\\repo\\secret.py",
+                        "task": "Audit onboarding",
+                        "areas": "src/app.ts",
+                        "changed_count": 1,
+                        "needs_attention": False,
+                        "blocker": "none",
+                        "next_step": "Review README.md",
+                    }
+                ],
+                "work_feed": [],
+                "approvals": [],
+                "conversation": {"items": [{"direction": "User asked", "summary": "Open C:\\Users\\Name\\repo\\.env"}]},
+                "decision_suggestions": [],
+                "audit_trail": {"items": []},
+                "recent_images": [],
+                "changes": [{"project": "example", "changed_count": 1, "areas": "src/app.ts"}],
+                "recommendations": [],
+            }
+
+            result, status = dashboard.dashboard_report_action({"save": False})
+        finally:
+            dashboard.dashboard_payload = original_payload  # type: ignore[assignment]
+
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertIn("Commander X Operator Report", result["text"])
+        self.assertIn("technical path", result["text"])
+        self.assertNotIn("C:\\Users", result["text"])
+        self.assertNotIn("secret.py", result["text"])
+
     def test_dashboard_image_analyze_rejects_non_image_payload(self) -> None:
         result, status = dashboard.dashboard_image_analyze_action({"data_url": "data:text/plain;base64,aGVsbG8="})
 

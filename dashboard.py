@@ -1016,6 +1016,23 @@ def dashboard_decision_memory_action(payload: dict[str, Any]) -> tuple[dict[str,
     return {"ok": True, "memory": item, "text": f"Saved decision memory {item['id']}."}, 200
 
 
+def dashboard_report_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    save = bool(payload.get("save"))
+    snapshot = dashboard_payload()
+    markdown = commander.format_operator_report(snapshot, source="dashboard")
+    response: dict[str, Any] = {"ok": True, "text": markdown, "saved": False}
+    if save:
+        path = commander.save_operator_report(markdown)
+        response.update(
+            {
+                "saved": True,
+                "report_id": path.stem.removeprefix("commander-x-report-"),
+                "text": "Saved Commander X operator report.\n\n" + markdown,
+            }
+        )
+    return response, 200
+
+
 def dashboard_project_read_action(project_id: str, action: str) -> tuple[dict[str, Any], int]:
     project_id = project_id.strip()
     if not project_id:
@@ -1180,6 +1197,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/decision-memory":
             result, status = dashboard_decision_memory_action(payload)
             invalidate_dashboard_cache()
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/report":
+            result, status = dashboard_report_action(payload)
             self.send_json(result, status=status)
             return
         if parsed.path == "/api/approval/approve":
