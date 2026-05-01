@@ -9,6 +9,7 @@ It is intentionally narrow:
 - Codex runs through `codex exec`
 - natural-language messages are routed through OpenAI into safe Commander actions
 - Telegram voice notes are transcribed with OpenAI, then routed through the same command parser
+- Telegram images/screenshots are summarized with OpenAI vision and stored as short recent context for follow-up instructions
 - Telegram responses use HTML formatting and inline action buttons
 - automatic heartbeat summaries can be sent back to Telegram
 - heartbeat summaries use executive briefs and hide technical filenames by default
@@ -29,7 +30,7 @@ It is intentionally narrow:
 1. Create a Telegram bot with BotFather and copy the bot token.
 2. Copy `.env.example` to `.env`.
 3. Put the bot token in `.env` as `TELEGRAM_BOT_TOKEN=...`.
-4. Add your OpenAI API key in `.env` as `OPENAI_API_KEY=...` if you want voice notes.
+4. Add your OpenAI API key in `.env` as `OPENAI_API_KEY=...` if you want voice notes or image understanding.
 5. Start Commander:
 
 ```powershell
@@ -217,6 +218,25 @@ stop example app
 ```
 
 The transcript is sent back before Commander executes the normalized command.
+
+## Image Commands
+
+Images and screenshots are downloaded locally under `logs\images\`, summarized with `OPENAI_IMAGE_MODEL`, and saved as recent Telegram image context for follow-up instructions.
+
+Commander does not execute actions from an image alone. It returns:
+
+- a plain-English summary
+- visible text or issue, with secrets suppressed
+- likely intent
+- safe suggested Commander slash commands
+
+After sending an image, you can follow up with text or voice like:
+
+```text
+What is wrong here?
+Make this work for the focused project.
+Use this screenshot and start a Codex task.
+```
 
 ## Telegram Command Menu
 

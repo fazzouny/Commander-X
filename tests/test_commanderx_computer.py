@@ -22,6 +22,53 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(apps["chrome"], ["chrome.exe"])
         self.assertEqual(apps["solo"], ["solo.exe"])
 
+    def test_image_media_from_photo_selects_largest_photo(self) -> None:
+        message = {
+            "photo": [
+                {"file_id": "small", "file_size": 100, "width": 90, "height": 90},
+                {"file_id": "large", "file_size": 2000, "width": 900, "height": 900},
+            ]
+        }
+
+        media = commander.image_media_from_message(message)
+
+        self.assertIsNotNone(media)
+        self.assertEqual(media["file_id"], "large")
+        self.assertEqual(media["mime_type"], "image/jpeg")
+
+    def test_image_media_from_image_document(self) -> None:
+        media = commander.image_media_from_message(
+            {
+                "document": {
+                    "file_id": "doc1",
+                    "file_size": 123,
+                    "mime_type": "image/png",
+                    "file_name": "screenshot.png",
+                }
+            }
+        )
+
+        self.assertIsNotNone(media)
+        self.assertEqual(media["suffix"], ".png")
+        self.assertEqual(media["kind"], "image document")
+
+    def test_image_analysis_format_sanitizes_commands_and_context(self) -> None:
+        payload = commander.sanitize_image_analysis(
+            {
+                "summary": "Login page has an error",
+                "visible_text": "api_key: sk-test-placeholder",
+                "likely_intent": "debug screenshot",
+                "risk": "medium",
+                "suggested_commands": ["/status", "/run rm -rf /"],
+            }
+        )
+        text = commander.format_image_analysis(payload, caption="fix this screenshot")
+
+        self.assertIn("Login page has an error", text)
+        self.assertIn("[REDACTED]", text)
+        self.assertIn("/status", text)
+        self.assertNotIn("/run", text)
+
     def test_natural_computer_command_routes_common_actions(self) -> None:
         self.assertEqual(commander.natural_computer_command("visit example.com"), "/open url example.com")
         self.assertEqual(commander.natural_computer_command("inspect website example.com"), "/browser inspect example.com")
@@ -103,6 +150,11 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.summarize_process_rows(snapshot["process_rows"]), ["123 openclaw.exe"])
         self.assertFalse(commander.is_openclaw_process_row("456 python.exe commander.py --local /openclaw"))
         self.assertFalse(commander.is_openclaw_process_row("789 powershell.exe C:\\Repos\\codex-commander /openclaw"))
+
+    def test_openclaw_process_timeout_is_bounded(self) -> None:
+        self.assertEqual(commander.openclaw_process_timeout({"COMMANDER_OPENCLAW_PROCESS_TIMEOUT_SECONDS": "1"}), 2)
+        self.assertEqual(commander.openclaw_process_timeout({"COMMANDER_OPENCLAW_PROCESS_TIMEOUT_SECONDS": "99"}), 30)
+        self.assertEqual(commander.openclaw_process_timeout({"COMMANDER_OPENCLAW_PROCESS_TIMEOUT_SECONDS": "bad"}), 8)
 
     def test_openclaw_recovery_report_is_research_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

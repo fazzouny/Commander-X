@@ -83,6 +83,7 @@ COMPUTER_TOOLS_FILE = BASE_DIR / "computer_tools.json"
 SYSTEM_PROMPT_FILE = BASE_DIR / "system_prompt.md"
 LOG_DIR = BASE_DIR / "logs"
 VOICE_DIR = LOG_DIR / "voice"
+IMAGE_DIR = LOG_DIR / "images"
 SCREENSHOT_DIR = LOG_DIR / "screenshots"
 ENV_FILE = BASE_DIR / ".env"
 SESSION_LOCK = threading.Lock()
@@ -93,6 +94,7 @@ WINDOWS_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 MAX_TELEGRAM_MESSAGE = 3900
 DEFAULT_LOG_LINES = 80
 MAX_OPENAI_AUDIO_BYTES = 25 * 1024 * 1024
+DEFAULT_MAX_OPENAI_IMAGE_BYTES = 10 * 1024 * 1024
 DEFAULT_HEARTBEAT_MINUTES = 30
 DEFAULT_QUIET_START = "23:00"
 DEFAULT_QUIET_END = "08:00"
@@ -502,7 +504,7 @@ def computer_tools_config() -> dict[str, Any]:
 def env_readiness() -> dict[str, dict[str, str]]:
     groups: dict[str, list[str]] = {
         "core": ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS", "OPENAI_API_KEY"],
-        "models": ["OPENAI_COMMAND_MODEL", "OPENAI_TRANSCRIBE_MODEL", "OPENAI_VOICE_MODEL", "OPENAI_VOICE"],
+        "models": ["OPENAI_COMMAND_MODEL", "OPENAI_IMAGE_MODEL", "OPENAI_TRANSCRIBE_MODEL", "OPENAI_VOICE_MODEL", "OPENAI_VOICE"],
         "dashboard": ["COMMANDER_DASHBOARD_HOST", "COMMANDER_DASHBOARD_PORT", "COMMANDER_DASHBOARD_TOKEN"],
         "clickup": ["CLICKUP_API_TOKEN", "CLICKUP_WORKSPACE_ID"],
         "meta_ads": ["META_APP_ID", "META_APP_SECRET", "META_ACCESS_TOKEN", "META_AD_ACCOUNT_ID", "META_BUSINESS_ID"],
@@ -521,6 +523,8 @@ def env_readiness() -> dict[str, dict[str, str]]:
     readiness: dict[str, dict[str, str]] = {}
     for group, keys in groups.items():
         readiness[group] = {key: ("configured" if os.environ.get(key) else "missing") for key in keys}
+    if readiness.get("models", {}).get("OPENAI_IMAGE_MODEL") == "missing" and os.environ.get("OPENAI_COMMAND_MODEL"):
+        readiness["models"]["OPENAI_IMAGE_MODEL"] = "configured via OPENAI_COMMAND_MODEL fallback"
     return readiness
 
 
@@ -528,12 +532,21 @@ def openai_config() -> dict[str, str]:
     return {
         "api_key": os.environ.get("OPENAI_API_KEY", ""),
         "command_model": os.environ.get("OPENAI_COMMAND_MODEL", "gpt-4o-mini"),
+        "image_model": os.environ.get("OPENAI_IMAGE_MODEL", os.environ.get("OPENAI_COMMAND_MODEL", "gpt-4o-mini")),
         "transcribe_model": os.environ.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"),
         "transcribe_prompt": os.environ.get(
             "OPENAI_TRANSCRIBE_PROMPT",
             (
                 "Transcribe this as a command for Codex Commander. Preserve project IDs, "
                 "approval IDs, branch names, command words, and technical terms exactly."
+            ),
+        ),
+        "image_prompt": os.environ.get(
+            "OPENAI_IMAGE_PROMPT",
+            (
+                "Analyze this Telegram image for Commander X. Summarize the useful operator context, "
+                "visible issue, important visible text, and safest next Commander actions. Never reproduce secrets, "
+                "tokens, private keys, credentials, or full local paths."
             ),
         ),
     }
@@ -1795,6 +1808,14 @@ def openclaw_plugin_sources(plugins_json: Path) -> list[dict[str, str]]:
     return rows
 
 
+def openclaw_process_timeout(env: dict[str, str] | None = None) -> int:
+    env = env or os.environ
+    raw = env.get("COMMANDER_OPENCLAW_PROCESS_TIMEOUT_SECONDS", "8")
+    if raw.isdigit():
+        return max(2, min(30, int(raw)))
+    return 8
+
+
 def is_openclaw_process_row(row: str) -> bool:
     lowered = row.lower()
     if "commander.py" in lowered or "codex-commander" in lowered:
@@ -1832,7 +1853,7 @@ def openclaw_status_snapshot(
         except OSError:
             skills_count = 0
     plugin_sources = openclaw_plugin_sources(locations["plugins_json"])
-    raw_process_rows = process_rows if process_rows is not None else computer_process_lines(["openclaw", "claw-code", "run-claw"])
+    raw_process_rows = process_rows if process_rows is not None else computer_process_lines(["openclaw", "claw-code", "run-claw"], timeout=openclaw_process_timeout(env))
     process_rows = [row for row in raw_process_rows if is_openclaw_process_row(row)]
     launchers = [
         ("PATH command", Path(cli) if cli else None),
@@ -2946,7 +2967,7 @@ def command_env() -> str:
     readiness = env_readiness()
     lines = ["Commander environment readiness"]
     for group, keys in readiness.items():
-        configured = sum(1 for status in keys.values() if status == "configured")
+        configured = sum(1 for status in keys.values() if str(status).startswith("configured"))
         lines.append("")
         lines.append(f"{group}: {configured}/{len(keys)} configured")
         for key, status in keys.items():
@@ -5016,6 +5037,181 @@ def openai_chat_json(messages: list[dict[str, str]], temperature: float = 0.0) -
     return extract_json_object(str(content))
 
 
+def max_openai_image_bytes() -> int:
+    raw = os.environ.get("COMMANDER_MAX_IMAGE_BYTES", "")
+    if raw.isdigit():
+        return max(128 * 1024, min(25 * 1024 * 1024, int(raw)))
+    return DEFAULT_MAX_OPENAI_IMAGE_BYTES
+
+
+def image_media_from_message(message: dict[str, Any]) -> dict[str, Any] | None:
+    photos = message.get("photo")
+    if isinstance(photos, list) and photos:
+        candidates = [photo for photo in photos if isinstance(photo, dict) and photo.get("file_id")]
+        if not candidates:
+            return None
+        selected = sorted(
+            candidates,
+            key=lambda item: (
+                int(item.get("file_size", 0) or 0),
+                int(item.get("width", 0) or 0) * int(item.get("height", 0) or 0),
+            ),
+            reverse=True,
+        )[0]
+        return {
+            "file_id": str(selected.get("file_id") or ""),
+            "file_size": int(selected.get("file_size", 0) or 0),
+            "mime_type": "image/jpeg",
+            "suffix": ".jpg",
+            "kind": "photo",
+        }
+    document = message.get("document")
+    if isinstance(document, dict):
+        mime_type = str(document.get("mime_type") or "")
+        if not mime_type.startswith("image/"):
+            return None
+        file_name = str(document.get("file_name") or "")
+        suffix = Path(file_name).suffix.lower()
+        if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+            suffix = ".jpg" if mime_type == "image/jpeg" else ".png"
+        return {
+            "file_id": str(document.get("file_id") or ""),
+            "file_size": int(document.get("file_size", 0) or 0),
+            "mime_type": mime_type,
+            "suffix": suffix,
+            "kind": "image document",
+        }
+    return None
+
+
+def image_content_type(path: Path, telegram_mime_type: str | None = None) -> str:
+    if telegram_mime_type and telegram_mime_type.startswith("image/"):
+        return telegram_mime_type
+    suffix = path.suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".png":
+        return "image/png"
+    if suffix == ".webp":
+        return "image/webp"
+    if suffix == ".gif":
+        return "image/gif"
+    return "image/jpeg"
+
+
+def image_data_url(path: Path, telegram_mime_type: str | None = None) -> str:
+    size = path.stat().st_size
+    if size > max_openai_image_bytes():
+        raise RuntimeError(f"Image file is too large. Limit: {max_openai_image_bytes() // (1024 * 1024)} MB.")
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{image_content_type(path, telegram_mime_type)};base64,{encoded}"
+
+
+def sanitize_image_analysis(payload: dict[str, Any]) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    for key in ("summary", "visible_text", "likely_intent", "risk"):
+        sanitized[key] = compact(str(payload.get(key) or "-"), limit=900)
+    commands = payload.get("suggested_commands")
+    if not isinstance(commands, list):
+        commands = []
+    safe_commands: list[str] = []
+    for command in commands[:4]:
+        value = str(command or "").strip()
+        if not value.startswith("/"):
+            continue
+        try:
+            safe_commands.append(validate_generated_command(value))
+        except Exception:
+            continue
+    sanitized["suggested_commands"] = safe_commands
+    return sanitized
+
+
+def openai_image_analysis(path: Path, caption: str = "", telegram_mime_type: str | None = None) -> dict[str, Any]:
+    cfg = openai_config()
+    api_key = cfg["api_key"]
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is missing in .env.")
+    data_url = image_data_url(path, telegram_mime_type)
+    prompt = cfg["image_prompt"]
+    if caption.strip():
+        prompt += f"\n\nTelegram caption from user: {caption.strip()}"
+    payload = {
+        "model": cfg["image_model"],
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Return JSON only. You are a safe visual assistant for a Telegram-controlled local agent. "
+                    "Do not return raw shell commands. Suggested commands must be existing Commander slash commands only. "
+                    "If sensitive values are visible, say sensitive information may be visible but do not transcribe it."
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            },
+        ],
+        "temperature": 0.0,
+        "response_format": {"type": "json_object"},
+    }
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"OpenAI image analysis failed: HTTP {exc.code}: {redact(error_body)}") from exc
+    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+    return sanitize_image_analysis(extract_json_object(str(content)))
+
+
+def format_image_analysis(analysis: dict[str, Any], caption: str = "") -> str:
+    lines = ["Image received", "Commander analyzed it safely. I did not run an action from the image alone.", ""]
+    if caption.strip():
+        lines.append(f"Caption: {safe_brief_text(caption)}")
+    lines.extend(
+        [
+            f"Summary: {analysis.get('summary') or '-'}",
+            f"Visible text: {analysis.get('visible_text') or '-'}",
+            f"Likely intent: {analysis.get('likely_intent') or '-'}",
+            f"Risk: {analysis.get('risk') or '-'}",
+        ]
+    )
+    commands = analysis.get("suggested_commands") if isinstance(analysis.get("suggested_commands"), list) else []
+    if commands:
+        lines.extend(["", "Suggested Commander actions:"])
+        lines.extend(f"- {command}" for command in commands[:4])
+    lines.extend(["", "Send a text or voice instruction if you want me to act on this image."])
+    return compact("\n".join(lines), limit=3600)
+
+
+def last_image_context_summary(user_id: str) -> str:
+    state = user_state(user_id)
+    image = state.get("last_image") if isinstance(state.get("last_image"), dict) else {}
+    if not image:
+        return "No recent image."
+    lines = [
+        f"At: {image.get('at') or '-'}",
+        f"Summary: {image.get('summary') or '-'}",
+        f"Visible text: {image.get('visible_text') or '-'}",
+        f"Likely intent: {image.get('likely_intent') or '-'}",
+        f"Risk: {image.get('risk') or '-'}",
+    ]
+    return compact("\n".join(lines), limit=1200)
+
+
 def session_brief() -> str:
     refresh_session_states()
     data = sessions_data()
@@ -5353,6 +5549,7 @@ Rules:
 - Return JSON only.
 - Never invent or run raw shell commands.
 - Prefer the active project when the user says "this project", "it", or omits the project.
+- If the user says "this image", "the screenshot", "what I sent", or "make it work" after an image, use the Recent Telegram image context to understand intent, but still map only to safe slash commands.
 - If the user names a project that is not in Registered projects, return a reply saying it is not registered instead of using the active project.
 - If the user asks to work/fix/audit/build in a project, map to /start.
 - If the user asks for automatic updates, map to /heartbeat on <minutes>.
@@ -5419,6 +5616,9 @@ Relevant Commander memory:
 
 Active project context:
 {active_context}
+
+Recent Telegram image context:
+{last_image_context_summary(user_id)}
 """
     try:
         routed = openai_chat_json(
@@ -5819,14 +6019,57 @@ def handle_voice_message(
     return responses
 
 
+def handle_image_message(
+    bot: TelegramBot,
+    message: dict[str, Any],
+    user_id: str,
+    user_name: str,
+    chat_id: int | str | None = None,
+) -> list[str]:
+    if not is_authorized(user_id):
+        configured = bool(allowed_user_ids())
+        hint = "Add this ID to allowlist.json or TELEGRAM_ALLOWED_USER_IDS." if not configured else "This user ID is not allowlisted."
+        return [f"Unauthorized.\nYour user ID: {user_id}\n{hint}"]
+
+    media = image_media_from_message(message)
+    if not media:
+        return []
+    file_id = str(media.get("file_id") or "")
+    if not file_id:
+        return ["Telegram image did not include a file_id."]
+    file_size = int(media.get("file_size", 0) or 0)
+    if file_size and file_size > max_openai_image_bytes():
+        return [f"Image is too large for analysis. Keep it under {max_openai_image_bytes() // (1024 * 1024)} MB."]
+
+    caption = str(message.get("caption") or "").strip()
+    local_path = bot.download_file(file_id, IMAGE_DIR, preferred_suffix=str(media.get("suffix") or ".jpg"))
+    analysis = openai_image_analysis(local_path, caption=caption, telegram_mime_type=str(media.get("mime_type") or ""))
+    update_user_state(
+        user_id,
+        {
+            "last_image": {
+                "at": utc_now(),
+                "kind": media.get("kind"),
+                "summary": analysis.get("summary"),
+                "visible_text": analysis.get("visible_text"),
+                "likely_intent": analysis.get("likely_intent"),
+                "risk": analysis.get("risk"),
+                "suggested_commands": analysis.get("suggested_commands", []),
+            },
+            **({"last_chat_id": chat_id} if chat_id is not None else {}),
+        },
+    )
+    return [format_image_analysis(analysis, caption=caption)]
+
+
 def handle_unsupported_media_message(message: dict[str, Any]) -> list[str]:
     if message.get("photo"):
-        return ["I received image(s), but image understanding is not wired into Commander yet. Describe what you want me to do, or send a text/voice command."]
+        return ["I received image(s), but could not analyze them. Describe what you want me to do, or send a text/voice command."]
     if message.get("document"):
         document = message.get("document") or {}
         mime_type = str(document.get("mime_type", ""))
         if mime_type.startswith("image/"):
-            return ["I received an image file, but image understanding is not wired into Commander yet. Describe what you want me to do, or send a text/voice command."]
+            return ["I received an image file, but could not analyze it. Describe what you want me to do, or send a text/voice command."]
         return ["I received a document, but document handling is not wired into Commander yet."]
     if message.get("video"):
         return ["I received a video, but video handling is not wired into Commander yet."]
@@ -5951,6 +6194,16 @@ def poll_forever() -> None:
                         responses = handle_voice_message(bot, message, user_id=user_id, user_name=user_name, chat_id=chat_id)
                     except Exception as exc:
                         responses = [f"Voice command failed: {redact(str(exc))}"]
+                    for response in responses:
+                        log_outgoing(user_id, response)
+                        bot.send_response(chat_id, user_id, response)
+                    continue
+                if message.get("photo") or (isinstance(message.get("document"), dict) and str(message.get("document", {}).get("mime_type", "")).startswith("image/")):
+                    print(f"{utc_now()} {user_id} [image message]", flush=True)
+                    try:
+                        responses = handle_image_message(bot, message, user_id=user_id, user_name=user_name, chat_id=chat_id)
+                    except Exception as exc:
+                        responses = [f"Image analysis failed: {redact(str(exc))}"]
                     for response in responses:
                         log_outgoing(user_id, response)
                         bot.send_response(chat_id, user_id, response)

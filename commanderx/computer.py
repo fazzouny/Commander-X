@@ -105,7 +105,7 @@ $bitmap.Dispose()
     return True, str(output)
 
 
-def process_lines(names: list[str]) -> list[str]:
+def process_lines(names: list[str], timeout: int = 30) -> list[str]:
     cleaned = [name.strip() for name in names if name.strip()]
     if not cleaned:
         cleaned = ["python.exe", "codex.exe", "node.exe"]
@@ -128,7 +128,7 @@ def process_lines(names: list[str]) -> list[str]:
                 "-Command",
                 script,
             ],
-            timeout=30,
+            timeout=timeout,
         )
         text = (result.stdout or result.stderr).strip()
         if not text:
@@ -149,7 +149,7 @@ def process_lines(names: list[str]) -> list[str]:
             return lines
         except json.JSONDecodeError:
             return text.splitlines()
-    result = run_command(["ps", "aux"], timeout=30)
+    result = run_command(["ps", "aux"], timeout=timeout)
     lines = []
     for line in result.stdout.splitlines():
         if any(name.lower() in line.lower() for name in cleaned):
