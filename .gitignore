@@ -2,6 +2,7 @@
 allowlist.json
 projects.json
 memory.json
+audit_log.json
 tasks.json
 project_profiles.json
 computer_tools.json

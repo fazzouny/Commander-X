@@ -77,6 +77,7 @@ PROJECTS_FILE = BASE_DIR / "projects.json"
 SESSIONS_FILE = BASE_DIR / "sessions.json"
 STATE_FILE = BASE_DIR / "commander_state.json"
 MEMORY_FILE = BASE_DIR / "memory.json"
+AUDIT_FILE = BASE_DIR / "audit_log.json"
 TASKS_FILE = BASE_DIR / "tasks.json"
 PROFILES_FILE = BASE_DIR / "project_profiles.json"
 COMPUTER_TOOLS_FILE = BASE_DIR / "computer_tools.json"
@@ -143,6 +144,7 @@ NL_ALLOWED_COMMANDS = {
     "/push",
     "/approve",
     "/cancel",
+    "/audit",
     "/check",
     "/focus",
     "/context",
@@ -198,6 +200,7 @@ TELEGRAM_COMMANDS = [
     ("push", "Prepare push for approval"),
     ("approve", "Approve a pending action"),
     ("cancel", "Cancel a pending action"),
+    ("audit", "Show approval audit history"),
     ("heartbeat", "Manage automatic status updates"),
     ("remember", "Save a Commander memory"),
     ("memory", "Show saved Commander memories"),
@@ -213,7 +216,7 @@ DEFAULT_BUTTON_ROWS = [
     [("Mode", "cmd:/mode"), ("Free Mode", "cmd:/free")],
     [("Briefs", "cmd:/briefs"), ("Feed", "cmd:/feed")],
     [("Morning", "cmd:/morning"), ("Next", "cmd:/next")],
-    [("Inbox", "cmd:/inbox"), ("Approvals", "cmd:/approvals")],
+    [("Inbox", "cmd:/inbox"), ("Approvals", "cmd:/approvals"), ("Audit", "cmd:/audit")],
     [("Changes", "cmd:/changes"), ("Log", "cmd:/log"), ("Diff", "cmd:/diff")],
     [("Context", "cmd:/context")],
     [("Queue", "cmd:/queue"), ("Profile", "cmd:/profile")],
@@ -567,6 +570,63 @@ def memory_data() -> dict[str, Any]:
 
 def save_memory(data: dict[str, Any]) -> None:
     write_json(MEMORY_FILE, data)
+
+
+def audit_data() -> dict[str, Any]:
+    return read_json(AUDIT_FILE, {"events": []})
+
+
+def save_audit(data: dict[str, Any]) -> None:
+    write_json(AUDIT_FILE, data)
+
+
+def audit_clean(value: Any, limit: int = 500) -> str:
+    return safe_brief_text(compact(str(value or "-"), limit=limit))
+
+
+def audit_event_summary(action: dict[str, Any]) -> str:
+    action_type = str(action.get("type") or "action")
+    if action_type == "commit":
+        return f"Commit prepared: {audit_clean(action.get('message') or '-')}"
+    if action_type == "push":
+        return f"Push prepared for branch {audit_clean(action.get('branch') or '-')}"
+    if action_type == "mcp_add":
+        name = audit_clean(action.get("name") or "MCP server")
+        command = " ".join(str(item) for item in action.get("command", [])[:4]) if isinstance(action.get("command"), list) else ""
+        return f"MCP install prepared: {name}" + (f" via {audit_clean(command)}" if command else "")
+    if action_type == "openclaw_clone":
+        return f"OpenClaw clone prepared: {audit_clean(action.get('full_name') or action.get('repo_url') or '-')}"
+    if action_type == "openclaw_start":
+        return "OpenClaw start prepared"
+    return audit_clean(action.get("message") or action_type)
+
+
+def record_audit_event(
+    project_id: str,
+    action: dict[str, Any],
+    status: str,
+    approval_id: str | None = None,
+    result: str | None = None,
+) -> dict[str, Any]:
+    data = audit_data()
+    action_type = str(action.get("type") or "action")
+    item = {
+        "id": secrets.token_hex(4),
+        "at": utc_now(),
+        "project": audit_clean(project_id or "commander", limit=120),
+        "approval_id": audit_clean(approval_id or action.get("id") or "-", limit=80),
+        "type": audit_clean(action_type, limit=80),
+        "status": audit_clean(status, limit=80),
+        "branch": audit_clean(action.get("branch") or "-", limit=160),
+        "summary": audit_event_summary(action),
+    }
+    if result:
+        item["result"] = audit_clean(result, limit=500)
+    events = data.setdefault("events", [])
+    events.append(item)
+    data["events"] = events[-200:]
+    save_audit(data)
+    return item
 
 
 def tasks_data() -> dict[str, Any]:
@@ -3180,6 +3240,27 @@ def command_approvals() -> str:
     return compact("\n".join(lines), limit=3600)
 
 
+def command_audit(limit: int = 12) -> str:
+    events = audit_data().get("events", [])
+    if not events:
+        return "No approval audit events recorded yet."
+    lines = ["Approval audit:"]
+    for event in reversed(events[-limit:]):
+        if not isinstance(event, dict):
+            continue
+        status = audit_clean(event.get("status") or "recorded", limit=80)
+        action_type = audit_clean(event.get("type") or "action", limit=80)
+        project = audit_clean(event.get("project") or "-", limit=120)
+        at = str(event.get("at") or "-")
+        summary = audit_clean(event.get("summary") or "-", limit=280)
+        approval_id = audit_clean(event.get("approval_id") or "-", limit=80)
+        lines.append(f"- {at}: {status} {action_type} for {project} [{approval_id}]")
+        lines.append(f"  {summary}")
+    lines.append("")
+    lines.append("Technical paths, filenames, and secrets are hidden in this view.")
+    return compact("\n".join(lines), limit=3600)
+
+
 def inbox_items(user_id: str | None = None, limit: int = 12) -> list[dict[str, str]]:
     user_id = user_id or active_user_id()
     items: list[dict[str, str]] = []
@@ -4636,6 +4717,7 @@ def add_pending_action(project_id: str, action: dict[str, Any]) -> str:
     session.setdefault("pending_actions", {})[pending_id] = action
     session["updated_at"] = utc_now()
     save_sessions(data)
+    record_audit_event(project_id, action, "prepared", approval_id=pending_id)
     return pending_id
 
 
@@ -4774,6 +4856,7 @@ def execute_pending(project_id: str, pending_id: str | None) -> str:
     pending.pop(pending_id, None)
     session["updated_at"] = utc_now()
     save_sessions(data)
+    record_audit_event(project_id, action, "approved", approval_id=pending_id, result=result)
     return f"Approved and executed {action_type} for {project_id}.\n{result}"
 
 
@@ -4791,10 +4874,12 @@ def command_cancel(project_id: str, pending_id: str | None) -> str:
         pending_id = next(iter(pending))
     if pending_id not in pending:
         return f"No pending action {pending_id} for {project_id}."
-    action_type = pending[pending_id].get("type", "action")
+    action = pending[pending_id]
+    action_type = action.get("type", "action")
     pending.pop(pending_id, None)
     session["updated_at"] = utc_now()
     save_sessions(data)
+    record_audit_event(project_id, action, "cancelled", approval_id=pending_id)
     return f"Cancelled pending {action_type} for {project_id}."
 
 
@@ -4874,6 +4959,7 @@ def command_help() -> str:
 /push [project]
 /approve <project> [approval_id]
 /cancel <project> [approval_id]
+/audit
 /heartbeat on [minutes]
 /heartbeat off
 /heartbeat status
@@ -5421,6 +5507,8 @@ def natural_computer_command(text: str) -> str | None:
         return "/service"
     if re.search(r"\b(capabilities|new capabilities|what can you do|what are your tools|available tools|features|abilities)\b", lowered):
         return "/tools"
+    if re.search(r"\b(audit|approval history|approved history|what was approved|what got cancelled|decision history)\b", lowered):
+        return "/audit"
     if re.search(r"\b(approvals?|approve list|pending approvals?|decisions? to approve|approve or cancel)\b", lowered):
         return "/approvals"
     if re.search(r"\b(inbox|what needs my attention|needs attention|pending items|what needs me|decision inbox)\b", lowered):
@@ -5579,6 +5667,7 @@ Allowed commands:
 /push [project]
 /approve <project> [approval_id]
 /cancel <project> [approval_id]
+/audit
 /check
 /heartbeat on [minutes]
 /heartbeat off
@@ -5599,7 +5688,7 @@ Rules:
 - Prefer the active project when the user says "this project", "it", or omits the project.
 - If the user says "this image", "the screenshot", "what I sent", or "make it work" after an image, use the Recent Telegram image context to understand intent, but still map only to safe slash commands.
 - If the user names a project that is not in Registered projects, return a reply saying it is not registered instead of using the active project.
-- If the user asks to work/fix/audit/build in a project, map to /start.
+- If the user asks to work, fix, security-audit, or build inside a registered project, map to /start.
 - If the user asks for automatic updates, map to /heartbeat on <minutes>.
 - If the user asks not to receive updates at night, map to /heartbeat quiet 23:00 08:00 unless they specify times.
 - If the user asks for a morning brief, wake-up report, or what matters now, map to /morning.
@@ -5619,6 +5708,7 @@ Rules:
 - If the user asks for a health check, doctor, diagnostic, or self-test, map to /doctor.
 - If the user asks what needs their attention, decisions, inbox, or pending items, map to /inbox.
 - If the user asks for approvals, pending approvals, approve list, or decisions to approve/cancel, map to /approvals.
+- If the user asks for approval history, audit trail, what was approved, or what was cancelled, map to /audit.
 - If the user asks for changed projects, dirty worktrees, local changes, or changes across projects, map to /changes.
 - If the user asks for a work feed, live feed, or all project/Codex progress, map to /feed.
 - If the user asks for an executive brief, plain-English session update, non-technical update, or what Codex is doing right now, map to /briefs.
@@ -5767,6 +5857,8 @@ def handle_text(
         return [command_inbox(user_id=user_id)]
     if command == "/approvals":
         return [command_approvals()]
+    if command == "/audit":
+        return [command_audit()]
     if command == "/changes":
         return [command_changes(args, user_id=user_id)]
     if command == "/feed":

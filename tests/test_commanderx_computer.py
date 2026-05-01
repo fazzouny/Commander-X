@@ -103,6 +103,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("start OpenClaw"), "/openclaw start")
         self.assertEqual(commander.natural_computer_command("what needs my attention"), "/inbox")
         self.assertEqual(commander.natural_computer_command("show pending approvals"), "/approvals")
+        self.assertEqual(commander.natural_computer_command("show approval history"), "/audit")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
         self.assertEqual(commander.natural_computer_command("give me a plain English Codex brief"), "/briefs")
         self.assertEqual(commander.natural_computer_command("show all codex progress"), "/feed")
@@ -555,6 +556,35 @@ class BrowserAndClickUpTests(unittest.TestCase):
     def test_polling_treats_connection_reset_as_transient(self) -> None:
         self.assertTrue(commander.is_transient_poll_exception(ConnectionResetError("reset")))
         self.assertFalse(commander.is_transient_poll_exception(ValueError("bug")))
+
+    def test_audit_event_records_sanitized_approval_history(self) -> None:
+        original_audit_file = commander.AUDIT_FILE
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                commander.AUDIT_FILE = Path(temp) / "audit_log.json"
+                commander.record_audit_event(
+                    "example",
+                    {
+                        "id": "abc123",
+                        "type": "commit",
+                        "message": "api_key=secret123 Fix issue in C:\\Users\\Name\\repo\\.env",
+                        "path": "C:\\Users\\Name\\repo",
+                    },
+                    "prepared",
+                    approval_id="abc123",
+                )
+                events = commander.audit_data()["events"]
+                text = commander.command_audit()
+            finally:
+                commander.AUDIT_FILE = original_audit_file
+
+        self.assertEqual(events[0]["project"], "example")
+        self.assertEqual(events[0]["status"], "prepared")
+        self.assertIn("technical path", events[0]["summary"])
+        self.assertIn("[REDACTED]", events[0]["summary"])
+        self.assertNotIn("C:\\Users", str(events[0]))
+        self.assertIn("Approval audit:", text)
+        self.assertIn("prepared commit for example", text)
 
     def test_service_helpers_hide_paths_and_detect_processes(self) -> None:
         self.assertEqual(

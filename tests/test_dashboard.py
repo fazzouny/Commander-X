@@ -101,6 +101,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(payload["session_briefs"], [])
         self.assertIn("conversation", payload)
         self.assertEqual(payload["conversation"]["items"], [])
+        self.assertIn("audit_trail", payload)
+        self.assertEqual(payload["audit_trail"]["items"], [])
         self.assertIn("decision_suggestions", payload)
         self.assertEqual(payload["decision_suggestions"], [])
         self.assertIn("recent_images", payload)
@@ -160,6 +162,32 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(items[1]["actor"], "Commander X")
         self.assertEqual(items[1]["kind"], "reply")
         self.assertEqual(items[2]["kind"], "voice")
+
+    def test_dashboard_audit_trail_sanitizes_runtime_events(self) -> None:
+        original_audit_data = dashboard.commander.audit_data
+        try:
+            dashboard.commander.audit_data = lambda: {  # type: ignore[assignment]
+                "events": [
+                    {
+                        "at": "2026-05-01T10:00:00+00:00",
+                        "project": "example",
+                        "approval_id": "abc123",
+                        "type": "commit",
+                        "status": "approved",
+                        "branch": "main",
+                        "summary": "Commit prepared from C:\\Users\\Name\\repo\\secret.py",
+                        "result": "Committed C:\\Users\\Name\\repo\\.env",
+                    }
+                ]
+            }
+            trail = dashboard.dashboard_audit_trail()
+        finally:
+            dashboard.commander.audit_data = original_audit_data  # type: ignore[assignment]
+
+        self.assertEqual(trail["counts"]["approved"], 1)
+        self.assertEqual(trail["items"][0]["type"], "commit")
+        self.assertIn("technical path", trail["items"][0]["summary"])
+        self.assertNotIn("C:\\Users", str(trail["items"][0]))
 
     def test_dashboard_decision_suggestions_propose_safe_memories(self) -> None:
         conversation = {

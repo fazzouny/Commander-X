@@ -156,6 +156,33 @@ function renderActionCenter(data) {
       .join("") || `<p>No pending action-center items.</p>`;
 }
 
+function renderAuditTrail(data) {
+  const audit = data.audit_trail || {};
+  const items = audit.items || [];
+  qs("#audit-count").textContent = `${items.length} events`;
+  qs("#audit-summary").textContent = audit.summary || "No approval audit events recorded yet.";
+  qs("#audit-trail").innerHTML =
+    items
+      .slice(0, 12)
+      .map((item) => {
+        const status = String(item.status || "").toLowerCase();
+        const type = status === "approved" ? "good" : status === "cancelled" ? "warn" : status === "blocked" || status === "failed" ? "bad" : "warn";
+        const result = item.result ? `<div class="row-meta">Result: ${escapeHtml(item.result)}</div>` : "";
+        return `
+          <div class="row">
+            <div class="row-main">
+              <div class="row-title">${escapeHtml(item.type || "action")} - ${escapeHtml(item.status || "recorded")}</div>
+              <div class="row-meta">${escapeHtml(item.project || "-")} - ${escapeHtml(item.at || "-")} - approval ${escapeHtml(item.approval_id || "-")}</div>
+              <div class="row-meta">${escapeHtml(item.summary || "-")}</div>
+              ${result}
+            </div>
+            <div>${pill(item.status || "recorded", type)}</div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No approval audit events recorded yet.</p>`;
+}
+
 function renderConversation(data) {
   const conversation = data.conversation || {};
   const items = conversation.items || [];
@@ -687,6 +714,7 @@ async function refresh() {
   state.dashboard = data;
   renderMetrics(data);
   renderActionCenter(data);
+  renderAuditTrail(data);
   renderConversation(data);
   renderDecisionSuggestions(data);
   renderSessionBriefs(data);

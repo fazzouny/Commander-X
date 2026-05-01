@@ -489,6 +489,8 @@ The Work Feed card is the closest dashboard view to the Codex app experience. It
 
 Each Work Feed card has dashboard actions for Watch, Areas, and Plan. These are read-only summaries. A Stop button appears only for running managed sessions and calls the same controlled stop endpoint as `/stop`.
 
+The Approval Audit card shows a sanitized history of prepared, approved, and cancelled high-impact actions such as commits, pushes, MCP installs, and OpenClaw actions. The audit store is local runtime data in `audit_log.json` and is ignored by Git.
+
 The Conversation Inspector card reads recent Commander Telegram service logs and turns them into a masked, plain-English activity stream: user asks, button presses, voice/image events, and first-line Commander replies. User IDs are shortened, secrets are redacted, and local paths/filenames are hidden by default.
 
 The Decision Memory Suggestions card looks at the sanitized Conversation Inspector stream and proposes behavior memories, such as hiding technical names by default or treating screenshots as context. It does not learn automatically. Use Save Memory to approve a suggestion into Commander memory.

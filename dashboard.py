@@ -110,6 +110,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "projects": {},
         "sessions": {},
         "conversation": {"summary": message, "counts": {}, "items": []},
+        "audit_trail": {"summary": message, "counts": {}, "items": []},
         "decision_suggestions": [],
         "session_briefs": [],
         "recent_images": [],
@@ -308,6 +309,7 @@ def capabilities_payload(openclaw_status: str | None = None) -> dict[str, Any]:
             "/watch",
             "/queue",
             "/approvals",
+            "/audit",
             "/changes",
             "/openclaw",
             "/clickup recent campaigns",
@@ -584,6 +586,36 @@ def dashboard_action_center(
     return items[:limit]
 
 
+def dashboard_audit_trail(limit: int = 12) -> dict[str, Any]:
+    events = commander.audit_data().get("events", [])
+    clean: list[dict[str, Any]] = []
+    for event in reversed(events[-limit:]):
+        if not isinstance(event, dict):
+            continue
+        clean.append(
+            {
+                "at": str(event.get("at") or ""),
+                "project": commander.audit_clean(event.get("project") or "-", limit=120),
+                "approval_id": commander.audit_clean(event.get("approval_id") or "-", limit=80),
+                "type": commander.audit_clean(event.get("type") or "action", limit=80),
+                "status": commander.audit_clean(event.get("status") or "recorded", limit=80),
+                "branch": commander.audit_clean(event.get("branch") or "-", limit=160),
+                "summary": commander.audit_clean(event.get("summary") or "-", limit=500),
+                "result": commander.audit_clean(event.get("result") or "", limit=500) if event.get("result") else "",
+            }
+        )
+    counts: dict[str, int] = {}
+    for item in clean:
+        status = str(item.get("status") or "recorded")
+        counts[status] = counts.get(status, 0) + 1
+    if clean:
+        latest = clean[0]
+        summary = f"{len(clean)} recent approval events. Latest: {latest['status']} {latest['type']} for {latest['project']}."
+    else:
+        summary = "No approval audit events recorded yet."
+    return {"summary": commander.safe_brief_text(summary), "counts": counts, "items": clean}
+
+
 def dashboard_conversation_log_files(limit: int = 8) -> list[Path]:
     files: list[Path] = []
     current = commander.LOG_DIR / "commander-service.out.log"
@@ -829,6 +861,7 @@ def build_dashboard_payload() -> dict[str, Any]:
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
     approvals = commander.pending_approvals()
     conversation = dashboard_conversation()
+    audit_trail = dashboard_audit_trail()
     return {
         "status": commander.command_status(),
         "doctor": {
@@ -838,6 +871,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "projects": projects,
         "sessions": sessions,
         "conversation": conversation,
+        "audit_trail": audit_trail,
         "decision_suggestions": dashboard_decision_suggestions(conversation, memories),
         "session_briefs": session_briefs,
         "recent_images": dashboard_recent_images(users),
