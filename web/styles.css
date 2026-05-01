@@ -116,6 +116,11 @@ span {
   color: var(--muted);
 }
 
+.panel-summary {
+  margin-bottom: 12px;
+  line-height: 1.45;
+}
+
 .band,
 .panel {
   border: 1px solid var(--line);
@@ -171,6 +176,7 @@ span {
 .inbox-list,
 .approval-list,
 .action-center-list,
+.conversation-list,
 .work-feed-list,
 .capability-list,
 .openclaw-list,

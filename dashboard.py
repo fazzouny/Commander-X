@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import threading
@@ -108,6 +109,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "doctor": {"score": "warming", "checks": []},
         "projects": {},
         "sessions": {},
+        "conversation": {"summary": message, "counts": {}, "items": []},
         "session_briefs": [],
         "recent_images": [],
         "work_feed": [],
@@ -581,6 +583,104 @@ def dashboard_action_center(
     return items[:limit]
 
 
+def dashboard_conversation_log_files(limit: int = 8) -> list[Path]:
+    files: list[Path] = []
+    current = commander.LOG_DIR / "commander-service.out.log"
+    if current.exists():
+        files.append(current)
+    archive = commander.LOG_DIR / "archive"
+    if archive.exists():
+        files.extend(
+            sorted(
+                archive.glob("commander-service.out-*.log"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )[: max(0, limit - len(files))]
+        )
+    return files[:limit]
+
+
+def dashboard_conversation_item_from_line(line: str) -> dict[str, Any] | None:
+    match = re.match(r"^(?P<at>\d{4}-\d{2}-\d{2}T\S+)\s+(?P<user>\S+)\s+(?P<body>.*)$", line.strip())
+    if not match:
+        return None
+    raw_user = match.group("user")
+    body = match.group("body").strip()
+    if not raw_user.isdigit() or not body:
+        return None
+    kind = "user"
+    direction = "User asked"
+    actor = f"Telegram user ...{raw_user[-4:]}"
+    status = "good"
+    if body.startswith("[reply]"):
+        kind = "reply"
+        direction = "Commander replied"
+        actor = "Commander X"
+        body = body.removeprefix("[reply]").strip()
+    elif body.startswith("[button]"):
+        kind = "button"
+        direction = "Button pressed"
+        body = body.removeprefix("[button]").strip()
+    elif body.startswith("[voice/audio message]"):
+        kind = "voice"
+        direction = "Voice note received"
+        body = "Voice note received for transcription and routing."
+    elif body.startswith("[image message]"):
+        kind = "image"
+        direction = "Image received"
+        body = "Image received for safe visual context."
+    elif body.startswith("[unsupported media]"):
+        kind = "media"
+        direction = "Unsupported media"
+        body = "Unsupported media received."
+        status = "warn"
+    lower = body.lower()
+    if any(token in lower for token in ("failed", "error", "blocked", "not wired", "approval", "access is denied")):
+        status = "warn"
+    return {
+        "at": match.group("at"),
+        "actor": actor,
+        "kind": kind,
+        "direction": direction,
+        "summary": commander.safe_brief_text(commander.compact(body, limit=420)),
+        "status": status,
+    }
+
+
+def dashboard_conversation_items_from_lines(lines: list[str]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for line in lines:
+        item = dashboard_conversation_item_from_line(line)
+        if item:
+            items.append(item)
+            continue
+        continuation = line.strip()
+        if continuation and items and items[-1].get("kind") == "user":
+            items[-1]["summary"] = commander.safe_brief_text(
+                commander.compact(f"{items[-1].get('summary', '')} {continuation}", limit=420)
+            )
+    return items
+
+
+def dashboard_conversation(limit: int = 12) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for path in dashboard_conversation_log_files():
+        text = commander.read_recent_log_text(path, max_bytes=80_000)
+        if text:
+            items.extend(dashboard_conversation_items_from_lines(text.splitlines()))
+    items.sort(key=lambda item: str(item.get("at") or ""), reverse=True)
+    latest = items[:limit]
+    counts: dict[str, int] = {}
+    for item in latest:
+        kind = str(item.get("kind") or "unknown")
+        counts[kind] = counts.get(kind, 0) + 1
+    if latest:
+        summary = f"{len(latest)} recent conversation events. Latest: {latest[0]['direction']} - {latest[0]['summary']}"
+    else:
+        summary = "No recent Telegram conversation events found in Commander logs."
+    return {"summary": commander.safe_brief_text(summary), "counts": counts, "items": latest}
+
+
 def dashboard_recent_images(users: dict[str, dict[str, Any]], limit: int = 6) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for user_id, user in users.items():
@@ -596,12 +696,13 @@ def dashboard_recent_images(users: dict[str, dict[str, Any]], limit: int = 6) ->
                 safe_commands.append(commander.validate_generated_command(command))
             except Exception:
                 continue
-        user_label = "Dashboard upload" if str(user_id) == "dashboard" else f"Telegram user ...{str(user_id)[-4:] if user_id else 'user'}"
+        kind = commander.safe_brief_text(image.get("kind") or "image")
+        user_label = "Dashboard upload" if str(user_id) == "dashboard" or kind == "dashboard upload" else f"Telegram user ...{str(user_id)[-4:] if user_id else 'user'}"
         items.append(
             {
                 "user": user_label,
                 "at": str(image.get("at") or ""),
-                "kind": commander.safe_brief_text(image.get("kind") or "image"),
+                "kind": kind,
                 "summary": commander.safe_brief_text(image.get("summary") or "-"),
                 "visible_text": commander.safe_brief_text(image.get("visible_text") or "-"),
                 "likely_intent": commander.safe_brief_text(image.get("likely_intent") or "-"),
@@ -644,6 +745,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         },
         "projects": projects,
         "sessions": sessions,
+        "conversation": dashboard_conversation(),
         "session_briefs": session_briefs,
         "recent_images": dashboard_recent_images(users),
         "work_feed": work_feed,

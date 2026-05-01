@@ -99,6 +99,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         payload = dashboard.fallback_dashboard_payload("warming")
         self.assertIn("session_briefs", payload)
         self.assertEqual(payload["session_briefs"], [])
+        self.assertIn("conversation", payload)
+        self.assertEqual(payload["conversation"]["items"], [])
         self.assertIn("recent_images", payload)
         self.assertEqual(payload["recent_images"], [])
         self.assertIn("work_feed", payload)
@@ -137,6 +139,25 @@ class DashboardCapabilityTests(unittest.TestCase):
         changed = next(item for item in items if item["project"] == "changed-app")
         self.assertIn("app/user interface", changed["detail"])
         self.assertNotIn("src/", changed["detail"])
+
+    def test_dashboard_conversation_parses_and_sanitizes_events(self) -> None:
+        items = dashboard.dashboard_conversation_items_from_lines(
+            [
+                "2026-05-01T06:37:49+00:00 123456789 /file app C:\\Users\\Name\\repo\\.env",
+                "second line with CAMPAIGN_STRATEGY.md",
+                "2026-05-01T06:37:52+00:00 123456789 [reply] Opened C:\\Users\\Name\\repo\\secret.py",
+                "2026-05-01T06:38:00+00:00 123456789 [voice/audio message]",
+            ]
+        )
+
+        self.assertEqual(items[0]["actor"], "Telegram user ...6789")
+        self.assertEqual(items[0]["kind"], "user")
+        self.assertIn("technical path", items[0]["summary"])
+        self.assertNotIn("C:\\Users", items[0]["summary"])
+        self.assertNotIn("CAMPAIGN_STRATEGY.md", items[0]["summary"])
+        self.assertEqual(items[1]["actor"], "Commander X")
+        self.assertEqual(items[1]["kind"], "reply")
+        self.assertEqual(items[2]["kind"], "voice")
 
     def test_dashboard_recent_images_sanitizes_user_image_context(self) -> None:
         users = {

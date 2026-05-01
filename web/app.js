@@ -156,6 +156,30 @@ function renderActionCenter(data) {
       .join("") || `<p>No pending action-center items.</p>`;
 }
 
+function renderConversation(data) {
+  const conversation = data.conversation || {};
+  const items = conversation.items || [];
+  qs("#conversation-count").textContent = `${items.length} events`;
+  qs("#conversation-summary").textContent = conversation.summary || "No recent Telegram conversation events.";
+  qs("#conversation").innerHTML =
+    items
+      .slice(0, 12)
+      .map((item) => {
+        const type = item.status === "warn" ? "warn" : item.status === "bad" ? "bad" : "good";
+        return `
+          <div class="row">
+            <div class="row-main">
+              <div class="row-title">${escapeHtml(item.direction || "Conversation event")}</div>
+              <div class="row-meta">${escapeHtml(item.actor || "Commander X")} - ${escapeHtml(item.at || "-")}</div>
+              <div class="row-meta">${escapeHtml(item.summary || "-")}</div>
+            </div>
+            <div>${pill(item.kind || "event", type)}</div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No recent Telegram conversation events.</p>`;
+}
+
 function renderSessionBriefs(data) {
   const items = data.session_briefs || [];
   qs("#session-brief-count").textContent = `${items.length} briefs`;
@@ -637,6 +661,7 @@ async function refresh() {
   state.dashboard = data;
   renderMetrics(data);
   renderActionCenter(data);
+  renderConversation(data);
   renderSessionBriefs(data);
   renderRecentImages(data);
   renderWorkFeed(data);
