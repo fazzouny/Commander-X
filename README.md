@@ -104,6 +104,7 @@ Remove it later with:
 /mission
 /evidence
 /replay
+/playback
 /watch
 /timeline
 /plan

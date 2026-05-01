@@ -275,6 +275,54 @@ function renderMissionTimeline(data) {
       .join("") || `<p>No mission timeline items yet.</p>`;
 }
 
+function renderOperatorPlayback(data) {
+  const items = data.operator_playback || [];
+  qs("#operator-playback-count").textContent = `${items.length} views`;
+  qs("#operator-playback").innerHTML =
+    items
+      .slice(0, 6)
+      .map((item) => {
+        const confidence = String(item.confidence || "").toLowerCase();
+        const type = confidence.includes("blocked") || confidence.includes("decision") ? "warn" : confidence.includes("needs") ? "bad" : "good";
+        const checks = (item.checks || [])
+          .slice(0, 3)
+          .map((line) => `<span>${escapeHtml(line)}</span>`)
+          .join("");
+        const approvals = (item.pending_approvals || [])
+          .slice(0, 3)
+          .map((approval) => `<span>${escapeHtml(approval.type || "approval")} ${escapeHtml(approval.id || "")}: ${escapeHtml(approval.message || approval.branch || "-")}</span>`)
+          .join("");
+        return `
+          <div class="work-card">
+            <div class="work-card-head">
+              <div>
+                <div class="row-title">${escapeHtml(item.project || "-")}</div>
+                <div class="row-meta">${escapeHtml(item.story || "-")}</div>
+              </div>
+              <div>${pill(item.confidence || "unknown", type)}</div>
+            </div>
+            <div class="work-grid">
+              <div><span>Outcome</span><strong>${escapeHtml(item.outcome || "-")}</strong></div>
+              <div><span>Work areas</span><strong>${escapeHtml(item.work_areas || "no local changes tracked")} (${escapeHtml(item.changed_count || 0)} changed)</strong></div>
+              <div><span>Blocker</span><strong>${escapeHtml(item.blocker || "none reported")}</strong></div>
+              <div><span>Next</span><strong>${escapeHtml(item.next_step || "-")}</strong></div>
+              <div><span>Primary action</span><strong>${escapeHtml(item.primary_action || "-")}</strong></div>
+              <div><span>State</span><strong>${escapeHtml(item.state || "unknown")}</strong></div>
+            </div>
+            <div class="timeline-mini">${checks || "<span>No checks recorded yet</span>"}</div>
+            <div class="timeline-mini">${approvals || "<span>No pending approvals</span>"}</div>
+            <div class="work-actions">
+              <button data-work-action="playback" data-project="${escapeHtml(item.project || "")}">Playback</button>
+              <button data-work-action="watch" data-project="${escapeHtml(item.project || "")}">Watch</button>
+              <button data-work-action="evidence" data-project="${escapeHtml(item.project || "")}">Evidence</button>
+              <button data-work-action="replay" data-project="${escapeHtml(item.project || "")}">Replay</button>
+            </div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No operator playback views yet.</p>`;
+}
+
 function renderSessionEvidence(data) {
   const items = data.session_evidence || [];
   qs("#session-evidence-count").textContent = `${items.length} cards`;
@@ -855,6 +903,7 @@ async function refresh() {
   renderConversation(data);
   renderDecisionSuggestions(data);
   renderMissionTimeline(data);
+  renderOperatorPlayback(data);
   renderSessionEvidence(data);
   renderSessionReplay(data);
   renderSessionBriefs(data);
@@ -1146,6 +1195,7 @@ qs("#action-center").addEventListener("click", handleWorkFeedClick);
 qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionClick);
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
 qs("#mission-timeline").addEventListener("click", handleWorkFeedClick);
+qs("#operator-playback").addEventListener("click", handleWorkFeedClick);
 qs("#session-evidence").addEventListener("click", handleWorkFeedClick);
 qs("#session-replay").addEventListener("click", handleWorkFeedClick);
 qs("#session-briefs").addEventListener("click", handleWorkFeedClick);

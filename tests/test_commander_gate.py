@@ -20,6 +20,8 @@ class CommanderGateTests(unittest.TestCase):
         self.assertEqual(commander.validate_generated_command("/evidence example-app"), "/evidence example-app")
         self.assertEqual(commander.validate_generated_command("/replay"), "/replay")
         self.assertEqual(commander.validate_generated_command("/replay example-app"), "/replay example-app")
+        self.assertEqual(commander.validate_generated_command("/playback"), "/playback")
+        self.assertEqual(commander.validate_generated_command("/playback example-app"), "/playback example-app")
         self.assertEqual(commander.validate_generated_command("/changes"), "/changes")
         self.assertEqual(commander.validate_generated_command("/watch taalam-campaigns"), "/watch taalam-campaigns")
         self.assertEqual(commander.validate_generated_command("/brief"), "/brief")

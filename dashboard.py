@@ -115,6 +115,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "mission_timeline": [],
         "session_evidence": [],
         "session_replay": [],
+        "operator_playback": [],
         "session_briefs": [],
         "recent_images": [],
         "work_feed": [],
@@ -331,6 +332,7 @@ def capabilities_payload(openclaw_status: str | None = None) -> dict[str, Any]:
             "/mission",
             "/evidence",
             "/replay",
+            "/playback",
             "/watch",
             "/queue",
             "/approvals",
@@ -884,6 +886,7 @@ def build_dashboard_payload() -> dict[str, Any]:
     mission_timeline = commander.mission_timeline_items(user_id=user_id, limit=10, sessions=sessions, changes=changes, tasks=tasks)
     session_evidence = commander.session_evidence_cards(user_id=user_id, limit=8)
     session_replay = commander.session_replay_cards(user_id=user_id, limit=6)
+    operator_playback = commander.operator_playback_cards(user_id=user_id, limit=6)
     openclaw = safe_openclaw_dashboard_payload()
     recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw)
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
@@ -904,6 +907,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "mission_timeline": mission_timeline,
         "session_evidence": session_evidence,
         "session_replay": session_replay,
+        "operator_playback": operator_playback,
         "session_briefs": session_briefs,
         "recent_images": dashboard_recent_images(users),
         "work_feed": work_feed,
@@ -1082,6 +1086,8 @@ def dashboard_project_read_action(project_id: str, action: str) -> tuple[dict[st
         text = commander.session_evidence(project_id)
     elif action == "replay":
         text = commander.session_replay(project_id)
+    elif action == "playback":
+        text = commander.operator_playback(project_id, user_id="dashboard")
     elif action == "changes":
         rows = [
             row
@@ -1144,6 +1150,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/replay/"):
             project_id = urllib.parse.unquote(path.removeprefix("/api/replay/"))
             self.send_json({"project": project_id, "text": commander.session_replay(project_id)})
+            return
+        if path.startswith("/api/playback/"):
+            project_id = urllib.parse.unquote(path.removeprefix("/api/playback/"))
+            self.send_json({"project": project_id, "text": commander.operator_playback(project_id, user_id="dashboard")})
             return
         if path.startswith("/api/work/"):
             parts = path.removeprefix("/api/work/").split("/", 1)
