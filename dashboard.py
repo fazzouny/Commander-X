@@ -330,12 +330,17 @@ def visible_user_states(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
     users = state.get("users", {})
     allowed = commander.allowed_user_ids()
     if allowed:
-        return {user_id: user for user_id, user in users.items() if user_id in allowed}
-    return {
-        user_id: user
-        for user_id, user in users.items()
-        if user_id.isdigit() and (user.get("last_chat_id") or user.get("heartbeat_chat_id"))
-    }
+        visible = {user_id: user for user_id, user in users.items() if user_id in allowed}
+    else:
+        visible = {
+            user_id: user
+            for user_id, user in users.items()
+            if user_id.isdigit() and (user.get("last_chat_id") or user.get("heartbeat_chat_id"))
+        }
+    dashboard_user = users.get("dashboard")
+    if isinstance(dashboard_user, dict) and dashboard_user.get("last_image"):
+        visible["dashboard"] = dashboard_user
+    return visible
 
 
 def dashboard_doctor_checks(changes: list[dict[str, Any]], snapshot: dict[str, Any], projects: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
@@ -591,10 +596,10 @@ def dashboard_recent_images(users: dict[str, dict[str, Any]], limit: int = 6) ->
                 safe_commands.append(commander.validate_generated_command(command))
             except Exception:
                 continue
-        suffix = str(user_id)[-4:] if user_id else "user"
+        user_label = "Dashboard upload" if str(user_id) == "dashboard" else f"Telegram user ...{str(user_id)[-4:] if user_id else 'user'}"
         items.append(
             {
-                "user": f"Telegram user ...{suffix}",
+                "user": user_label,
                 "at": str(image.get("at") or ""),
                 "kind": commander.safe_brief_text(image.get("kind") or "image"),
                 "summary": commander.safe_brief_text(image.get("summary") or "-"),
@@ -741,6 +746,33 @@ def dashboard_task_action(payload: dict[str, Any], action: str) -> tuple[dict[st
     return {"ok": True, "text": result}, 200
 
 
+def dashboard_image_analyze_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    data_url = str(payload.get("data_url") or "").strip()
+    caption = commander.compact(str(payload.get("caption") or ""), limit=1000)
+    if not data_url:
+        return {"ok": False, "error": "image data is required"}, 400
+    try:
+        mime_type, raw = commander.parse_image_data_url(data_url)
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc)}, 400
+    commander.IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = commander.utc_now().replace(":", "").replace("-", "").replace("+", "Z")
+    image_path = commander.IMAGE_DIR / f"dashboard-{stamp}{commander.image_suffix_for_mime_type(mime_type)}"
+    image_path.write_bytes(raw)
+    try:
+        analysis = commander.openai_image_analysis(image_path, caption=caption, telegram_mime_type=mime_type)
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc)}, 502
+    user_id = commander.active_user_id()
+    record = commander.save_user_image_context(user_id, "dashboard upload", analysis, caption=caption)
+    image = dashboard_recent_images({user_id: {"last_image": record}}, limit=1)
+    return {
+        "ok": True,
+        "text": commander.format_image_analysis(analysis, caption=caption),
+        "image": image[0] if image else {},
+    }, 200
+
+
 def dashboard_project_read_action(project_id: str, action: str) -> tuple[dict[str, Any], int]:
     project_id = project_id.strip()
     if not project_id:
@@ -830,6 +862,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         length = int(self.headers.get("Content-Length", "0") or "0")
+        if parsed.path == "/api/image/analyze" and length > int(commander.max_openai_image_bytes() * 1.45) + 20_000:
+            self.send_json({"ok": False, "error": "Image upload is too large."}, status=413)
+            return
         raw = self.rfile.read(length).decode("utf-8") if length else "{}"
         try:
             payload = json.loads(raw)
@@ -893,6 +928,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             result = commander.command_openclaw(["start"])
             invalidate_dashboard_cache()
             self.send_json({"ok": True, "text": result})
+            return
+        if parsed.path == "/api/image/analyze":
+            result, status = dashboard_image_analyze_action(payload)
+            invalidate_dashboard_cache()
+            self.send_json(result, status=status)
             return
         if parsed.path == "/api/approval/approve":
             result, status = dashboard_approval_action(payload, "approve")

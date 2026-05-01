@@ -489,7 +489,7 @@ The Work Feed card is the closest dashboard view to the Codex app experience. It
 
 Each Work Feed card has dashboard actions for Watch, Areas, and Plan. These are read-only summaries. A Stop button appears only for running managed sessions and calls the same controlled stop endpoint as `/stop`.
 
-The Recent Image Context card shows the latest Telegram screenshots/images Commander analyzed, including a safe summary, visible text, likely intent, risk, and copyable suggested slash commands. Images remain context only; Commander still requires a text, voice, or button action before doing work.
+The Recent Image Context card shows the latest Telegram screenshots/images Commander analyzed, including a safe summary, visible text, likely intent, risk, and copyable suggested slash commands. Images remain context only; Commander still requires a text, voice, or button action before doing work. The card also includes a local dashboard image sandbox so you can upload a screenshot from the browser, run the same safe OpenAI vision analysis, and verify the dashboard flow without sending a Telegram image.
 
 The dashboard serves the latest cached snapshot immediately and refreshes stale snapshots in the background. The top metrics show whether the snapshot is fresh, stale, or refreshing. Tune it with:
 

@@ -52,11 +52,21 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(media["suffix"], ".png")
         self.assertEqual(media["kind"], "image document")
 
+    def test_parse_image_data_url_accepts_safe_image_payload(self) -> None:
+        mime_type, raw = commander.parse_image_data_url("data:image/png;base64,aGVsbG8=")
+
+        self.assertEqual(mime_type, "image/png")
+        self.assertEqual(raw, b"hello")
+
+    def test_parse_image_data_url_blocks_non_image_payloads(self) -> None:
+        with self.assertRaises(RuntimeError):
+            commander.parse_image_data_url("data:text/plain;base64,aGVsbG8=")
+
     def test_image_analysis_format_sanitizes_commands_and_context(self) -> None:
         payload = commander.sanitize_image_analysis(
             {
                 "summary": "Login page has an error",
-                "visible_text": "api_key: sk-test-placeholder",
+                "visible_text": "api_key: sk-test-placeholder C:\\Users\\Name\\repo\\.env",
                 "likely_intent": "debug screenshot",
                 "risk": "medium",
                 "suggested_commands": ["/status", "/run rm -rf /"],
@@ -66,6 +76,8 @@ class ComputerToolTests(unittest.TestCase):
 
         self.assertIn("Login page has an error", text)
         self.assertIn("[REDACTED]", text)
+        self.assertIn("technical path", text)
+        self.assertNotIn("C:\\Users", text)
         self.assertIn("/status", text)
         self.assertNotIn("/run", text)
 

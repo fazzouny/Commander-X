@@ -95,6 +95,7 @@ MAX_TELEGRAM_MESSAGE = 3900
 DEFAULT_LOG_LINES = 80
 MAX_OPENAI_AUDIO_BYTES = 25 * 1024 * 1024
 DEFAULT_MAX_OPENAI_IMAGE_BYTES = 10 * 1024 * 1024
+ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 DEFAULT_HEARTBEAT_MINUTES = 30
 DEFAULT_QUIET_START = "23:00"
 DEFAULT_QUIET_END = "08:00"
@@ -5099,6 +5100,36 @@ def image_content_type(path: Path, telegram_mime_type: str | None = None) -> str
     return "image/jpeg"
 
 
+def image_suffix_for_mime_type(mime_type: str) -> str:
+    normalized = mime_type.lower().replace("image/jpg", "image/jpeg")
+    return {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+    }.get(normalized, ".jpg")
+
+
+def parse_image_data_url(data_url: str) -> tuple[str, bytes]:
+    value = (data_url or "").strip()
+    match = re.fullmatch(r"data:(image/(?:jpeg|jpg|png|webp|gif));base64,([A-Za-z0-9+/=\s\r\n]+)", value, flags=re.IGNORECASE)
+    if not match:
+        raise RuntimeError("Expected a base64 data URL for a JPEG, PNG, WebP, or GIF image.")
+    mime_type = match.group(1).lower().replace("image/jpg", "image/jpeg")
+    if mime_type not in ALLOWED_IMAGE_MIME_TYPES:
+        raise RuntimeError("Unsupported image type. Use JPEG, PNG, WebP, or GIF.")
+    encoded = re.sub(r"\s+", "", match.group(2))
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except Exception as exc:
+        raise RuntimeError("Image data could not be decoded.") from exc
+    if not raw:
+        raise RuntimeError("Image data is empty.")
+    if len(raw) > max_openai_image_bytes():
+        raise RuntimeError(f"Image file is too large. Limit: {max_openai_image_bytes() // (1024 * 1024)} MB.")
+    return mime_type, raw
+
+
 def image_data_url(path: Path, telegram_mime_type: str | None = None) -> str:
     size = path.stat().st_size
     if size > max_openai_image_bytes():
@@ -5110,7 +5141,7 @@ def image_data_url(path: Path, telegram_mime_type: str | None = None) -> str:
 def sanitize_image_analysis(payload: dict[str, Any]) -> dict[str, Any]:
     sanitized: dict[str, Any] = {}
     for key in ("summary", "visible_text", "likely_intent", "risk"):
-        sanitized[key] = compact(str(payload.get(key) or "-"), limit=900)
+        sanitized[key] = safe_brief_text(compact(str(payload.get(key) or "-"), limit=900))
     commands = payload.get("suggested_commands")
     if not isinstance(commands, list):
         commands = []
@@ -5125,6 +5156,23 @@ def sanitize_image_analysis(payload: dict[str, Any]) -> dict[str, Any]:
             continue
     sanitized["suggested_commands"] = safe_commands
     return sanitized
+
+
+def save_user_image_context(user_id: str, kind: str, analysis: dict[str, Any], caption: str = "") -> dict[str, Any]:
+    sanitized = sanitize_image_analysis(analysis)
+    record = {
+        "at": utc_now(),
+        "kind": safe_brief_text(kind or "image"),
+        "summary": sanitized.get("summary"),
+        "visible_text": sanitized.get("visible_text"),
+        "likely_intent": sanitized.get("likely_intent"),
+        "risk": sanitized.get("risk"),
+        "suggested_commands": sanitized.get("suggested_commands", []),
+    }
+    if caption.strip():
+        record["caption"] = safe_brief_text(caption)
+    update_user_state(user_id, {"last_image": record})
+    return record
 
 
 def openai_image_analysis(path: Path, caption: str = "", telegram_mime_type: str | None = None) -> dict[str, Any]:
@@ -6044,21 +6092,9 @@ def handle_image_message(
     caption = str(message.get("caption") or "").strip()
     local_path = bot.download_file(file_id, IMAGE_DIR, preferred_suffix=str(media.get("suffix") or ".jpg"))
     analysis = openai_image_analysis(local_path, caption=caption, telegram_mime_type=str(media.get("mime_type") or ""))
-    update_user_state(
-        user_id,
-        {
-            "last_image": {
-                "at": utc_now(),
-                "kind": media.get("kind"),
-                "summary": analysis.get("summary"),
-                "visible_text": analysis.get("visible_text"),
-                "likely_intent": analysis.get("likely_intent"),
-                "risk": analysis.get("risk"),
-                "suggested_commands": analysis.get("suggested_commands", []),
-            },
-            **({"last_chat_id": chat_id} if chat_id is not None else {}),
-        },
-    )
+    record = save_user_image_context(user_id, str(media.get("kind") or "image"), analysis, caption=caption)
+    if chat_id is not None:
+        update_user_state(user_id, {"last_image": record, "last_chat_id": chat_id})
     return [format_image_analysis(analysis, caption=caption)]
 
 

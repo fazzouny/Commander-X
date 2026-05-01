@@ -248,6 +248,25 @@ span {
   font-size: 12px;
 }
 
+.image-sandbox {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.image-sandbox label {
+  margin-bottom: 0;
+}
+
+.image-sandbox pre {
+  grid-column: 1 / -1;
+  min-height: 0;
+  margin: 0;
+  max-height: 180px;
+}
+
 .tools {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -393,7 +412,8 @@ pre {
   .metrics,
   .grid,
   .work-grid,
-  .tools {
+  .tools,
+  .image-sandbox {
     grid-template-columns: 1fr;
   }
 

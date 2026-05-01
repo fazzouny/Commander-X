@@ -25,7 +25,14 @@ async function api(path, options = {}) {
     ...options,
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    let message = `HTTP ${response.status}`;
+    try {
+      const payload = await response.json();
+      message = payload.error || payload.text || message;
+    } catch {
+      message = response.statusText || message;
+    }
+    throw new Error(message);
   }
   return response.json();
 }
@@ -210,7 +217,7 @@ function renderRecentImages(data) {
             <div class="work-card-head">
               <div>
                 <div class="row-title">${escapeHtml(item.summary || "-")}</div>
-                <div class="row-meta">${escapeHtml(item.user || "Telegram user")} · ${escapeHtml(item.at || "-")} · ${escapeHtml(item.kind || "image")}</div>
+                <div class="row-meta">${escapeHtml(item.user || "Telegram user")} - ${escapeHtml(item.at || "-")} - ${escapeHtml(item.kind || "image")}</div>
               </div>
               <div>${pill(item.risk || "review", type)}</div>
             </div>
@@ -669,6 +676,49 @@ async function openClawStart() {
   await refresh();
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read image file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function analyzeDashboardImage() {
+  const input = qs("#image-test-file");
+  const file = input.files && input.files[0];
+  const output = qs("#image-test-output");
+  const button = qs("#image-test-button");
+  if (!file) {
+    output.textContent = "Choose a screenshot or image first.";
+    return;
+  }
+  if (file.type && !file.type.startsWith("image/")) {
+    output.textContent = "Choose a JPEG, PNG, WebP, or GIF image.";
+    return;
+  }
+  button.disabled = true;
+  output.textContent = "Analyzing image safely. No action will be executed from the image alone...";
+  try {
+    const dataUrl = await fileToDataUrl(file);
+    const result = await api("/api/image/analyze", {
+      method: "POST",
+      body: JSON.stringify({
+        data_url: dataUrl,
+        filename: file.name || "dashboard-image",
+        caption: qs("#image-test-caption").value.trim(),
+      }),
+    });
+    output.textContent = result.text || result.error || JSON.stringify(result, null, 2);
+    await refresh();
+  } catch (error) {
+    output.textContent = error.message || String(error);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function handleApprovalClick(event) {
   const button = event.target.closest("[data-approval-action]");
   if (!button) return;
@@ -810,6 +860,7 @@ qs("#start-task-button").addEventListener("click", startTask);
 qs("#save-memory").addEventListener("click", saveMemory);
 qs("#openclaw-recover").addEventListener("click", openClawRecover);
 qs("#openclaw-start").addEventListener("click", openClawStart);
+qs("#image-test-button").addEventListener("click", analyzeDashboardImage);
 qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);
 qs("#clear-dashboard-token").addEventListener("click", clearDashboardToken);
 qs("#approvals").addEventListener("click", handleApprovalClick);

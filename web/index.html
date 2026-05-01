@@ -44,6 +44,18 @@
           <h2>Recent Image Context</h2>
           <span id="recent-image-count"></span>
         </div>
+        <div class="image-sandbox">
+          <label>
+            Test image
+            <input id="image-test-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+          </label>
+          <label>
+            Caption
+            <textarea id="image-test-caption" rows="3" placeholder="Optional context for this screenshot."></textarea>
+          </label>
+          <button id="image-test-button">Analyze Image</button>
+          <pre id="image-test-output"></pre>
+        </div>
         <div id="recent-images" class="recent-image-list"></div>
       </section>
 

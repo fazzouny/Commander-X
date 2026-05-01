@@ -160,6 +160,33 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertIn("technical path", images[0]["visible_text"])
         self.assertNotIn("C:\\Users", images[0]["visible_text"])
 
+    def test_dashboard_recent_images_labels_dashboard_uploads(self) -> None:
+        images = dashboard.dashboard_recent_images(
+            {
+                "dashboard": {
+                    "last_image": {
+                        "at": "2026-05-01T08:00:00+00:00",
+                        "kind": "dashboard upload",
+                        "summary": "Local screenshot test",
+                        "visible_text": "No secrets",
+                        "likely_intent": "test image analysis",
+                        "risk": "low",
+                        "suggested_commands": ["/status"],
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(images[0]["user"], "Dashboard upload")
+        self.assertEqual(images[0]["suggested_commands"], ["/status"])
+
+    def test_dashboard_image_analyze_rejects_non_image_payload(self) -> None:
+        result, status = dashboard.dashboard_image_analyze_action({"data_url": "data:text/plain;base64,aGVsbG8="})
+
+        self.assertEqual(status, 400)
+        self.assertFalse(result["ok"])
+        self.assertIn("base64 data URL", result["error"])
+
     def test_capabilities_payload_summarizes_tools_without_secret_values(self) -> None:
         original_computer_tools_config = dashboard.commander.computer_tools_config
         original_app_catalog = dashboard.commander.app_catalog
