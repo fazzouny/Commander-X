@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+import subprocess
 from pathlib import Path
 
 import commander
@@ -106,6 +107,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("show approval history"), "/audit")
         self.assertEqual(commander.natural_computer_command("make me an operator report"), "/report")
         self.assertEqual(commander.natural_computer_command("show mission control"), "/mission")
+        self.assertEqual(commander.natural_computer_command("show evidence cards"), "/evidence")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
         self.assertEqual(commander.natural_computer_command("give me a plain English Codex brief"), "/briefs")
         self.assertEqual(commander.natural_computer_command("show all codex progress"), "/feed")
@@ -232,6 +234,20 @@ class ComputerToolTests(unittest.TestCase):
     def test_openclaw_start_requires_configured_launcher(self) -> None:
         text = commander.prepare_openclaw_start_response(env={})
         self.assertIn("COMMANDER_OPENCLAW_LAUNCHER is not configured", text)
+
+    def test_openclaw_snapshot_tolerates_process_scan_timeout(self) -> None:
+        original_process_lines = commander.computer_process_lines
+        try:
+            commander.computer_process_lines = (  # type: ignore[assignment]
+                lambda terms, timeout=8: (_ for _ in ()).throw(subprocess.TimeoutExpired(["powershell"], timeout))
+            )
+
+            snapshot = commander.openclaw_status_snapshot(env={})
+        finally:
+            commander.computer_process_lines = original_process_lines  # type: ignore[assignment]
+
+        self.assertEqual(snapshot["process_rows"], [])
+        self.assertIn("timed out", snapshot["process_error"])
 
     def test_openclaw_start_prepares_approval_for_configured_launcher(self) -> None:
         original_add = commander.add_pending_action
@@ -407,6 +423,91 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn("src/", text)
         self.assertNotIn("README.md", text)
         self.assertNotIn("App.tsx", text)
+
+    def test_session_evidence_card_summarizes_checks_without_filenames(self) -> None:
+        original_sessions = commander.sessions_data
+        original_refresh = commander.refresh_session_states
+        original_project = commander.get_project
+        original_project_path = commander.project_path
+        original_is_git = commander.is_git_repo
+        original_changed = commander.changed_files
+        original_branch = commander.current_branch
+        original_pid = commander.pid_running
+        original_audit = commander.audit_data
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "example.log"
+            log.write_text(
+                "python -m py_compile src/app.py\n"
+                "Ran 4 tests in 0.5s OK\n"
+                "ERROR codex_core::exec: exec error: windows sandbox: setup refresh failed with status exit code: 1\n",
+                encoding="utf-8",
+            )
+            try:
+                commander.refresh_session_states = lambda: None  # type: ignore[assignment]
+                commander.sessions_data = lambda: {  # type: ignore[assignment]
+                    "sessions": {
+                        "example": {
+                            "state": "running",
+                            "pid": 123,
+                            "task": "Fix C:\\Users\\Name\\repo\\secret.py",
+                            "task_id": "task1",
+                            "log_file": str(log),
+                            "branch": "main",
+                            "work_plan": {
+                                "risk": "medium",
+                                "approach": ["Inspect src/app.py", "Run README.md checks"],
+                                "expected_checks": ["python -m unittest discover"],
+                            },
+                            "progress_signals": [
+                                {
+                                    "title": "Local shell blocked",
+                                    "detail": "Could not inspect C:\\Users\\Name\\repo\\secret.py",
+                                    "status": "warn",
+                                }
+                            ],
+                            "timeline": [
+                                {"title": "Reviewed src/app.py", "detail": "README.md notes", "status": "done"},
+                            ],
+                        }
+                    }
+                }
+                commander.get_project = lambda project_id: {"allowed": True, "path": tmp}  # type: ignore[assignment]
+                commander.project_path = lambda project: Path(tmp)  # type: ignore[assignment]
+                commander.is_git_repo = lambda path: True  # type: ignore[assignment]
+                commander.changed_files = lambda path: ["src/app.py", "README.md"]  # type: ignore[assignment]
+                commander.current_branch = lambda path: "main"  # type: ignore[assignment]
+                commander.pid_running = lambda pid: True  # type: ignore[assignment]
+                commander.audit_data = lambda: {  # type: ignore[assignment]
+                    "events": [
+                        {
+                            "project": "example",
+                            "status": "prepared",
+                            "type": "commit",
+                            "summary": "Commit C:\\Users\\Name\\repo\\.env",
+                        }
+                    ]
+                }
+
+                card = commander.session_evidence_card("example")
+                text = commander.format_session_evidence_card(card)
+            finally:
+                commander.sessions_data = original_sessions  # type: ignore[assignment]
+                commander.refresh_session_states = original_refresh  # type: ignore[assignment]
+                commander.get_project = original_project  # type: ignore[assignment]
+                commander.project_path = original_project_path  # type: ignore[assignment]
+                commander.is_git_repo = original_is_git  # type: ignore[assignment]
+                commander.changed_files = original_changed  # type: ignore[assignment]
+                commander.current_branch = original_branch  # type: ignore[assignment]
+                commander.pid_running = original_pid  # type: ignore[assignment]
+                commander.audit_data = original_audit  # type: ignore[assignment]
+
+        self.assertEqual(card["process"], "running")
+        self.assertIn("Python compile check", " ".join(card["checks"]))
+        self.assertIn("technical path", text)
+        self.assertIn("technical file", text)
+        self.assertNotIn("C:\\Users", text)
+        self.assertNotIn("secret.py", text)
+        self.assertNotIn("src/app.py", text)
 
     def test_log_progress_signals_detect_blockers_without_paths(self) -> None:
         raw = """
@@ -632,6 +733,17 @@ class BrowserAndClickUpTests(unittest.TestCase):
                     "blocker": "none",
                     "evidence": ["Checked README.md"],
                     "next_step": "Review config.json",
+                }
+            ],
+            "session_evidence": [
+                {
+                    "project": "example",
+                    "state": "running",
+                    "task": "Fix C:\\Users\\Name\\repo\\secret.py",
+                    "areas": "src/app.ts",
+                    "changed_count": 1,
+                    "blocker": "none",
+                    "checks": ["python -m py_compile src/app.py"],
                 }
             ],
             "session_briefs": [

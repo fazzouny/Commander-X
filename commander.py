@@ -114,6 +114,7 @@ NL_ALLOWED_COMMANDS = {
     "/feed",
     "/briefs",
     "/mission",
+    "/evidence",
     "/watch",
     "/timeline",
     "/plan",
@@ -170,6 +171,7 @@ TELEGRAM_COMMANDS = [
     ("feed", "Show plain-English work feed"),
     ("briefs", "Show executive Codex briefs"),
     ("mission", "Show mission-control timeline"),
+    ("evidence", "Show clean session evidence"),
     ("watch", "Show live project work view"),
     ("timeline", "Show session timeline"),
     ("plan", "Show pre-work plan"),
@@ -220,9 +222,10 @@ DEFAULT_BUTTON_ROWS = [
     [("Service", "cmd:/service"), ("Doctor", "cmd:/doctor")],
     [("Mode", "cmd:/mode"), ("Free Mode", "cmd:/free")],
     [("Mission", "cmd:/mission"), ("Briefs", "cmd:/briefs"), ("Feed", "cmd:/feed")],
+    [("Evidence", "cmd:/evidence"), ("Report", "cmd:/report")],
     [("Morning", "cmd:/morning"), ("Next", "cmd:/next")],
     [("Inbox", "cmd:/inbox"), ("Approvals", "cmd:/approvals"), ("Audit", "cmd:/audit")],
-    [("Report", "cmd:/report"), ("Save Report", "cmd:/report save")],
+    [("Save Report", "cmd:/report save")],
     [("Changes", "cmd:/changes"), ("Log", "cmd:/log"), ("Diff", "cmd:/diff")],
     [("Context", "cmd:/context")],
     [("Queue", "cmd:/queue"), ("Profile", "cmd:/profile")],
@@ -1049,39 +1052,171 @@ def tasks_summary(limit: int = 12) -> str:
     return compact("\n".join(lines))
 
 
-def session_evidence(project_id: str) -> str:
+def verification_evidence_from_text(text: str, limit: int = 8) -> list[str]:
+    checks: list[str] = []
+    patterns = [
+        (r"\bpy_compile\b", "Python compile check"),
+        (r"\bunittest\b|\bpytest\b", "Python test suite"),
+        (r"\bnpm\s+(?:run\s+)?test\b|\bvitest\b|\bjest\b", "JavaScript test suite"),
+        (r"\bnpm\s+run\s+build\b|\bnext\s+build\b|\bvite\s+build\b", "Production build check"),
+        (r"\bnpm\s+run\s+lint\b|\beslint\b", "Lint check"),
+        (r"\bnpm\s+run\s+typecheck\b|\btsc\b", "Type check"),
+        (r"\bplaywright\b", "Browser test/check"),
+        (r"\bsmoke[- ]?test\b|\bsmoke:\w+\b", "Smoke test"),
+    ]
+    seen: set[str] = set()
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        for pattern, label in patterns:
+            if not re.search(pattern, lowered):
+                continue
+            result = "passed" if re.search(r"\b(ok|passed|pass|success|green)\b", lowered) else "failed" if re.search(r"\b(failed|failure|error)\b", lowered) else "run"
+            item = f"{label}: {result}"
+            if item not in seen:
+                checks.append(item)
+                seen.add(item)
+            break
+        if len(checks) >= limit:
+            break
+    return checks
+
+
+def approval_events_for_project(project_id: str, limit: int = 6) -> list[dict[str, str]]:
+    events: list[dict[str, str]] = []
+    for event in reversed(audit_data().get("events", [])):
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("project") or "") != project_id:
+            continue
+        events.append(
+            {
+                "at": audit_clean(event.get("at") or "-", limit=80),
+                "status": audit_clean(event.get("status") or "recorded", limit=80),
+                "type": audit_clean(event.get("type") or "action", limit=80),
+                "summary": audit_clean(event.get("summary") or "-", limit=280),
+            }
+        )
+        if len(events) >= limit:
+            break
+    return events
+
+
+def session_evidence_card(project_id: str) -> dict[str, Any]:
     refresh_session_states()
     session = sessions_data().get("sessions", {}).get(project_id) or {}
     project = get_project(project_id)
     path = project_path(project) if project else None
-    lines = [f"Evidence for {project_id}:"]
-    if session:
-        pid = int(session.get("pid", 0) or 0)
-        lines.append(f"- Session state: {session.get('state', 'unknown')}")
-        lines.append(f"- PID: {pid or '-'} ({'running' if pid_running(pid) else 'not running'})")
-        lines.append(f"- Branch: {session.get('branch') or '-'}")
-        lines.append(f"- Task ID: {session.get('task_id') or '-'}")
-        log_file = Path(str(session.get("log_file", "")))
-        if log_file.exists():
-            age = dt.datetime.now().timestamp() - log_file.stat().st_mtime
-            lines.append(f"- Log: {log_file.name}, updated {int(age // 60)} min ago")
-        else:
-            lines.append("- Log: missing")
-        signals = session.get("progress_signals") if isinstance(session.get("progress_signals"), list) else []
-        if signals:
-            lines.append("- Human progress:")
-            for signal in signals[-4:]:
-                if isinstance(signal, dict):
-                    lines.append(f"  - {safe_brief_text(signal.get('title'))}: {safe_brief_text(signal.get('detail'))}")
-    else:
-        lines.append("- No Commander session recorded.")
+    plan = session.get("work_plan") if isinstance(session.get("work_plan"), dict) else {}
+    log_file = Path(str(session.get("log_file", ""))) if session else Path()
+    log_text = read_recent_log_text(log_file, max_bytes=100_000) if log_file.exists() else ""
+    signals = session.get("progress_signals") if isinstance(session.get("progress_signals"), list) else []
+    timeline = timeline_lines(session, limit=6) if session else []
+    changed_count = 0
+    areas = "no local changes tracked"
+    branch = "-"
     if path and path.exists() and is_git_repo(path):
         changed = changed_files(path)
-        lines.append(f"- Git branch: {current_branch(path)}")
-        lines.append(f"- Changed files: {len(changed)}")
-        if changed[:6]:
-            lines.extend(f"  - {item}" for item in changed[:6])
-    return "\n".join(lines)
+        changed_count = len(changed)
+        areas = change_bucket_summary(changed)
+        branch = current_branch(path)
+    process = "-"
+    log_age = None
+    if session:
+        pid = int(session.get("pid", 0) or 0)
+        process = "running" if pid and pid_running(pid) else "not running"
+        if log_file.exists():
+            age = dt.datetime.now().timestamp() - log_file.stat().st_mtime
+            log_age = max(0, int(age // 60))
+    blocker = "none reported"
+    for signal in reversed(signals):
+        if isinstance(signal, dict) and str(signal.get("status") or "") == "warn":
+            blocker = f"{safe_brief_text(signal.get('title'))}: {safe_brief_text(signal.get('detail'))}"
+            break
+    if blocker == "none reported":
+        mission = mission_timeline_items(user_id=None, limit=20, sessions={project_id: session} if session else {}, changes=[{"project": project_id, "changed_count": changed_count, "areas": areas}], tasks=[])
+        for item in mission:
+            if item.get("project") == project_id and item.get("blocker"):
+                blocker = safe_brief_text(item.get("blocker"))
+                break
+    checks = verification_evidence_from_text(log_text)
+    if not checks:
+        expected = plan.get("expected_checks") if isinstance(plan.get("expected_checks"), list) else []
+        checks = [f"Expected: {safe_brief_text(item)}" for item in expected[:4]]
+    return {
+        "project": audit_clean(project_id, limit=120),
+        "state": audit_clean(session.get("state") if session else "no session", limit=80),
+        "process": process,
+        "task": audit_clean(session.get("task") if session else "No Commander session recorded.", limit=500),
+        "task_id": audit_clean(session.get("task_id") if session else "-", limit=100),
+        "risk": audit_clean(plan.get("risk") or "unknown", limit=80),
+        "approach": [audit_clean(item, limit=260) for item in (plan.get("approach") if isinstance(plan.get("approach"), list) else [])[:4]],
+        "checks": [audit_clean(item, limit=220) for item in checks[:8]],
+        "changed_count": changed_count,
+        "areas": audit_clean(areas, limit=260),
+        "branch": audit_clean(session.get("branch") or branch, limit=160),
+        "blocker": blocker,
+        "timeline": [audit_clean(line.lstrip("- "), limit=320) for line in timeline[:6]],
+        "approvals": approval_events_for_project(project_id),
+        "log_age_minutes": log_age,
+    }
+
+
+def session_evidence_cards(user_id: str | None = None, limit: int = 8) -> list[dict[str, Any]]:
+    refresh_session_states()
+    projects: list[str] = []
+    for project_id in sessions_data().get("sessions", {}):
+        if project_id not in projects:
+            projects.append(project_id)
+    for item in mission_timeline_items(user_id=user_id, limit=max(limit * 2, 12)):
+        project_id = str(item.get("project") or "")
+        if project_id and project_id not in projects:
+            projects.append(project_id)
+    return [session_evidence_card(project_id) for project_id in projects[:limit]]
+
+
+def format_session_evidence_card(card: dict[str, Any]) -> str:
+    lines = [
+        f"Evidence card: {card.get('project')}",
+        f"- State: {card.get('state')} ({card.get('process')})",
+        f"- Task: {card.get('task')}",
+        f"- Risk: {card.get('risk')}",
+        f"- Work areas: {card.get('areas')} ({card.get('changed_count')} changed)",
+        f"- Blocker: {card.get('blocker')}",
+    ]
+    if card.get("log_age_minutes") is not None:
+        lines.append(f"- Last log activity: {card.get('log_age_minutes')} min ago")
+    approach = card.get("approach") if isinstance(card.get("approach"), list) else []
+    if approach:
+        lines.append("")
+        lines.append("Planned approach:")
+        lines.extend(f"{index}. {item}" for index, item in enumerate(approach[:4], start=1))
+    checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+    if checks:
+        lines.append("")
+        lines.append("Checks:")
+        lines.extend(f"- {item}" for item in checks[:8])
+    timeline = card.get("timeline") if isinstance(card.get("timeline"), list) else []
+    if timeline:
+        lines.append("")
+        lines.append("Timeline:")
+        lines.extend(f"- {item}" for item in timeline[:6])
+    approvals = card.get("approvals") if isinstance(card.get("approvals"), list) else []
+    if approvals:
+        lines.append("")
+        lines.append("Approvals:")
+        for item in approvals[:6]:
+            if isinstance(item, dict):
+                lines.append(f"- {item.get('status')} {item.get('type')}: {item.get('summary')}")
+    lines.append("")
+    lines.append("Technical filenames and local paths are hidden. Use /diff only when you want code-level detail.")
+    return compact("\n".join(lines), limit=3600)
+
+
+def session_evidence(project_id: str) -> str:
+    return format_session_evidence_card(session_evidence_card(project_id))
 
 
 def load_system_prompt() -> str:
@@ -1920,7 +2055,18 @@ def openclaw_status_snapshot(
         except OSError:
             skills_count = 0
     plugin_sources = openclaw_plugin_sources(locations["plugins_json"])
-    raw_process_rows = process_rows if process_rows is not None else computer_process_lines(["openclaw", "claw-code", "run-claw"], timeout=openclaw_process_timeout(env))
+    process_error = ""
+    if process_rows is not None:
+        raw_process_rows = process_rows
+    else:
+        try:
+            raw_process_rows = computer_process_lines(["openclaw", "claw-code", "run-claw"], timeout=openclaw_process_timeout(env))
+        except subprocess.TimeoutExpired:
+            raw_process_rows = []
+            process_error = "OpenClaw process scan timed out."
+        except Exception as exc:
+            raw_process_rows = []
+            process_error = safe_brief_text(redact(str(exc)))
     process_rows = [row for row in raw_process_rows if is_openclaw_process_row(row)]
     launchers = [
         ("PATH command", Path(cli) if cli else None),
@@ -1938,6 +2084,7 @@ def openclaw_status_snapshot(
         "skills_count": skills_count,
         "plugin_sources": plugin_sources,
         "process_rows": process_rows,
+        "process_error": process_error,
         "available_launchers": available_launchers,
         "legacy_checkout_exists": locations["legacy_checkout"].exists(),
         "openclaw_home_exists": locations["openclaw_home"].exists(),
@@ -3321,6 +3468,7 @@ def operator_report_payload(user_id: str | None = None, limit: int | None = None
     work_feed = work_feed_items(user_id=user_id, limit=limit, sessions=sessions, changes=changes, tasks=tasks)
     briefs = session_brief_items(user_id=user_id, limit=limit, sessions=sessions, changes=changes, tasks=tasks)
     mission = mission_timeline_items(user_id=user_id, limit=limit, sessions=sessions, changes=changes, tasks=tasks)
+    evidence_cards = session_evidence_cards(user_id=user_id, limit=min(limit, 8))
     events = audit_data().get("events", [])
     audit_items: list[dict[str, Any]] = []
     for event in reversed(events[-limit:]):
@@ -3360,6 +3508,7 @@ def operator_report_payload(user_id: str | None = None, limit: int | None = None
         },
         "sessions": sessions,
         "mission_timeline": mission,
+        "session_evidence": evidence_cards,
         "session_briefs": briefs,
         "work_feed": work_feed,
         "approvals": pending_approvals(),
@@ -3416,6 +3565,24 @@ def format_operator_report(payload: dict[str, Any], source: str | None = None, l
             )
     else:
         lines.append("- No mission timeline items right now.")
+
+    evidence_cards = report_items(payload, "session_evidence")[:limit]
+    lines.extend(["", "## Session Evidence"])
+    if evidence_cards:
+        for index, card in enumerate(evidence_cards, start=1):
+            checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+            checks_text = "; ".join(report_clean(item, 140) for item in checks[:4]) or "No checks recorded yet."
+            lines.extend(
+                [
+                    f"{index}. {report_clean(card.get('project'), 120)} - {report_clean(card.get('state'), 80)}",
+                    f"   Task: {report_clean(card.get('task'), 360)}",
+                    f"   Work areas: {report_clean(card.get('areas'), 260)} ({int(card.get('changed_count') or 0)} changed)",
+                    f"   Blocker: {report_clean(card.get('blocker'), 260)}",
+                    f"   Checks: {checks_text}",
+                ]
+            )
+    else:
+        lines.append("- No session evidence cards recorded yet.")
 
     briefs = report_items(payload, "session_briefs")[:limit]
     lines.extend(["", "## Session Briefs"])
@@ -4306,6 +4473,32 @@ def command_mission(args: list[str], user_id: str) -> str:
         items = [item for item in items if item.get("project") == project_id]
         return format_mission_timeline(items, title=f"Commander X mission control: {project_id}")
     return format_mission_timeline(items)
+
+
+def command_evidence(args: list[str], user_id: str) -> str:
+    project_id = None
+    if args and args[0].lower() not in {"all", "global", "overview", "summary"}:
+        project_id, _rest = project_and_rest(args, user_id=user_id)
+    if project_id:
+        return session_evidence(project_id)
+    cards = session_evidence_cards(user_id=user_id, limit=8)
+    if not cards:
+        return "No session evidence cards yet. Start with /start <project> \"task\"."
+    lines = ["Commander X evidence cards", "Plain-English proof of current session state. Technical filenames and paths are hidden.", ""]
+    for index, card in enumerate(cards, start=1):
+        checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+        check_summary = "; ".join(str(item) for item in checks[:3]) or "No checks recorded yet."
+        lines.extend(
+            [
+                f"{index}. {card.get('project')} - {card.get('state')}",
+                f"   Task: {card.get('task')}",
+                f"   Work areas: {card.get('areas')} ({card.get('changed_count')} changed)",
+                f"   Blocker: {card.get('blocker')}",
+                f"   Checks: {check_summary}",
+                f"   Open: /evidence {card.get('project')}",
+            ]
+        )
+    return compact("\n".join(lines), limit=3600)
 
 
 def command_briefs(args: list[str], user_id: str) -> str:
@@ -5304,6 +5497,7 @@ def command_help() -> str:
 /briefs [project]
 /report [save]
 /mission [project]
+/evidence [project]
 /watch [project]
 /timeline [project]
 /plan [project] [task]
@@ -5902,6 +6096,9 @@ def natural_computer_command(text: str) -> str | None:
     if re.search(r"\b(mission control|mission timeline|timeline view|control room|what is the direction|where are we)\b", lowered):
         projects = mentioned_projects(text)
         return f"/mission {projects[0]}" if projects else "/mission"
+    if re.search(r"\b(evidence card|session evidence|proof of work|what was verified|checks run|show evidence)\b", lowered):
+        projects = mentioned_projects(text)
+        return f"/evidence {projects[0]}" if projects else "/evidence"
     if re.search(r"\b(work feed|live feed|codex feed|project feed|all project progress|all codex progress|what is codex doing across)\b", lowered):
         projects = mentioned_projects(text)
         return f"/feed {projects[0]}" if projects else "/feed"
@@ -6022,6 +6219,7 @@ Allowed commands:
 /briefs [project]
 /report [save]
 /mission [project]
+/evidence [project]
 /watch [project]
 /brief [project]
 /morning
@@ -6104,6 +6302,7 @@ Rules:
 - If the user asks for a work feed, live feed, or all project/Codex progress, map to /feed.
 - If the user asks for an executive brief, plain-English session update, non-technical update, or what Codex is doing right now, map to /briefs.
 - If the user asks for mission control, mission timeline, a control-room view, direction, or "where are we", map to /mission.
+- If the user asks for evidence cards, proof of work, checks run, or what was verified, map to /evidence.
 - If the user asks to watch progress, see the live view, or understand what Codex is doing, map to /watch.
 - If the user asks what keys/env setup is missing, map to /env.
 - If the user asks device, battery, disk, memory, or system status, map to /system.
@@ -6261,6 +6460,8 @@ def handle_text(
         return [command_briefs(args, user_id=user_id)]
     if command == "/mission":
         return [command_mission(args, user_id=user_id)]
+    if command == "/evidence":
+        return [command_evidence(args, user_id=user_id)]
     if command in {"/watch", "/timeline"}:
         project_id, _rest = project_and_rest(args, user_id=user_id)
         return [command_watch(project_id, user_id=user_id)]

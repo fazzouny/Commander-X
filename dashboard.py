@@ -113,6 +113,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "audit_trail": {"summary": message, "counts": {}, "items": []},
         "decision_suggestions": [],
         "mission_timeline": [],
+        "session_evidence": [],
         "session_briefs": [],
         "recent_images": [],
         "work_feed": [],
@@ -257,6 +258,7 @@ def fast_system_snapshot(paths: list[Path]) -> dict[str, Any]:
 def openclaw_dashboard_payload() -> dict[str, Any]:
     snapshot = commander.openclaw_status_snapshot()
     launcher, launcher_error = commander.configured_openclaw_launcher()
+    process_error = str(snapshot.get("process_error") or "")
     launchable = bool(snapshot["available_launchers"])
     running = bool(snapshot["process_rows"])
     has_traces = bool(snapshot["openclaw_home_exists"] or snapshot["claw_home_exists"] or snapshot["skills_count"])
@@ -276,7 +278,7 @@ def openclaw_dashboard_payload() -> dict[str, Any]:
         "plugin_cache": bool(snapshot["claw_home_exists"]),
         "legacy_checkout": bool(snapshot["legacy_checkout_exists"]),
         "configured_launcher": commander.friendly_local_path(launcher) if launcher else "",
-        "launcher_error": launcher_error,
+        "launcher_error": launcher_error or process_error,
         "available_launchers": [
             {"label": str(item.get("label", "")), "path": commander.friendly_local_path(str(item.get("path", "")))}
             for item in snapshot["available_launchers"][:4]
@@ -285,6 +287,24 @@ def openclaw_dashboard_payload() -> dict[str, Any]:
         "repo_configured": bool(os.environ.get("COMMANDER_OPENCLAW_REPO_URL")),
         "web_research": os.environ.get("COMMANDER_OPENCLAW_WEB_RESEARCH", "true"),
     }
+
+
+def safe_openclaw_dashboard_payload() -> dict[str, Any]:
+    try:
+        return openclaw_dashboard_payload()
+    except Exception as exc:  # pragma: no cover - protects live dashboard from local process timeouts
+        return {
+            "state": "unavailable",
+            "skills_count": 0,
+            "plugin_cache": False,
+            "legacy_checkout": False,
+            "configured_launcher": "",
+            "launcher_error": commander.safe_brief_text(commander.redact(str(exc))),
+            "available_launchers": [],
+            "processes": [],
+            "repo_configured": bool(os.environ.get("COMMANDER_OPENCLAW_REPO_URL")),
+            "web_research": os.environ.get("COMMANDER_OPENCLAW_WEB_RESEARCH", "true"),
+        }
 
 
 def capabilities_payload(openclaw_status: str | None = None) -> dict[str, Any]:
@@ -308,6 +328,7 @@ def capabilities_payload(openclaw_status: str | None = None) -> dict[str, Any]:
             "/tools",
             "/status",
             "/mission",
+            "/evidence",
             "/watch",
             "/queue",
             "/approvals",
@@ -417,7 +438,7 @@ def dashboard_recommendations(
         items.append("Enable Commander heartbeat with /heartbeat on 30 for proactive updates.")
     if not commander.get_project(str(state.get("active_project") or "")) and commander.assistant_mode(user_id) == "focused":
         items.append("Set a focused project with /focus <project>, or switch to /free for general computer work.")
-    openclaw = openclaw or openclaw_dashboard_payload()
+    openclaw = openclaw or safe_openclaw_dashboard_payload()
     if openclaw["state"] == "traces":
         items.append("OpenClaw traces exist but no trusted launcher is configured. Use /openclaw recover or set COMMANDER_OPENCLAW_LAUNCHER.")
     elif openclaw["state"] in {"startable", "launchable"}:
@@ -859,7 +880,8 @@ def build_dashboard_payload() -> dict[str, Any]:
     work_feed = commander.work_feed_items(user_id=user_id, limit=10, sessions=sessions, changes=changes, tasks=tasks)
     session_briefs = commander.session_brief_items(user_id=user_id, limit=8, sessions=sessions, changes=changes, tasks=tasks)
     mission_timeline = commander.mission_timeline_items(user_id=user_id, limit=10, sessions=sessions, changes=changes, tasks=tasks)
-    openclaw = openclaw_dashboard_payload()
+    session_evidence = commander.session_evidence_cards(user_id=user_id, limit=8)
+    openclaw = safe_openclaw_dashboard_payload()
     recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw)
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
     approvals = commander.pending_approvals()
@@ -877,6 +899,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "audit_trail": audit_trail,
         "decision_suggestions": dashboard_decision_suggestions(conversation, memories),
         "mission_timeline": mission_timeline,
+        "session_evidence": session_evidence,
         "session_briefs": session_briefs,
         "recent_images": dashboard_recent_images(users),
         "work_feed": work_feed,
@@ -1051,6 +1074,8 @@ def dashboard_project_read_action(project_id: str, action: str) -> tuple[dict[st
         text = commander.command_feed([project_id], user_id="dashboard")
     elif action == "brief":
         text = commander.command_briefs([project_id], user_id="dashboard")
+    elif action == "evidence":
+        text = commander.session_evidence(project_id)
     elif action == "changes":
         rows = [
             row

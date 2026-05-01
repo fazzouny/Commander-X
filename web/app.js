@@ -275,6 +275,53 @@ function renderMissionTimeline(data) {
       .join("") || `<p>No mission timeline items yet.</p>`;
 }
 
+function renderSessionEvidence(data) {
+  const items = data.session_evidence || [];
+  qs("#session-evidence-count").textContent = `${items.length} cards`;
+  qs("#session-evidence").innerHTML =
+    items
+      .slice(0, 8)
+      .map((item) => {
+        const blocker = String(item.blocker || "").toLowerCase();
+        const type = blocker && blocker !== "none reported" ? "warn" : item.state === "failed" ? "bad" : "good";
+        const checks = (item.checks || [])
+          .slice(0, 4)
+          .map((line) => `<span>${escapeHtml(line)}</span>`)
+          .join("");
+        const timeline = (item.timeline || [])
+          .slice(0, 4)
+          .map((line) => `<span>${escapeHtml(line)}</span>`)
+          .join("");
+        return `
+          <div class="work-card">
+            <div class="work-card-head">
+              <div>
+                <div class="row-title">${escapeHtml(item.project || "-")}</div>
+                <div class="row-meta">${escapeHtml(item.task || "-")}</div>
+              </div>
+              <div>${pill(item.state || "unknown", type)}</div>
+            </div>
+            <div class="work-grid">
+              <div><span>Risk</span><strong>${escapeHtml(item.risk || "unknown")}</strong></div>
+              <div><span>Work areas</span><strong>${escapeHtml(item.areas || "no local changes tracked")} (${escapeHtml(item.changed_count || 0)} changed)</strong></div>
+              <div><span>Blocker</span><strong>${escapeHtml(item.blocker || "none reported")}</strong></div>
+              <div><span>Process</span><strong>${escapeHtml(item.process || "-")}</strong></div>
+              <div><span>Task ID</span><strong>${escapeHtml(item.task_id || "-")}</strong></div>
+              <div><span>Log age</span><strong>${Number.isInteger(item.log_age_minutes) ? `${item.log_age_minutes} min` : "not available"}</strong></div>
+            </div>
+            <div class="timeline-mini">${checks || "<span>No checks recorded yet</span>"}</div>
+            <div class="timeline-mini">${timeline || "<span>No timeline evidence yet</span>"}</div>
+            <div class="work-actions">
+              <button data-work-action="evidence" data-project="${escapeHtml(item.project || "")}">Evidence</button>
+              <button data-work-action="watch" data-project="${escapeHtml(item.project || "")}">Watch</button>
+              <button data-work-action="changes" data-project="${escapeHtml(item.project || "")}">Areas</button>
+            </div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No session evidence cards yet.</p>`;
+}
+
 function renderSessionBriefs(data) {
   const items = data.session_briefs || [];
   qs("#session-brief-count").textContent = `${items.length} briefs`;
@@ -760,6 +807,7 @@ async function refresh() {
   renderConversation(data);
   renderDecisionSuggestions(data);
   renderMissionTimeline(data);
+  renderSessionEvidence(data);
   renderSessionBriefs(data);
   renderRecentImages(data);
   renderWorkFeed(data);
@@ -1049,6 +1097,7 @@ qs("#action-center").addEventListener("click", handleWorkFeedClick);
 qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionClick);
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
 qs("#mission-timeline").addEventListener("click", handleWorkFeedClick);
+qs("#session-evidence").addEventListener("click", handleWorkFeedClick);
 qs("#session-briefs").addEventListener("click", handleWorkFeedClick);
 qs("#recent-images").addEventListener("click", handleCapabilityClick);
 qs("#work-feed").addEventListener("click", handleWorkFeedClick);

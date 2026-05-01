@@ -95,6 +95,22 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(second, "context7 ready")
         self.assertEqual(calls, [dashboard.MCP_TIMEOUT_SECONDS])
 
+    def test_safe_openclaw_dashboard_payload_contains_detector_failures(self) -> None:
+        original_openclaw = dashboard.openclaw_dashboard_payload
+        try:
+            dashboard.openclaw_dashboard_payload = (  # type: ignore[assignment]
+                lambda: (_ for _ in ()).throw(TimeoutError("token=abc123 C:\\Users\\Name\\repo\\.env"))
+            )
+
+            payload = dashboard.safe_openclaw_dashboard_payload()
+        finally:
+            dashboard.openclaw_dashboard_payload = original_openclaw  # type: ignore[assignment]
+
+        self.assertEqual(payload["state"], "unavailable")
+        self.assertIn("technical path", payload["launcher_error"])
+        self.assertIn("[REDACTED]", payload["launcher_error"])
+        self.assertNotIn("C:\\Users", payload["launcher_error"])
+
     def test_fallback_dashboard_payload_includes_work_feed_shape(self) -> None:
         payload = dashboard.fallback_dashboard_payload("warming")
         self.assertIn("session_briefs", payload)
@@ -107,6 +123,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(payload["decision_suggestions"], [])
         self.assertIn("mission_timeline", payload)
         self.assertEqual(payload["mission_timeline"], [])
+        self.assertIn("session_evidence", payload)
+        self.assertEqual(payload["session_evidence"], [])
         self.assertIn("recent_images", payload)
         self.assertEqual(payload["recent_images"], [])
         self.assertIn("work_feed", payload)
@@ -296,6 +314,17 @@ class DashboardCapabilityTests(unittest.TestCase):
                         "next_step": "Review config.json",
                     }
                 ],
+                "session_evidence": [
+                    {
+                        "project": "example",
+                        "state": "running",
+                        "task": "Working in C:\\Users\\Name\\repo\\secret.py",
+                        "areas": "src/app.ts",
+                        "changed_count": 1,
+                        "blocker": "none",
+                        "checks": ["python -m py_compile src/app.py"],
+                    }
+                ],
                 "session_briefs": [
                     {
                         "project": "example",
@@ -409,6 +438,7 @@ class DashboardApprovalTests(unittest.TestCase):
         original_plan = dashboard.commander.command_plan
         original_feed = dashboard.commander.command_feed
         original_briefs = dashboard.commander.command_briefs
+        original_evidence = dashboard.commander.session_evidence
         original_changes = dashboard.commander.changed_project_details
         try:
             dashboard.commander.get_project = lambda project: {"allowed": True} if project == "example" else None  # type: ignore[assignment]
@@ -416,6 +446,7 @@ class DashboardApprovalTests(unittest.TestCase):
             dashboard.commander.command_plan = lambda project, user_id: f"plan {project} {user_id}"  # type: ignore[assignment]
             dashboard.commander.command_feed = lambda args, user_id: f"feed {args[0]} {user_id}"  # type: ignore[assignment]
             dashboard.commander.command_briefs = lambda args, user_id: f"brief {args[0]} {user_id}"  # type: ignore[assignment]
+            dashboard.commander.session_evidence = lambda project: f"evidence {project}"  # type: ignore[assignment]
             dashboard.commander.changed_project_details = lambda limit=30, max_files=0: [  # type: ignore[assignment]
                 {"project": "example", "changed_count": 2, "branch": "main", "areas": "app/user interface (2)"}
             ]
@@ -424,6 +455,7 @@ class DashboardApprovalTests(unittest.TestCase):
             plan, plan_status = dashboard.dashboard_project_read_action("example", "plan")
             feed, feed_status = dashboard.dashboard_project_read_action("example", "feed")
             brief, brief_status = dashboard.dashboard_project_read_action("example", "brief")
+            evidence, evidence_status = dashboard.dashboard_project_read_action("example", "evidence")
             changes, changes_status = dashboard.dashboard_project_read_action("example", "changes")
             missing, missing_status = dashboard.dashboard_project_read_action("missing", "watch")
         finally:
@@ -432,6 +464,7 @@ class DashboardApprovalTests(unittest.TestCase):
             dashboard.commander.command_plan = original_plan  # type: ignore[assignment]
             dashboard.commander.command_feed = original_feed  # type: ignore[assignment]
             dashboard.commander.command_briefs = original_briefs  # type: ignore[assignment]
+            dashboard.commander.session_evidence = original_evidence  # type: ignore[assignment]
             dashboard.commander.changed_project_details = original_changes  # type: ignore[assignment]
 
         self.assertEqual(watch_status, 200)
@@ -442,6 +475,8 @@ class DashboardApprovalTests(unittest.TestCase):
         self.assertEqual(feed["text"], "feed example dashboard")
         self.assertEqual(brief_status, 200)
         self.assertEqual(brief["text"], "brief example dashboard")
+        self.assertEqual(evidence_status, 200)
+        self.assertEqual(evidence["text"], "evidence example")
         self.assertEqual(changes_status, 200)
         self.assertIn("Changed work areas: example", changes["text"])
         self.assertIn("app/user interface", changes["text"])
