@@ -14,7 +14,7 @@ It is intentionally narrow:
 - Commander memory stores durable preferences and project facts
 - project profiles detect stack, useful scripts, verification commands, and risk notes
 - a task queue tracks queued/running/review/done work
-- a local dashboard exposes sessions, Git state, queue, memory, evidence, capabilities, and approval/task controls
+- a local dashboard exposes sessions, executive briefs, Git state, queue, memory, evidence, capabilities, and approval/task controls
 - a safe computer tool broker can open URLs, open allowlisted apps, read registered-project files, adjust volume, capture screenshots, and inspect Codex processes
 - a browser broker can inspect websites without opening an unsafe raw shell
 - a ClickUp API bridge can read recent tasks when `CLICKUP_API_TOKEN` and `CLICKUP_WORKSPACE_ID` are configured
@@ -97,6 +97,7 @@ Remove it later with:
 /approvals
 /changes
 /feed
+/briefs
 /watch
 /timeline
 /plan
@@ -188,6 +189,7 @@ What needs my attention?
 Show pending approvals.
 What changed across projects?
 Show all Codex progress.
+Give me a plain-English Codex brief.
 Watch the current project.
 Show me a cleanup plan.
 Open Notepad.

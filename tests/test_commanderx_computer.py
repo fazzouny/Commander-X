@@ -285,6 +285,33 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn("README.md", text)
         self.assertNotIn("App.tsx", text)
 
+    def test_session_briefs_hide_technical_paths(self) -> None:
+        sessions = {
+            "example": {
+                "state": "running",
+                "task": "Fix src/components/App.tsx onboarding",
+                "current_phase": "running",
+                "updated_at": commander.utc_now(),
+                "timeline": [
+                    {"title": "Reviewed src/components/App.tsx", "detail": "README.md notes updated", "status": "done"},
+                    {"title": "Codex session launched", "detail": "Commander is watching.", "status": "active"},
+                ],
+                "work_plan": {"risk": "medium"},
+                "pending_actions": {},
+            }
+        }
+        changes = [{"project": "example", "changed_count": 2, "areas": "app/user interface (2)"}]
+
+        items = commander.session_brief_items(user_id=None, sessions=sessions, changes=changes, tasks=[])
+        text = commander.format_session_briefs(items)
+
+        self.assertIn("example - running", text)
+        self.assertIn("app/user interface", text)
+        self.assertIn("Attention needed: no", text)
+        self.assertNotIn("src/", text)
+        self.assertNotIn("README.md", text)
+        self.assertNotIn("App.tsx", text)
+
     def test_session_timeline_summarizes_phases(self) -> None:
         plan = commander.build_work_plan("example", "Fix onboarding", {"verification_commands": ["npm test"]})
         timeline = commander.initial_session_timeline("Fix onboarding", branch_created=True, plan=plan)

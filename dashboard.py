@@ -108,6 +108,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "doctor": {"score": "warming", "checks": []},
         "projects": {},
         "sessions": {},
+        "session_briefs": [],
         "work_feed": [],
         "tasks": [],
         "memory_count": 0,
@@ -592,6 +593,7 @@ def build_dashboard_payload() -> dict[str, Any]:
     snapshot = fast_system_snapshot([commander.BASE_DIR])
     sessions = sessions_payload().get("sessions", {})
     work_feed = commander.work_feed_items(user_id=user_id, limit=10, sessions=sessions, changes=changes, tasks=tasks)
+    session_briefs = commander.session_brief_items(user_id=user_id, limit=8, sessions=sessions, changes=changes, tasks=tasks)
     openclaw = openclaw_dashboard_payload()
     recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw)
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
@@ -604,6 +606,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         },
         "projects": projects,
         "sessions": sessions,
+        "session_briefs": session_briefs,
         "work_feed": work_feed,
         "tasks": tasks[-60:],
         "memory_count": len(memories),
@@ -716,6 +719,8 @@ def dashboard_project_read_action(project_id: str, action: str) -> tuple[dict[st
         text = commander.command_plan(project_id, user_id="dashboard")
     elif action == "feed":
         text = commander.command_feed([project_id], user_id="dashboard")
+    elif action == "brief":
+        text = commander.command_briefs([project_id], user_id="dashboard")
     elif action == "changes":
         rows = [
             row

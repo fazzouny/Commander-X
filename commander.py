@@ -107,6 +107,7 @@ NL_ALLOWED_COMMANDS = {
     "/approvals",
     "/changes",
     "/feed",
+    "/briefs",
     "/watch",
     "/timeline",
     "/plan",
@@ -159,6 +160,7 @@ TELEGRAM_COMMANDS = [
     ("approvals", "List pending approvals"),
     ("changes", "Show changed projects"),
     ("feed", "Show plain-English work feed"),
+    ("briefs", "Show executive Codex briefs"),
     ("watch", "Show live project work view"),
     ("timeline", "Show session timeline"),
     ("plan", "Show pre-work plan"),
@@ -206,6 +208,7 @@ DEFAULT_BUTTON_ROWS = [
     [("Status", "cmd:/status"), ("Projects", "cmd:/projects")],
     [("Service", "cmd:/service"), ("Doctor", "cmd:/doctor")],
     [("Mode", "cmd:/mode"), ("Free Mode", "cmd:/free")],
+    [("Briefs", "cmd:/briefs"), ("Feed", "cmd:/feed")],
     [("Morning", "cmd:/morning"), ("Next", "cmd:/next")],
     [("Inbox", "cmd:/inbox"), ("Approvals", "cmd:/approvals")],
     [("Changes", "cmd:/changes"), ("Log", "cmd:/log"), ("Diff", "cmd:/diff")],
@@ -3586,6 +3589,108 @@ def format_work_feed(items: list[dict[str, Any]], title: str = "Commander X work
     return compact("\n".join(lines), limit=3600)
 
 
+def safe_brief_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "-"
+    text = re.sub(r"(?i)\b[A-Z]:\\(?:[^\\/:*?\"<>|\r\n]+\\)+[^\\/:*?\"<>|\r\n]+", "technical path", text)
+    text = re.sub(r"(?i)(?:^|\s)(?:\.{1,2}/|/)?(?:[\w.-]+/)+[\w.-]+\.[a-z0-9]{1,8}\b", " technical path", text)
+    text = re.sub(r"(?i)\b[\w.-]+\.(?:tsx|ts|jsx|js|mjs|cjs|py|md|mdx|json|css|scss|html|yml|yaml|toml|env)\b", "technical file", text)
+    return " ".join(text.split())
+
+
+def session_brief_items(
+    user_id: str | None = None,
+    limit: int = 10,
+    sessions: dict[str, Any] | None = None,
+    changes: list[dict[str, Any]] | None = None,
+    tasks: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    if sessions is None:
+        refresh_session_states()
+    sessions = sessions if sessions is not None else sessions_data().get("sessions", {})
+    feed = work_feed_items(user_id=user_id, limit=max(limit * 2, 12), sessions=sessions, changes=changes, tasks=tasks)
+    briefs: list[dict[str, Any]] = []
+    for item in feed:
+        project_id = str(item.get("project") or "-")
+        session = sessions.get(project_id) if isinstance(sessions, dict) else {}
+        if not isinstance(session, dict):
+            session = {}
+        state = str(item.get("state") or "unknown")
+        blocker = safe_brief_text(item.get("blocker") or "none reported")
+        timeline = [safe_brief_text(line.lstrip("- ")) for line in timeline_lines(session, limit=3)] if session else []
+        timeline = [line for line in timeline if line and line != "-"]
+        if state == "running":
+            summary = f"Codex is actively working. Current focus: {item.get('current_step') or item.get('phase') or 'progress update unavailable'}."
+        elif "approval" in blocker.lower():
+            summary = "Work is paused because Commander needs your approval before continuing."
+        elif state in {"failed", "finished_unknown", "stop_failed"}:
+            summary = "This session needs review before more work is started."
+        elif item.get("kind") == "changes":
+            summary = "There are local project changes to review, but no active Commander-run Codex session."
+        elif item.get("kind") == "task":
+            summary = "A queued Commander task is waiting to be started or reviewed."
+        else:
+            summary = safe_brief_text(item.get("detail") or item.get("phase") or "No active blocker reported.")
+        needs_attention = state in {"failed", "finished_unknown", "stop_failed"} or (
+            blocker not in {"none reported", "idle", "waiting for instruction", "-"}
+        )
+        briefs.append(
+            {
+                "project": project_id,
+                "state": state,
+                "phase": safe_brief_text(item.get("phase") or state),
+                "task": safe_brief_text(item.get("task")),
+                "summary": safe_brief_text(summary),
+                "areas": safe_brief_text(item.get("areas") or "no local changes tracked"),
+                "changed_count": int(item.get("changed_count") or 0),
+                "blocker": blocker,
+                "needs_attention": needs_attention,
+                "last_activity_minutes": item.get("last_activity_minutes"),
+                "next_step": safe_brief_text(item.get("next_step") or item.get("command") or "-"),
+                "timeline": timeline,
+                "priority": int(item.get("priority") or 9),
+            }
+        )
+    briefs.sort(key=lambda item: (int(item.get("priority") or 9), str(item.get("project") or "")))
+    return briefs[:limit]
+
+
+def format_session_briefs(items: list[dict[str, Any]], title: str = "Commander X session briefs") -> str:
+    if not items:
+        return "No active Commander briefs right now. Start with /start <project> \"task\" or /feed for the broader work view."
+    lines = [title, "Executive view. Technical filenames and local paths are hidden unless you ask for /diff or /projects full.", ""]
+    for index, item in enumerate(items, start=1):
+        age = item.get("last_activity_minutes")
+        activity = f"{age} min ago" if isinstance(age, int) else "not available"
+        attention = "yes" if item.get("needs_attention") else "no"
+        timeline = "; ".join(str(line) for line in item.get("timeline", [])[:3]) or "No detailed timeline yet."
+        lines.extend(
+            [
+                f"{index}. {item.get('project')} - {item.get('state')}",
+                f"   Update: {item.get('summary')}",
+                f"   Task: {item.get('task')}",
+                f"   Work areas: {item.get('areas')} ({item.get('changed_count')} changed)",
+                f"   Attention needed: {attention} - {item.get('blocker')}",
+                f"   Last activity: {activity}",
+                f"   Timeline: {timeline}",
+                f"   Next: {item.get('next_step')}",
+            ]
+        )
+    return compact("\n".join(lines), limit=3600)
+
+
+def command_briefs(args: list[str], user_id: str) -> str:
+    project_id = None
+    if args and args[0].lower() not in {"all", "global", "overview", "summary"}:
+        project_id, _rest = project_and_rest(args, user_id=user_id)
+    items = session_brief_items(user_id=user_id, limit=12)
+    if project_id:
+        items = [item for item in items if item.get("project") == project_id]
+        return format_session_briefs(items, title=f"Commander X session brief: {project_id}")
+    return format_session_briefs(items)
+
+
 def command_feed(args: list[str], user_id: str) -> str:
     project_id = None
     if args and args[0].lower() not in {"all", "global", "overview", "summary"}:
@@ -4553,6 +4658,7 @@ def command_help() -> str:
 /approvals
 /changes [project]
 /feed [project]
+/briefs [project]
 /watch [project]
 /timeline [project]
 /plan [project] [task]
@@ -4677,6 +4783,7 @@ def normalize_voice_command(transcript: str) -> str:
         "whoami",
         "brief",
         "updates",
+        "briefs",
         "mode",
         "free",
         "tools",
@@ -4916,6 +5023,9 @@ def natural_computer_command(text: str) -> str | None:
         return "/approvals"
     if re.search(r"\b(inbox|what needs my attention|needs attention|pending items|what needs me|decision inbox)\b", lowered):
         return "/inbox"
+    if re.search(r"\b(executive brief|executive update|session briefs?|codex briefs?|plain english summary|non[- ]technical update|what is codex doing right now|what are my codex sessions doing)\b", lowered):
+        projects = mentioned_projects(text)
+        return f"/briefs {projects[0]}" if projects else "/briefs"
     if re.search(r"\b(work feed|live feed|codex feed|project feed|all project progress|all codex progress|what is codex doing across)\b", lowered):
         projects = mentioned_projects(text)
         return f"/feed {projects[0]}" if projects else "/feed"
@@ -5033,6 +5143,7 @@ Allowed commands:
 /approvals
 /changes [project]
 /feed [project]
+/briefs [project]
 /watch [project]
 /brief [project]
 /morning
@@ -5107,6 +5218,7 @@ Rules:
 - If the user asks for approvals, pending approvals, approve list, or decisions to approve/cancel, map to /approvals.
 - If the user asks for changed projects, dirty worktrees, local changes, or changes across projects, map to /changes.
 - If the user asks for a work feed, live feed, or all project/Codex progress, map to /feed.
+- If the user asks for an executive brief, plain-English session update, non-technical update, or what Codex is doing right now, map to /briefs.
 - If the user asks to watch progress, see the live view, or understand what Codex is doing, map to /watch.
 - If the user asks what keys/env setup is missing, map to /env.
 - If the user asks device, battery, disk, memory, or system status, map to /system.
@@ -5253,6 +5365,8 @@ def handle_text(
         return [command_changes(args, user_id=user_id)]
     if command == "/feed":
         return [command_feed(args, user_id=user_id)]
+    if command == "/briefs":
+        return [command_briefs(args, user_id=user_id)]
     if command in {"/watch", "/timeline"}:
         project_id, _rest = project_and_rest(args, user_id=user_id)
         return [command_watch(project_id, user_id=user_id)]

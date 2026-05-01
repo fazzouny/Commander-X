@@ -179,7 +179,9 @@ span {
   gap: 8px;
 }
 
-.work-feed-list {
+.work-feed-list,
+.session-brief-list {
+  display: grid;
   gap: 12px;
 }
 
@@ -303,6 +305,7 @@ span {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: 12px;
 }
 
 .timeline-mini span {

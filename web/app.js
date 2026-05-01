@@ -149,6 +149,49 @@ function renderActionCenter(data) {
       .join("") || `<p>No pending action-center items.</p>`;
 }
 
+function renderSessionBriefs(data) {
+  const items = data.session_briefs || [];
+  qs("#session-brief-count").textContent = `${items.length} briefs`;
+  qs("#session-briefs").innerHTML =
+    items
+      .slice(0, 8)
+      .map((item) => {
+        const type = item.needs_attention ? "warn" : item.state === "running" ? "good" : ["failed", "finished_unknown", "stop_failed"].includes(item.state) ? "bad" : "good";
+        const age = Number.isInteger(item.last_activity_minutes) ? `${item.last_activity_minutes} min ago` : "not available";
+        const timeline = (item.timeline || [])
+          .slice(0, 3)
+          .map((line) => `<span>${escapeHtml(line)}</span>`)
+          .join("");
+        return `
+          <div class="work-card">
+            <div class="work-card-head">
+              <div>
+                <div class="row-title">${escapeHtml(item.project || "-")}</div>
+                <div class="row-meta">${escapeHtml(item.summary || "-")}</div>
+              </div>
+              <div>${pill(item.state || "unknown", type)}</div>
+            </div>
+            <div class="work-grid">
+              <div><span>Task</span><strong>${escapeHtml(item.task || "-")}</strong></div>
+              <div><span>Work areas</span><strong>${escapeHtml(item.areas || "no local changes tracked")} (${escapeHtml(item.changed_count || 0)} changed)</strong></div>
+              <div><span>Attention</span><strong>${escapeHtml(item.needs_attention ? item.blocker || "review needed" : "no")}</strong></div>
+              <div><span>Last activity</span><strong>${escapeHtml(age)}</strong></div>
+              <div><span>Next</span><strong>${escapeHtml(item.next_step || "-")}</strong></div>
+              <div><span>Phase</span><strong>${escapeHtml(item.phase || "-")}</strong></div>
+            </div>
+            <div class="timeline-mini">${timeline || "<span>No detailed timeline yet</span>"}</div>
+            <div class="work-actions">
+              <button data-work-action="brief" data-project="${escapeHtml(item.project || "")}">Brief</button>
+              <button data-work-action="watch" data-project="${escapeHtml(item.project || "")}">Watch</button>
+              <button data-work-action="changes" data-project="${escapeHtml(item.project || "")}">Areas</button>
+              ${item.state === "running" ? `<button class="danger" data-work-action="stop" data-project="${escapeHtml(item.project || "")}">Stop</button>` : ""}
+            </div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No session briefs yet.</p>`;
+}
+
 function renderWorkFeed(data) {
   const items = data.work_feed || [];
   qs("#work-feed-count").textContent = `${items.length} items`;
@@ -553,6 +596,7 @@ async function refresh() {
   state.dashboard = data;
   renderMetrics(data);
   renderActionCenter(data);
+  renderSessionBriefs(data);
   renderWorkFeed(data);
   renderProjects(data);
   renderTasks(data);
@@ -738,6 +782,7 @@ qs("#tasks").addEventListener("click", handleTaskClick);
 qs("#action-center").addEventListener("click", handleApprovalClick);
 qs("#action-center").addEventListener("click", handleTaskClick);
 qs("#action-center").addEventListener("click", handleWorkFeedClick);
+qs("#session-briefs").addEventListener("click", handleWorkFeedClick);
 qs("#work-feed").addEventListener("click", handleWorkFeedClick);
 qs("#capabilities").addEventListener("click", handleCapabilityClick);
 

@@ -97,6 +97,8 @@ class DashboardCapabilityTests(unittest.TestCase):
 
     def test_fallback_dashboard_payload_includes_work_feed_shape(self) -> None:
         payload = dashboard.fallback_dashboard_payload("warming")
+        self.assertIn("session_briefs", payload)
+        self.assertEqual(payload["session_briefs"], [])
         self.assertIn("work_feed", payload)
         self.assertEqual(payload["work_feed"], [])
         self.assertIn("action_center", payload)
@@ -174,12 +176,14 @@ class DashboardApprovalTests(unittest.TestCase):
         original_watch = dashboard.commander.command_watch
         original_plan = dashboard.commander.command_plan
         original_feed = dashboard.commander.command_feed
+        original_briefs = dashboard.commander.command_briefs
         original_changes = dashboard.commander.changed_project_details
         try:
             dashboard.commander.get_project = lambda project: {"allowed": True} if project == "example" else None  # type: ignore[assignment]
             dashboard.commander.command_watch = lambda project, user_id: f"watch {project} {user_id}"  # type: ignore[assignment]
             dashboard.commander.command_plan = lambda project, user_id: f"plan {project} {user_id}"  # type: ignore[assignment]
             dashboard.commander.command_feed = lambda args, user_id: f"feed {args[0]} {user_id}"  # type: ignore[assignment]
+            dashboard.commander.command_briefs = lambda args, user_id: f"brief {args[0]} {user_id}"  # type: ignore[assignment]
             dashboard.commander.changed_project_details = lambda limit=30, max_files=0: [  # type: ignore[assignment]
                 {"project": "example", "changed_count": 2, "branch": "main", "areas": "app/user interface (2)"}
             ]
@@ -187,6 +191,7 @@ class DashboardApprovalTests(unittest.TestCase):
             watch, watch_status = dashboard.dashboard_project_read_action("example", "watch")
             plan, plan_status = dashboard.dashboard_project_read_action("example", "plan")
             feed, feed_status = dashboard.dashboard_project_read_action("example", "feed")
+            brief, brief_status = dashboard.dashboard_project_read_action("example", "brief")
             changes, changes_status = dashboard.dashboard_project_read_action("example", "changes")
             missing, missing_status = dashboard.dashboard_project_read_action("missing", "watch")
         finally:
@@ -194,6 +199,7 @@ class DashboardApprovalTests(unittest.TestCase):
             dashboard.commander.command_watch = original_watch  # type: ignore[assignment]
             dashboard.commander.command_plan = original_plan  # type: ignore[assignment]
             dashboard.commander.command_feed = original_feed  # type: ignore[assignment]
+            dashboard.commander.command_briefs = original_briefs  # type: ignore[assignment]
             dashboard.commander.changed_project_details = original_changes  # type: ignore[assignment]
 
         self.assertEqual(watch_status, 200)
@@ -202,6 +208,8 @@ class DashboardApprovalTests(unittest.TestCase):
         self.assertEqual(plan["text"], "plan example dashboard")
         self.assertEqual(feed_status, 200)
         self.assertEqual(feed["text"], "feed example dashboard")
+        self.assertEqual(brief_status, 200)
+        self.assertEqual(brief["text"], "brief example dashboard")
         self.assertEqual(changes_status, 200)
         self.assertIn("Changed work areas: example", changes["text"])
         self.assertIn("app/user interface", changes["text"])
