@@ -62,6 +62,7 @@ Commander X now follows that shape:
 - Codex CLI sessions are the coding runtime.
 - The computer broker is the first device-control layer.
 - The dashboard is the control UI and can approve/cancel prepared actions plus start/done/cancel queued tasks through token-gated buttons.
+- The dashboard Action Center groups approvals, running sessions, failed/uncertain sessions, queued tasks, and changed-project reviews.
 - The dashboard includes a capabilities snapshot so an operator can see what Commander can do before digging into raw logs or file names.
 - The dashboard includes a Work Feed that approximates the Codex app progress experience without exposing filenames by default.
 - Work Feed cards expose controlled dashboard buttons for Watch, Areas, Plan, and Stop only when a managed session is running.

@@ -110,6 +110,45 @@ function renderProjects(data) {
   }
 }
 
+function actionButton(item, action) {
+  const cls = action.style === "danger" ? " class=\"danger\"" : "";
+  const label = escapeHtml(action.label || action.action || "Action");
+  if (action.type === "approval") {
+    return `<button${cls} data-approval-action="${escapeHtml(action.action)}" data-project="${escapeHtml(item.project || "")}" data-id="${escapeHtml(item.approval_id || "")}">${label}</button>`;
+  }
+  if (action.type === "task") {
+    return `<button${cls} data-task-action="${escapeHtml(action.action)}" data-id="${escapeHtml(item.task_id || "")}">${label}</button>`;
+  }
+  if (action.type === "work") {
+    return `<button${cls} data-work-action="${escapeHtml(action.action)}" data-project="${escapeHtml(item.project || "")}">${label}</button>`;
+  }
+  return "";
+}
+
+function renderActionCenter(data) {
+  const items = data.action_center || [];
+  qs("#action-center-count").textContent = `${items.length} items`;
+  qs("#action-center").innerHTML =
+    items
+      .slice(0, 12)
+      .map((item) => {
+        const type = item.priority === "high" ? "bad" : item.priority === "medium" ? "warn" : "good";
+        return `
+          <div class="row">
+            <div class="row-main">
+              <div class="row-title">${escapeHtml(item.title || "-")}</div>
+              <div class="row-meta">${escapeHtml(item.detail || "-")}</div>
+              <div class="action-center-actions">
+                ${(item.actions || []).map((action) => actionButton(item, action)).join("")}
+              </div>
+            </div>
+            <div>${pill(item.priority || "low", type)}</div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No pending action-center items.</p>`;
+}
+
 function renderWorkFeed(data) {
   const items = data.work_feed || [];
   qs("#work-feed-count").textContent = `${items.length} items`;
@@ -513,6 +552,7 @@ async function refresh() {
   const data = await api("/api/dashboard");
   state.dashboard = data;
   renderMetrics(data);
+  renderActionCenter(data);
   renderWorkFeed(data);
   renderProjects(data);
   renderTasks(data);
@@ -695,6 +735,9 @@ qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);
 qs("#clear-dashboard-token").addEventListener("click", clearDashboardToken);
 qs("#approvals").addEventListener("click", handleApprovalClick);
 qs("#tasks").addEventListener("click", handleTaskClick);
+qs("#action-center").addEventListener("click", handleApprovalClick);
+qs("#action-center").addEventListener("click", handleTaskClick);
+qs("#action-center").addEventListener("click", handleWorkFeedClick);
 qs("#work-feed").addEventListener("click", handleWorkFeedClick);
 qs("#capabilities").addEventListener("click", handleCapabilityClick);
 

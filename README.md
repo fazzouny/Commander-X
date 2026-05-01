@@ -449,13 +449,15 @@ Open:
 http://127.0.0.1:8787
 ```
 
-The dashboard shows a plain-English work feed, registered projects, sessions, approvals, task queue, memory count, Git evidence, logs, capabilities, OpenClaw status, and profiles. It binds to localhost by default. If you expose it through Tailscale, Cloudflare Tunnel, or another remote path, set `COMMANDER_DASHBOARD_TOKEN` in `.env`.
+The dashboard shows an Action Center, plain-English work feed, registered projects, sessions, approvals, task queue, memory count, Git evidence, logs, capabilities, OpenClaw status, and profiles. It binds to localhost by default. If you expose it through Tailscale, Cloudflare Tunnel, or another remote path, set `COMMANDER_DASHBOARD_TOKEN` in `.env`.
 
 When a dashboard token is configured, paste it into the local dashboard token field once. The browser stores it locally and sends it as `X-Commander-Token` for dashboard actions.
 
 Approval cards in the dashboard can approve or cancel pending Commander actions. These buttons call the same approval executor as `/approve` and remain protected by `COMMANDER_DASHBOARD_TOKEN`.
 
 Task queue cards can start queued tasks, mark review/failed/stopped tasks done, or cancel queued/review/failed tasks. These buttons call the same `/queue` commands as Telegram and remain protected by the dashboard token.
+
+The Action Center groups high-signal operator decisions: approvals, running sessions, failed/uncertain sessions, queued tasks, and changed-project reviews. Its buttons reuse the same guarded approval, queue, work-feed, and stop endpoints as the rest of Commander.
 
 The Capabilities card gives a quick operator-readable snapshot of what Commander can currently do and exposes copyable command chips for common checks.
 

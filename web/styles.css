@@ -170,6 +170,7 @@ span {
 .doctor-list,
 .inbox-list,
 .approval-list,
+.action-center-list,
 .work-feed-list,
 .capability-list,
 .openclaw-list,
@@ -356,6 +357,13 @@ span {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
+}
+
+.action-center-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 .approval-actions,

@@ -112,6 +112,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "tasks": [],
         "memory_count": 0,
         "approvals": [],
+        "action_center": [],
         "inbox": [{"kind": "system", "priority": "low", "title": "Dashboard warming up", "detail": message}],
         "changes": [],
         "recommendations": [message],
@@ -466,6 +467,113 @@ def dashboard_inbox(user_id: str, recommendations: list[str]) -> list[dict[str, 
     return sorted(items, key=lambda item: order.get(item["priority"], 9))[:12]
 
 
+def dashboard_action_center(
+    approvals: list[dict[str, Any]],
+    sessions: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    changes: list[dict[str, Any]],
+    limit: int = 12,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen_projects: set[str] = set()
+    for approval in approvals:
+        project = str(approval.get("project") or "-")
+        items.append(
+            {
+                "kind": "approval",
+                "priority": "high",
+                "project": project,
+                "title": f"Approval needed: {approval.get('type', 'action')}",
+                "detail": str(approval.get("message") or f"Branch: {approval.get('branch') or '-'}"),
+                "approval_id": str(approval.get("id") or ""),
+                "actions": [
+                    {"label": "Approve", "type": "approval", "action": "approve", "style": "primary"},
+                    {"label": "Cancel", "type": "approval", "action": "cancel", "style": "danger"},
+                ],
+            }
+        )
+        seen_projects.add(project)
+    for project_id, session in sorted(sessions.items()):
+        if not isinstance(session, dict):
+            continue
+        state = str(session.get("state") or "unknown")
+        if state == "running":
+            items.append(
+                {
+                    "kind": "session",
+                    "priority": "medium",
+                    "project": project_id,
+                    "title": f"{project_id} is running",
+                    "detail": str(session.get("task") or "Managed Codex session is active."),
+                    "actions": [
+                        {"label": "Watch", "type": "work", "action": "watch"},
+                        {"label": "Areas", "type": "work", "action": "changes"},
+                        {"label": "Stop", "type": "work", "action": "stop", "style": "danger"},
+                    ],
+                }
+            )
+            seen_projects.add(project_id)
+        elif state in {"failed", "finished_unknown", "stop_failed"}:
+            items.append(
+                {
+                    "kind": "session",
+                    "priority": "high",
+                    "project": project_id,
+                    "title": f"{project_id} needs review",
+                    "detail": f"Session state: {state}",
+                    "actions": [
+                        {"label": "Watch", "type": "work", "action": "watch"},
+                        {"label": "Plan", "type": "work", "action": "plan"},
+                        {"label": "Areas", "type": "work", "action": "changes"},
+                    ],
+                }
+            )
+            seen_projects.add(project_id)
+    for task in commander.visible_task_records(tasks, limit=10):
+        if not isinstance(task, dict):
+            continue
+        status = str(task.get("status") or "queued")
+        if status not in {"queued", "review", "failed"}:
+            continue
+        task_id = str(task.get("id") or "")
+        project = str(task.get("project") or "-")
+        items.append(
+            {
+                "kind": "task",
+                "priority": "medium" if status == "queued" else "high",
+                "project": project,
+                "title": f"{status}: {project}",
+                "detail": str(task.get("title") or "-"),
+                "task_id": task_id,
+                "actions": [
+                    {"label": "Start", "type": "task", "action": "start"} if status == "queued" else {"label": "Done", "type": "task", "action": "done"},
+                    {"label": "Cancel", "type": "task", "action": "cancel", "style": "danger"},
+                ],
+            }
+        )
+        seen_projects.add(project)
+    for change in changes:
+        project = str(change.get("project") or "")
+        if not project or project in seen_projects:
+            continue
+        items.append(
+            {
+                "kind": "changes",
+                "priority": "low",
+                "project": project,
+                "title": f"Review local changes: {project}",
+                "detail": f"{change.get('changed_count', 0)} changed; {change.get('areas') or 'areas unavailable'}",
+                "actions": [
+                    {"label": "Areas", "type": "work", "action": "changes"},
+                    {"label": "Watch", "type": "work", "action": "watch"},
+                ],
+            }
+        )
+    order = {"high": 0, "medium": 1, "low": 2}
+    items.sort(key=lambda item: (order.get(str(item.get("priority")), 9), str(item.get("project") or "")))
+    return items[:limit]
+
+
 def build_dashboard_payload() -> dict[str, Any]:
     commander.refresh_session_states()
     commander.sync_tasks_with_sessions()
@@ -487,6 +595,7 @@ def build_dashboard_payload() -> dict[str, Any]:
     openclaw = openclaw_dashboard_payload()
     recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw)
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
+    approvals = commander.pending_approvals()
     return {
         "status": commander.command_status(),
         "doctor": {
@@ -498,7 +607,8 @@ def build_dashboard_payload() -> dict[str, Any]:
         "work_feed": work_feed,
         "tasks": tasks[-60:],
         "memory_count": len(memories),
-        "approvals": commander.pending_approvals(),
+        "approvals": approvals,
+        "action_center": dashboard_action_center(approvals, sessions, tasks, changes),
         "inbox": dashboard_inbox(user_id=user_id, recommendations=recommendations),
         "changes": changes,
         "recommendations": recommendations,

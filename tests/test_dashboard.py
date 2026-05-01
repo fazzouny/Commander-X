@@ -99,7 +99,40 @@ class DashboardCapabilityTests(unittest.TestCase):
         payload = dashboard.fallback_dashboard_payload("warming")
         self.assertIn("work_feed", payload)
         self.assertEqual(payload["work_feed"], [])
+        self.assertIn("action_center", payload)
+        self.assertEqual(payload["action_center"], [])
         self.assertIn("capabilities", payload)
+
+    def test_dashboard_action_center_combines_decisions_sessions_tasks_and_changes(self) -> None:
+        approvals = [
+            {
+                "project": "example",
+                "id": "abc123",
+                "type": "push",
+                "branch": "main",
+                "message": "Push changes",
+            }
+        ]
+        sessions = {
+            "runner": {"state": "running", "task": "Fix onboarding"},
+            "failed": {"state": "failed", "task": "Audit app"},
+        }
+        tasks = [{"id": "task1", "project": "queued-app", "status": "queued", "title": "Queued work"}]
+        changes = [
+            {"project": "changed-app", "changed_count": 3, "areas": "app/user interface (2), tests (1)"}
+        ]
+
+        items = dashboard.dashboard_action_center(approvals, sessions, tasks, changes)
+
+        self.assertEqual(items[0]["kind"], "approval")
+        self.assertEqual(items[0]["actions"][0]["type"], "approval")
+        running = next(item for item in items if item["project"] == "runner")
+        self.assertIn({"label": "Stop", "type": "work", "action": "stop", "style": "danger"}, running["actions"])
+        queued = next(item for item in items if item["project"] == "queued-app")
+        self.assertEqual(queued["actions"][0]["action"], "start")
+        changed = next(item for item in items if item["project"] == "changed-app")
+        self.assertIn("app/user interface", changed["detail"])
+        self.assertNotIn("src/", changed["detail"])
 
     def test_capabilities_payload_summarizes_tools_without_secret_values(self) -> None:
         original_computer_tools_config = dashboard.commander.computer_tools_config
