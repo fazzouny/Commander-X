@@ -115,6 +115,7 @@ NL_ALLOWED_COMMANDS = {
     "/briefs",
     "/mission",
     "/evidence",
+    "/replay",
     "/watch",
     "/timeline",
     "/plan",
@@ -172,6 +173,7 @@ TELEGRAM_COMMANDS = [
     ("briefs", "Show executive Codex briefs"),
     ("mission", "Show mission-control timeline"),
     ("evidence", "Show clean session evidence"),
+    ("replay", "Show a plain-English session replay"),
     ("watch", "Show live project work view"),
     ("timeline", "Show session timeline"),
     ("plan", "Show pre-work plan"),
@@ -222,7 +224,7 @@ DEFAULT_BUTTON_ROWS = [
     [("Service", "cmd:/service"), ("Doctor", "cmd:/doctor")],
     [("Mode", "cmd:/mode"), ("Free Mode", "cmd:/free")],
     [("Mission", "cmd:/mission"), ("Briefs", "cmd:/briefs"), ("Feed", "cmd:/feed")],
-    [("Evidence", "cmd:/evidence"), ("Report", "cmd:/report")],
+    [("Evidence", "cmd:/evidence"), ("Replay", "cmd:/replay"), ("Report", "cmd:/report")],
     [("Morning", "cmd:/morning"), ("Next", "cmd:/next")],
     [("Inbox", "cmd:/inbox"), ("Approvals", "cmd:/approvals"), ("Audit", "cmd:/audit")],
     [("Save Report", "cmd:/report save")],
@@ -1217,6 +1219,150 @@ def format_session_evidence_card(card: dict[str, Any]) -> str:
 
 def session_evidence(project_id: str) -> str:
     return format_session_evidence_card(session_evidence_card(project_id))
+
+
+def replay_story_from_card(card: dict[str, Any]) -> str:
+    project = audit_clean(card.get("project"), limit=120)
+    state = audit_clean(card.get("state") or "unknown", limit=80)
+    task = audit_clean(card.get("task") or "No task recorded.", limit=360)
+    areas = audit_clean(card.get("areas") or "no local changes tracked", limit=220)
+    changed_count = int(card.get("changed_count") or 0)
+    blocker = audit_clean(card.get("blocker") or "none reported", limit=220)
+    checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+    if checks:
+        proof = f"Commander has {len(checks[:6])} verification signal{'s' if len(checks[:6]) != 1 else ''} recorded."
+    else:
+        proof = "Commander has no verification checks recorded yet."
+    if changed_count:
+        direction = f"The work is touching {areas}."
+    else:
+        direction = "There are no tracked local code changes yet."
+    if blocker and blocker.lower() != "none reported":
+        blocker_sentence = f"The current blocker is {blocker}."
+    else:
+        blocker_sentence = "No blocker is currently reported."
+    return compact(
+        f"{project} is {state}. The requested task is: {task}. {direction} {proof} {blocker_sentence}",
+        limit=900,
+    )
+
+
+def replay_outcome_from_card(card: dict[str, Any]) -> str:
+    state = str(card.get("state") or "unknown").lower()
+    blocker = str(card.get("blocker") or "none reported").lower()
+    changed_count = int(card.get("changed_count") or 0)
+    checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+    if "running" in state:
+        return "Still in progress. The useful view is direction, checks, and blocker rather than final result."
+    if "completed" in state or "stopped" in state:
+        if checks and blocker in {"", "none reported", "none"}:
+            return "Work appears review-ready from the recorded signals."
+        if changed_count:
+            return "Work has local changes and should be reviewed before commit or push."
+        return "The session ended without tracked local changes."
+    if "failed" in state:
+        return "The session needs intervention before it should continue."
+    return "Outcome is not fully known yet because this session has limited recorded state."
+
+
+def replay_next_step_from_card(card: dict[str, Any], mission_item: dict[str, Any] | None = None) -> str:
+    if mission_item and mission_item.get("next_step"):
+        return audit_clean(mission_item.get("next_step"), limit=260)
+    blocker = str(card.get("blocker") or "none reported").lower()
+    checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+    changed_count = int(card.get("changed_count") or 0)
+    if blocker and blocker not in {"none reported", "none", "-"}:
+        return "Decide whether Commander should continue, restart, or stop this session."
+    if changed_count and checks:
+        return "Review the clean evidence, then use /diff only if code-level detail is needed."
+    if changed_count:
+        return "Ask Commander to run checks or show evidence before approving any commit."
+    return "Start or continue the project task if this work is still needed."
+
+
+def session_replay_card(project_id: str) -> dict[str, Any]:
+    card = session_evidence_card(project_id)
+    mission_items = mission_timeline_items(
+        user_id=None,
+        limit=20,
+        sessions={project_id: sessions_data().get("sessions", {}).get(project_id) or {}},
+        changes=[
+            {
+                "project": project_id,
+                "changed_count": card.get("changed_count", 0),
+                "areas": card.get("areas", "no local changes tracked"),
+            }
+        ],
+        tasks=[],
+    )
+    mission_item = next((item for item in mission_items if item.get("project") == project_id), None)
+    checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+    timeline = card.get("timeline") if isinstance(card.get("timeline"), list) else []
+    approvals = card.get("approvals") if isinstance(card.get("approvals"), list) else []
+    replay = {
+        "project": audit_clean(card.get("project"), limit=120),
+        "state": audit_clean(card.get("state"), limit=80),
+        "task": audit_clean(card.get("task"), limit=420),
+        "story": audit_clean(replay_story_from_card(card), limit=1000),
+        "outcome": audit_clean(replay_outcome_from_card(card), limit=320),
+        "work_areas": audit_clean(card.get("areas"), limit=260),
+        "changed_count": int(card.get("changed_count") or 0),
+        "blocker": audit_clean(card.get("blocker") or "none reported", limit=260),
+        "checks": [audit_clean(item, limit=180) for item in checks[:5]],
+        "decisions": [
+            audit_clean(f"{item.get('status')} {item.get('type')}: {item.get('summary')}", limit=220)
+            for item in approvals[:4]
+            if isinstance(item, dict)
+        ],
+        "timeline": [audit_clean(item, limit=260) for item in timeline[:5]],
+        "next_step": replay_next_step_from_card(card, mission_item),
+        "freshness": audit_clean(mission_item.get("freshness") if mission_item else "unknown", limit=80),
+        "last_activity_minutes": mission_item.get("last_activity_minutes") if mission_item else card.get("log_age_minutes"),
+    }
+    return replay
+
+
+def session_replay_cards(user_id: str | None = None, limit: int = 6) -> list[dict[str, Any]]:
+    projects: list[str] = []
+    for card in session_evidence_cards(user_id=user_id, limit=max(limit, 6)):
+        project_id = str(card.get("project") or "")
+        if project_id and project_id not in projects:
+            projects.append(project_id)
+    return [session_replay_card(project_id) for project_id in projects[:limit]]
+
+
+def format_session_replay_card(card: dict[str, Any]) -> str:
+    lines = [
+        f"Session replay: {card.get('project')}",
+        f"- State: {card.get('state')} ({card.get('freshness')})",
+        f"- Story: {card.get('story')}",
+        f"- Outcome: {card.get('outcome')}",
+        f"- Work areas: {card.get('work_areas')} ({card.get('changed_count')} changed)",
+        f"- Blocker: {card.get('blocker')}",
+        f"- Next: {card.get('next_step')}",
+    ]
+    checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+    if checks:
+        lines.append("")
+        lines.append("Checks seen:")
+        lines.extend(f"- {item}" for item in checks[:5])
+    decisions = card.get("decisions") if isinstance(card.get("decisions"), list) else []
+    if decisions:
+        lines.append("")
+        lines.append("Decisions:")
+        lines.extend(f"- {item}" for item in decisions[:4])
+    timeline = card.get("timeline") if isinstance(card.get("timeline"), list) else []
+    if timeline:
+        lines.append("")
+        lines.append("What happened:")
+        lines.extend(f"- {item}" for item in timeline[:5])
+    lines.append("")
+    lines.append("This replay hides technical filenames and local paths. Use /evidence for proof or /diff for code-level detail.")
+    return compact("\n".join(lines), limit=3600)
+
+
+def session_replay(project_id: str) -> str:
+    return format_session_replay_card(session_replay_card(project_id))
 
 
 def load_system_prompt() -> str:
@@ -3469,6 +3615,7 @@ def operator_report_payload(user_id: str | None = None, limit: int | None = None
     briefs = session_brief_items(user_id=user_id, limit=limit, sessions=sessions, changes=changes, tasks=tasks)
     mission = mission_timeline_items(user_id=user_id, limit=limit, sessions=sessions, changes=changes, tasks=tasks)
     evidence_cards = session_evidence_cards(user_id=user_id, limit=min(limit, 8))
+    replay_cards = session_replay_cards(user_id=user_id, limit=min(limit, 6))
     events = audit_data().get("events", [])
     audit_items: list[dict[str, Any]] = []
     for event in reversed(events[-limit:]):
@@ -3509,6 +3656,7 @@ def operator_report_payload(user_id: str | None = None, limit: int | None = None
         "sessions": sessions,
         "mission_timeline": mission,
         "session_evidence": evidence_cards,
+        "session_replay": replay_cards,
         "session_briefs": briefs,
         "work_feed": work_feed,
         "approvals": pending_approvals(),
@@ -3583,6 +3731,25 @@ def format_operator_report(payload: dict[str, Any], source: str | None = None, l
             )
     else:
         lines.append("- No session evidence cards recorded yet.")
+
+    replay_cards = report_items(payload, "session_replay")[:limit]
+    lines.extend(["", "## Session Replay"])
+    if replay_cards:
+        for index, card in enumerate(replay_cards, start=1):
+            checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+            checks_text = "; ".join(report_clean(item, 140) for item in checks[:3]) or "No checks recorded yet."
+            lines.extend(
+                [
+                    f"{index}. {report_clean(card.get('project'), 120)} - {report_clean(card.get('state'), 80)}",
+                    f"   Story: {report_clean(card.get('story'), 600)}",
+                    f"   Outcome: {report_clean(card.get('outcome'), 260)}",
+                    f"   Blocker: {report_clean(card.get('blocker'), 220)}",
+                    f"   Checks: {checks_text}",
+                    f"   Next: {report_clean(card.get('next_step'), 260)}",
+                ]
+            )
+    else:
+        lines.append("- No session replay cards recorded yet.")
 
     briefs = report_items(payload, "session_briefs")[:limit]
     lines.extend(["", "## Session Briefs"])
@@ -4496,6 +4663,37 @@ def command_evidence(args: list[str], user_id: str) -> str:
                 f"   Blocker: {card.get('blocker')}",
                 f"   Checks: {check_summary}",
                 f"   Open: /evidence {card.get('project')}",
+            ]
+        )
+    return compact("\n".join(lines), limit=3600)
+
+
+def command_replay(args: list[str], user_id: str) -> str:
+    project_id = None
+    if args and args[0].lower() not in {"all", "global", "overview", "summary"}:
+        project_id, _rest = project_and_rest(args, user_id=user_id)
+    if project_id:
+        return session_replay(project_id)
+    cards = session_replay_cards(user_id=user_id, limit=6)
+    if not cards:
+        return "No session replay cards yet. Start with /start <project> \"task\"."
+    lines = [
+        "Commander X session replay",
+        "Plain-English run stories. Technical filenames and paths are hidden.",
+        "",
+    ]
+    for index, card in enumerate(cards, start=1):
+        checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+        check_summary = "; ".join(str(item) for item in checks[:3]) or "No checks recorded yet."
+        lines.extend(
+            [
+                f"{index}. {card.get('project')} - {card.get('state')}",
+                f"   Story: {card.get('story')}",
+                f"   Outcome: {card.get('outcome')}",
+                f"   Blocker: {card.get('blocker')}",
+                f"   Checks: {check_summary}",
+                f"   Next: {card.get('next_step')}",
+                f"   Open: /replay {card.get('project')}",
             ]
         )
     return compact("\n".join(lines), limit=3600)
@@ -5498,6 +5696,7 @@ def command_help() -> str:
 /report [save]
 /mission [project]
 /evidence [project]
+/replay [project]
 /watch [project]
 /timeline [project]
 /plan [project] [task]
@@ -6096,6 +6295,9 @@ def natural_computer_command(text: str) -> str | None:
     if re.search(r"\b(mission control|mission timeline|timeline view|control room|what is the direction|where are we)\b", lowered):
         projects = mentioned_projects(text)
         return f"/mission {projects[0]}" if projects else "/mission"
+    if re.search(r"\b(session replay|run replay|replay cards?|what happened in this run|what happened during|reconstruct(?:ed)? run|run story|session story|codex story)\b", lowered):
+        projects = mentioned_projects(text)
+        return f"/replay {projects[0]}" if projects else "/replay"
     if re.search(r"\b(evidence card|session evidence|proof of work|what was verified|checks run|show evidence)\b", lowered):
         projects = mentioned_projects(text)
         return f"/evidence {projects[0]}" if projects else "/evidence"
@@ -6256,6 +6458,7 @@ Allowed commands:
 /audit
 /report [save]
 /mission [project]
+/replay [project]
 /check
 /heartbeat on [minutes]
 /heartbeat off
@@ -6303,6 +6506,7 @@ Rules:
 - If the user asks for an executive brief, plain-English session update, non-technical update, or what Codex is doing right now, map to /briefs.
 - If the user asks for mission control, mission timeline, a control-room view, direction, or "where are we", map to /mission.
 - If the user asks for evidence cards, proof of work, checks run, or what was verified, map to /evidence.
+- If the user asks for a session replay, run story, or what happened during a Codex run, map to /replay.
 - If the user asks to watch progress, see the live view, or understand what Codex is doing, map to /watch.
 - If the user asks what keys/env setup is missing, map to /env.
 - If the user asks device, battery, disk, memory, or system status, map to /system.
@@ -6462,6 +6666,8 @@ def handle_text(
         return [command_mission(args, user_id=user_id)]
     if command == "/evidence":
         return [command_evidence(args, user_id=user_id)]
+    if command == "/replay":
+        return [command_replay(args, user_id=user_id)]
     if command in {"/watch", "/timeline"}:
         project_id, _rest = project_and_rest(args, user_id=user_id)
         return [command_watch(project_id, user_id=user_id)]

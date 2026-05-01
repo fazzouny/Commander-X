@@ -114,6 +114,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "decision_suggestions": [],
         "mission_timeline": [],
         "session_evidence": [],
+        "session_replay": [],
         "session_briefs": [],
         "recent_images": [],
         "work_feed": [],
@@ -329,6 +330,7 @@ def capabilities_payload(openclaw_status: str | None = None) -> dict[str, Any]:
             "/status",
             "/mission",
             "/evidence",
+            "/replay",
             "/watch",
             "/queue",
             "/approvals",
@@ -881,6 +883,7 @@ def build_dashboard_payload() -> dict[str, Any]:
     session_briefs = commander.session_brief_items(user_id=user_id, limit=8, sessions=sessions, changes=changes, tasks=tasks)
     mission_timeline = commander.mission_timeline_items(user_id=user_id, limit=10, sessions=sessions, changes=changes, tasks=tasks)
     session_evidence = commander.session_evidence_cards(user_id=user_id, limit=8)
+    session_replay = commander.session_replay_cards(user_id=user_id, limit=6)
     openclaw = safe_openclaw_dashboard_payload()
     recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw)
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
@@ -900,6 +903,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "decision_suggestions": dashboard_decision_suggestions(conversation, memories),
         "mission_timeline": mission_timeline,
         "session_evidence": session_evidence,
+        "session_replay": session_replay,
         "session_briefs": session_briefs,
         "recent_images": dashboard_recent_images(users),
         "work_feed": work_feed,
@@ -1076,6 +1080,8 @@ def dashboard_project_read_action(project_id: str, action: str) -> tuple[dict[st
         text = commander.command_briefs([project_id], user_id="dashboard")
     elif action == "evidence":
         text = commander.session_evidence(project_id)
+    elif action == "replay":
+        text = commander.session_replay(project_id)
     elif action == "changes":
         rows = [
             row
@@ -1134,6 +1140,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/evidence/"):
             project_id = urllib.parse.unquote(path.removeprefix("/api/evidence/"))
             self.send_json({"project": project_id, "text": commander.session_evidence(project_id)})
+            return
+        if path.startswith("/api/replay/"):
+            project_id = urllib.parse.unquote(path.removeprefix("/api/replay/"))
+            self.send_json({"project": project_id, "text": commander.session_replay(project_id)})
             return
         if path.startswith("/api/work/"):
             parts = path.removeprefix("/api/work/").split("/", 1)

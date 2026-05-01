@@ -32,6 +32,9 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - `/approvals` lists every pending approval with exact approve/cancel commands.
 - `/changes` summarizes changed projects by human work area, hiding filenames unless `files/details` is requested.
 - `/feed` shows a plain-English work feed across projects: task, current step, direction, blocker, activity age, and next useful command.
+- `/mission` shows the cross-project direction and current stage without raw local paths.
+- `/evidence` shows clean proof cards with checks, blockers, and approval signals.
+- `/replay` reconstructs a Codex run as a short non-technical story with outcome, checks, blocker, and next step.
 - `/watch` gives a Codex-app-like plain-English live view of a managed session.
 - `/timeline` is an alias for the same live run view and shows the managed session phases.
 - `/plan [project] [task]` shows the plain-English goal, approach, risk, expected checks, and approval boundaries before work starts.

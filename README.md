@@ -101,6 +101,9 @@ Remove it later with:
 /changes
 /feed
 /briefs
+/mission
+/evidence
+/replay
 /watch
 /timeline
 /plan

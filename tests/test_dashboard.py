@@ -125,6 +125,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(payload["mission_timeline"], [])
         self.assertIn("session_evidence", payload)
         self.assertEqual(payload["session_evidence"], [])
+        self.assertIn("session_replay", payload)
+        self.assertEqual(payload["session_replay"], [])
         self.assertIn("recent_images", payload)
         self.assertEqual(payload["recent_images"], [])
         self.assertIn("work_feed", payload)
@@ -325,6 +327,17 @@ class DashboardCapabilityTests(unittest.TestCase):
                         "checks": ["python -m py_compile src/app.py"],
                     }
                 ],
+                "session_replay": [
+                    {
+                        "project": "example",
+                        "state": "running",
+                        "story": "Worked inside C:\\Users\\Name\\repo\\secret.py",
+                        "outcome": "Review README.md before commit",
+                        "blocker": "none",
+                        "checks": ["python -m py_compile src/app.py"],
+                        "next_step": "Review config.json",
+                    }
+                ],
                 "session_briefs": [
                     {
                         "project": "example",
@@ -439,6 +452,7 @@ class DashboardApprovalTests(unittest.TestCase):
         original_feed = dashboard.commander.command_feed
         original_briefs = dashboard.commander.command_briefs
         original_evidence = dashboard.commander.session_evidence
+        original_replay = dashboard.commander.session_replay
         original_changes = dashboard.commander.changed_project_details
         try:
             dashboard.commander.get_project = lambda project: {"allowed": True} if project == "example" else None  # type: ignore[assignment]
@@ -447,6 +461,7 @@ class DashboardApprovalTests(unittest.TestCase):
             dashboard.commander.command_feed = lambda args, user_id: f"feed {args[0]} {user_id}"  # type: ignore[assignment]
             dashboard.commander.command_briefs = lambda args, user_id: f"brief {args[0]} {user_id}"  # type: ignore[assignment]
             dashboard.commander.session_evidence = lambda project: f"evidence {project}"  # type: ignore[assignment]
+            dashboard.commander.session_replay = lambda project: f"replay {project}"  # type: ignore[assignment]
             dashboard.commander.changed_project_details = lambda limit=30, max_files=0: [  # type: ignore[assignment]
                 {"project": "example", "changed_count": 2, "branch": "main", "areas": "app/user interface (2)"}
             ]
@@ -456,6 +471,7 @@ class DashboardApprovalTests(unittest.TestCase):
             feed, feed_status = dashboard.dashboard_project_read_action("example", "feed")
             brief, brief_status = dashboard.dashboard_project_read_action("example", "brief")
             evidence, evidence_status = dashboard.dashboard_project_read_action("example", "evidence")
+            replay, replay_status = dashboard.dashboard_project_read_action("example", "replay")
             changes, changes_status = dashboard.dashboard_project_read_action("example", "changes")
             missing, missing_status = dashboard.dashboard_project_read_action("missing", "watch")
         finally:
@@ -465,6 +481,7 @@ class DashboardApprovalTests(unittest.TestCase):
             dashboard.commander.command_feed = original_feed  # type: ignore[assignment]
             dashboard.commander.command_briefs = original_briefs  # type: ignore[assignment]
             dashboard.commander.session_evidence = original_evidence  # type: ignore[assignment]
+            dashboard.commander.session_replay = original_replay  # type: ignore[assignment]
             dashboard.commander.changed_project_details = original_changes  # type: ignore[assignment]
 
         self.assertEqual(watch_status, 200)
@@ -477,6 +494,8 @@ class DashboardApprovalTests(unittest.TestCase):
         self.assertEqual(brief["text"], "brief example dashboard")
         self.assertEqual(evidence_status, 200)
         self.assertEqual(evidence["text"], "evidence example")
+        self.assertEqual(replay_status, 200)
+        self.assertEqual(replay["text"], "replay example")
         self.assertEqual(changes_status, 200)
         self.assertIn("Changed work areas: example", changes["text"])
         self.assertIn("app/user interface", changes["text"])

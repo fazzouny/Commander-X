@@ -108,6 +108,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("make me an operator report"), "/report")
         self.assertEqual(commander.natural_computer_command("show mission control"), "/mission")
         self.assertEqual(commander.natural_computer_command("show evidence cards"), "/evidence")
+        self.assertEqual(commander.natural_computer_command("show me the session replay"), "/replay")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
         self.assertEqual(commander.natural_computer_command("give me a plain English Codex brief"), "/briefs")
         self.assertEqual(commander.natural_computer_command("show all codex progress"), "/feed")
@@ -509,6 +510,71 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn("secret.py", text)
         self.assertNotIn("src/app.py", text)
 
+    def test_session_replay_card_tells_story_without_filenames(self) -> None:
+        original_sessions = commander.sessions_data
+        original_refresh = commander.refresh_session_states
+        original_project = commander.get_project
+        original_project_path = commander.project_path
+        original_is_git = commander.is_git_repo
+        original_changed = commander.changed_files
+        original_branch = commander.current_branch
+        original_pid = commander.pid_running
+        original_audit = commander.audit_data
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "example.log"
+            log.write_text(
+                "python -m py_compile src/app.py\n"
+                "Ran 4 tests in 0.5s OK\n",
+                encoding="utf-8",
+            )
+            try:
+                commander.refresh_session_states = lambda: None  # type: ignore[assignment]
+                commander.sessions_data = lambda: {  # type: ignore[assignment]
+                    "sessions": {
+                        "example": {
+                            "state": "running",
+                            "pid": 123,
+                            "task": "Fix C:\\Users\\Name\\repo\\secret.py onboarding",
+                            "task_id": "task1",
+                            "log_file": str(log),
+                            "branch": "main",
+                            "work_plan": {"risk": "medium", "approach": ["Inspect src/app.py"]},
+                            "progress_signals": [],
+                            "timeline": [
+                                {"title": "Reviewed src/app.py", "detail": "README.md notes", "status": "done"},
+                                {"title": "Ran checks", "detail": "python -m py_compile src/app.py", "status": "done"},
+                            ],
+                        }
+                    }
+                }
+                commander.get_project = lambda project_id: {"allowed": True, "path": tmp}  # type: ignore[assignment]
+                commander.project_path = lambda project: Path(tmp)  # type: ignore[assignment]
+                commander.is_git_repo = lambda path: True  # type: ignore[assignment]
+                commander.changed_files = lambda path: ["src/app.py", "README.md"]  # type: ignore[assignment]
+                commander.current_branch = lambda path: "main"  # type: ignore[assignment]
+                commander.pid_running = lambda pid: True  # type: ignore[assignment]
+                commander.audit_data = lambda: {"events": []}  # type: ignore[assignment]
+
+                replay = commander.session_replay_card("example")
+                rendered = commander.format_session_replay_card(replay)
+            finally:
+                commander.sessions_data = original_sessions  # type: ignore[assignment]
+                commander.refresh_session_states = original_refresh  # type: ignore[assignment]
+                commander.get_project = original_project  # type: ignore[assignment]
+                commander.project_path = original_project_path  # type: ignore[assignment]
+                commander.is_git_repo = original_is_git  # type: ignore[assignment]
+                commander.changed_files = original_changed  # type: ignore[assignment]
+                commander.current_branch = original_branch  # type: ignore[assignment]
+                commander.pid_running = original_pid  # type: ignore[assignment]
+                commander.audit_data = original_audit  # type: ignore[assignment]
+
+        self.assertIn("Story", rendered)
+        self.assertIn("Outcome", rendered)
+        self.assertIn("Python compile check", rendered)
+        self.assertNotIn("C:\\Users", rendered)
+        self.assertNotIn("secret.py", rendered)
+        self.assertNotIn("src/app.py", rendered)
+
     def test_log_progress_signals_detect_blockers_without_paths(self) -> None:
         raw = """
         exec "powershell" -Command 'git status' in C:\\AI-Company\\Example
@@ -744,6 +810,17 @@ class BrowserAndClickUpTests(unittest.TestCase):
                     "changed_count": 1,
                     "blocker": "none",
                     "checks": ["python -m py_compile src/app.py"],
+                }
+            ],
+            "session_replay": [
+                {
+                    "project": "example",
+                    "state": "running",
+                    "story": "Edited C:\\Users\\Name\\repo\\secret.py and checked README.md",
+                    "outcome": "Review config.json before commit",
+                    "blocker": "none",
+                    "checks": ["python -m py_compile src/app.py"],
+                    "next_step": "Review README.md",
                 }
             ],
             "session_briefs": [

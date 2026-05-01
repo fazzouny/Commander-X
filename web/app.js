@@ -322,6 +322,54 @@ function renderSessionEvidence(data) {
       .join("") || `<p>No session evidence cards yet.</p>`;
 }
 
+function renderSessionReplay(data) {
+  const items = data.session_replay || [];
+  qs("#session-replay-count").textContent = `${items.length} stories`;
+  qs("#session-replay").innerHTML =
+    items
+      .slice(0, 6)
+      .map((item) => {
+        const blocker = String(item.blocker || "").toLowerCase();
+        const type = blocker && blocker !== "none reported" ? "warn" : item.state === "failed" ? "bad" : "good";
+        const checks = (item.checks || [])
+          .slice(0, 3)
+          .map((line) => `<span>${escapeHtml(line)}</span>`)
+          .join("");
+        const decisions = (item.decisions || [])
+          .slice(0, 3)
+          .map((line) => `<span>${escapeHtml(line)}</span>`)
+          .join("");
+        const age = Number.isInteger(item.last_activity_minutes) ? `${item.last_activity_minutes} min ago` : "not available";
+        return `
+          <div class="work-card">
+            <div class="work-card-head">
+              <div>
+                <div class="row-title">${escapeHtml(item.project || "-")}</div>
+                <div class="row-meta">${escapeHtml(item.story || "-")}</div>
+              </div>
+              <div>${pill(item.state || "unknown", type)}</div>
+            </div>
+            <div class="work-grid">
+              <div><span>Outcome</span><strong>${escapeHtml(item.outcome || "-")}</strong></div>
+              <div><span>Work areas</span><strong>${escapeHtml(item.work_areas || "no local changes tracked")} (${escapeHtml(item.changed_count || 0)} changed)</strong></div>
+              <div><span>Blocker</span><strong>${escapeHtml(item.blocker || "none reported")}</strong></div>
+              <div><span>Last activity</span><strong>${escapeHtml(age)}</strong></div>
+              <div><span>Next</span><strong>${escapeHtml(item.next_step || "-")}</strong></div>
+              <div><span>Freshness</span><strong>${escapeHtml(item.freshness || "unknown")}</strong></div>
+            </div>
+            <div class="timeline-mini">${checks || "<span>No checks recorded yet</span>"}</div>
+            <div class="timeline-mini">${decisions || "<span>No approval decisions recorded yet</span>"}</div>
+            <div class="work-actions">
+              <button data-work-action="replay" data-project="${escapeHtml(item.project || "")}">Replay</button>
+              <button data-work-action="evidence" data-project="${escapeHtml(item.project || "")}">Evidence</button>
+              <button data-work-action="watch" data-project="${escapeHtml(item.project || "")}">Watch</button>
+            </div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No session replay stories yet.</p>`;
+}
+
 function renderSessionBriefs(data) {
   const items = data.session_briefs || [];
   qs("#session-brief-count").textContent = `${items.length} briefs`;
@@ -808,6 +856,7 @@ async function refresh() {
   renderDecisionSuggestions(data);
   renderMissionTimeline(data);
   renderSessionEvidence(data);
+  renderSessionReplay(data);
   renderSessionBriefs(data);
   renderRecentImages(data);
   renderWorkFeed(data);
@@ -1098,6 +1147,7 @@ qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionCl
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
 qs("#mission-timeline").addEventListener("click", handleWorkFeedClick);
 qs("#session-evidence").addEventListener("click", handleWorkFeedClick);
+qs("#session-replay").addEventListener("click", handleWorkFeedClick);
 qs("#session-briefs").addEventListener("click", handleWorkFeedClick);
 qs("#recent-images").addEventListener("click", handleCapabilityClick);
 qs("#work-feed").addEventListener("click", handleWorkFeedClick);
