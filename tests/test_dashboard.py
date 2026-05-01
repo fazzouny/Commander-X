@@ -99,6 +99,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         payload = dashboard.fallback_dashboard_payload("warming")
         self.assertIn("session_briefs", payload)
         self.assertEqual(payload["session_briefs"], [])
+        self.assertIn("recent_images", payload)
+        self.assertEqual(payload["recent_images"], [])
         self.assertIn("work_feed", payload)
         self.assertEqual(payload["work_feed"], [])
         self.assertIn("action_center", payload)
@@ -135,6 +137,28 @@ class DashboardCapabilityTests(unittest.TestCase):
         changed = next(item for item in items if item["project"] == "changed-app")
         self.assertIn("app/user interface", changed["detail"])
         self.assertNotIn("src/", changed["detail"])
+
+    def test_dashboard_recent_images_sanitizes_user_image_context(self) -> None:
+        users = {
+            "123456789": {
+                "last_image": {
+                    "at": "2026-05-01T08:00:00+00:00",
+                    "kind": "photo",
+                    "summary": "Login error",
+                    "visible_text": "secret=C:\\Users\\Name\\repo\\.env",
+                    "likely_intent": "debug",
+                    "risk": "medium",
+                    "suggested_commands": ["/watch example", "not-a-command", "/run bad"],
+                }
+            }
+        }
+
+        images = dashboard.dashboard_recent_images(users)
+
+        self.assertEqual(images[0]["user"], "Telegram user ...6789")
+        self.assertEqual(images[0]["suggested_commands"], ["/watch example"])
+        self.assertIn("technical path", images[0]["visible_text"])
+        self.assertNotIn("C:\\Users", images[0]["visible_text"])
 
     def test_capabilities_payload_summarizes_tools_without_secret_values(self) -> None:
         original_computer_tools_config = dashboard.commander.computer_tools_config

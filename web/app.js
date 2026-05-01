@@ -192,6 +192,40 @@ function renderSessionBriefs(data) {
       .join("") || `<p>No session briefs yet.</p>`;
 }
 
+function renderRecentImages(data) {
+  const items = data.recent_images || [];
+  qs("#recent-image-count").textContent = `${items.length} images`;
+  qs("#recent-images").innerHTML =
+    items
+      .slice(0, 6)
+      .map((item) => {
+        const risk = String(item.risk || "-").toLowerCase();
+        const type = risk.includes("high") || risk.includes("secret") || risk.includes("credential") ? "bad" : risk.includes("medium") || risk.includes("review") ? "warn" : "good";
+        const commands = (item.suggested_commands || [])
+          .slice(0, 4)
+          .map((command) => `<button data-command="${escapeHtml(command)}">${escapeHtml(command)}</button>`)
+          .join("");
+        return `
+          <div class="work-card">
+            <div class="work-card-head">
+              <div>
+                <div class="row-title">${escapeHtml(item.summary || "-")}</div>
+                <div class="row-meta">${escapeHtml(item.user || "Telegram user")} · ${escapeHtml(item.at || "-")} · ${escapeHtml(item.kind || "image")}</div>
+              </div>
+              <div>${pill(item.risk || "review", type)}</div>
+            </div>
+            <div class="work-grid">
+              <div><span>Visible text</span><strong>${escapeHtml(item.visible_text || "-")}</strong></div>
+              <div><span>Likely intent</span><strong>${escapeHtml(item.likely_intent || "-")}</strong></div>
+              <div><span>Safety note</span><strong>Images are context only. Actions still need text, voice, or buttons.</strong></div>
+            </div>
+            ${commands ? `<div class="command-chips">${commands}</div>` : ""}
+          </div>
+        `;
+      })
+      .join("") || `<p>No Telegram image context yet.</p>`;
+}
+
 function renderWorkFeed(data) {
   const items = data.work_feed || [];
   qs("#work-feed-count").textContent = `${items.length} items`;
@@ -597,6 +631,7 @@ async function refresh() {
   renderMetrics(data);
   renderActionCenter(data);
   renderSessionBriefs(data);
+  renderRecentImages(data);
   renderWorkFeed(data);
   renderProjects(data);
   renderTasks(data);
@@ -783,6 +818,7 @@ qs("#action-center").addEventListener("click", handleApprovalClick);
 qs("#action-center").addEventListener("click", handleTaskClick);
 qs("#action-center").addEventListener("click", handleWorkFeedClick);
 qs("#session-briefs").addEventListener("click", handleWorkFeedClick);
+qs("#recent-images").addEventListener("click", handleCapabilityClick);
 qs("#work-feed").addEventListener("click", handleWorkFeedClick);
 qs("#capabilities").addEventListener("click", handleCapabilityClick);
 

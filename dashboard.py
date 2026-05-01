@@ -109,6 +109,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "projects": {},
         "sessions": {},
         "session_briefs": [],
+        "recent_images": [],
         "work_feed": [],
         "tasks": [],
         "memory_count": 0,
@@ -575,6 +576,38 @@ def dashboard_action_center(
     return items[:limit]
 
 
+def dashboard_recent_images(users: dict[str, dict[str, Any]], limit: int = 6) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for user_id, user in users.items():
+        image = user.get("last_image") if isinstance(user.get("last_image"), dict) else {}
+        if not image:
+            continue
+        suggested = image.get("suggested_commands") if isinstance(image.get("suggested_commands"), list) else []
+        safe_commands: list[str] = []
+        for command in suggested[:4]:
+            if not isinstance(command, str) or not command.startswith("/"):
+                continue
+            try:
+                safe_commands.append(commander.validate_generated_command(command))
+            except Exception:
+                continue
+        suffix = str(user_id)[-4:] if user_id else "user"
+        items.append(
+            {
+                "user": f"Telegram user ...{suffix}",
+                "at": str(image.get("at") or ""),
+                "kind": commander.safe_brief_text(image.get("kind") or "image"),
+                "summary": commander.safe_brief_text(image.get("summary") or "-"),
+                "visible_text": commander.safe_brief_text(image.get("visible_text") or "-"),
+                "likely_intent": commander.safe_brief_text(image.get("likely_intent") or "-"),
+                "risk": commander.safe_brief_text(image.get("risk") or "-"),
+                "suggested_commands": safe_commands,
+            }
+        )
+    items.sort(key=lambda item: str(item.get("at") or ""), reverse=True)
+    return items[:limit]
+
+
 def build_dashboard_payload() -> dict[str, Any]:
     commander.refresh_session_states()
     commander.sync_tasks_with_sessions()
@@ -607,6 +640,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "projects": projects,
         "sessions": sessions,
         "session_briefs": session_briefs,
+        "recent_images": dashboard_recent_images(users),
         "work_feed": work_feed,
         "tasks": tasks[-60:],
         "memory_count": len(memories),

@@ -180,7 +180,8 @@ span {
 }
 
 .work-feed-list,
-.session-brief-list {
+.session-brief-list,
+.recent-image-list {
   display: grid;
   gap: 12px;
 }
