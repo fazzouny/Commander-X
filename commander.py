@@ -987,6 +987,12 @@ def session_evidence(project_id: str) -> str:
             lines.append(f"- Log: {log_file.name}, updated {int(age // 60)} min ago")
         else:
             lines.append("- Log: missing")
+        signals = session.get("progress_signals") if isinstance(session.get("progress_signals"), list) else []
+        if signals:
+            lines.append("- Human progress:")
+            for signal in signals[-4:]:
+                if isinstance(signal, dict):
+                    lines.append(f"  - {safe_brief_text(signal.get('title'))}: {safe_brief_text(signal.get('detail'))}")
     else:
         lines.append("- No Commander session recorded.")
     if path and path.exists() and is_git_repo(path):
@@ -1237,6 +1243,10 @@ def refresh_session_states() -> None:
         data = sessions_data()
         changed = False
         for project_id, session in data.get("sessions", {}).items():
+            if not isinstance(session, dict):
+                continue
+            if refresh_session_progress(project_id, session):
+                changed = True
             if session.get("state") == "running":
                 pid = int(session.get("pid", 0))
                 if not pid_running(pid):
@@ -3599,6 +3609,118 @@ def safe_brief_text(value: Any) -> str:
     return " ".join(text.split())
 
 
+def read_recent_log_text(path: Path, max_bytes: int = 120_000) -> str:
+    if not path.exists():
+        return ""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            return handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def add_progress_signal(signals: list[dict[str, str]], phase: str, title: str, detail: str, status: str = "done") -> None:
+    item = {
+        "phase": phase,
+        "title": safe_brief_text(title),
+        "detail": safe_brief_text(detail),
+        "status": status,
+    }
+    if signals and signals[-1].get("phase") == item["phase"] and signals[-1].get("title") == item["title"]:
+        signals[-1] = item
+        return
+    signals.append(item)
+
+
+def progress_signals_from_text(text: str, limit: int = 6) -> list[dict[str, str]]:
+    signals: list[dict[str, str]] = []
+    for raw in (text or "").splitlines():
+        line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw).strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if len(line) > 500 or "<html" in lowered or "<svg" in lowered or "cloudflare" in lowered or "analytics-events" in lowered:
+            continue
+        if "windows sandbox: setup refresh failed" in lowered:
+            add_progress_signal(
+                signals,
+                "blocked",
+                "Local shell blocked",
+                "Codex could not run project commands because the Windows sandbox failed before checks could start.",
+                "warn",
+            )
+        elif "authrequired" in lowered or "oauth-protected-resource" in lowered:
+            add_progress_signal(
+                signals,
+                "blocked",
+                "Connector needs authentication",
+                "An MCP connector needs account authorization before it can be used.",
+                "warn",
+            )
+        elif "access is denied" in lowered:
+            add_progress_signal(
+                signals,
+                "blocked",
+                "Local permission issue",
+                "A local cache, plugin, or process operation hit an access-denied error.",
+                "warn",
+            )
+        elif "current blocker" in lowered or re.search(r"\bblocker:\b", lowered):
+            add_progress_signal(signals, "blocked", "Blocker reported", "Codex reported a blocker that needs review.", "warn")
+        elif re.search(r"\b(i'll inspect|i.ll inspect|i'm checking|i.ll check|inspect the|reading|reviewing)\b", lowered):
+            add_progress_signal(signals, "inspect", "Inspecting project", "Codex is reading project state and context.", "active")
+        elif re.search(r"\b(git status|get-childitem|select-string|get-content|rg |findstr|list_mcp_resources)\b", lowered):
+            add_progress_signal(signals, "inspect", "Inspecting project", "Codex is reading project state and context.", "active")
+        elif re.search(r"\b(apply_patch|edit|created|updated|modified|changed)\b", lowered):
+            add_progress_signal(signals, "edit", "Making changes", "Codex appears to be changing local project files.", "active")
+        elif re.search(r"\b(npm test|npm run|pytest|unittest|py_compile|playwright|smoke test|typecheck|lint|build)\b", lowered):
+            add_progress_signal(signals, "verify", "Running checks", "Codex is verifying the work with local checks.", "active")
+        elif "no files changed" in lowered:
+            add_progress_signal(signals, "report", "No local changes made", "Codex reported that it did not change files.", "done")
+        elif re.match(r"^\s*1\.\s+done\b", line, flags=re.IGNORECASE) or "next recommended action" in lowered:
+            add_progress_signal(signals, "report", "Final report ready", "Codex wrote an outcome summary for review.", "done")
+        elif "retrying" in lowered and "failed" in lowered:
+            add_progress_signal(signals, "retry", "Retrying after failure", "Codex is retrying after a tool or environment failure.", "active")
+    return signals[-limit:]
+
+
+def log_progress_signals(log_file: Path, limit: int = 6) -> list[dict[str, str]]:
+    return progress_signals_from_text(read_recent_log_text(log_file), limit=limit)
+
+
+def refresh_session_progress(project_id: str, session: dict[str, Any]) -> bool:
+    log_file = Path(str(session.get("log_file", "")))
+    if not log_file.exists():
+        return False
+    try:
+        mtime = str(log_file.stat().st_mtime_ns)
+    except OSError:
+        return False
+    if session.get("progress_log_mtime") == mtime and session.get("progress_signals"):
+        return False
+    signals = log_progress_signals(log_file)
+    if not signals:
+        return False
+    if session.get("progress_log_mtime") == mtime and session.get("progress_signals") == signals:
+        return False
+    session["progress_log_mtime"] = mtime
+    session["progress_signals"] = signals
+    latest = signals[-1]
+    session["current_progress"] = latest
+    append_timeline_event(
+        session,
+        str(latest.get("phase") or "progress"),
+        str(latest.get("title") or "Progress update"),
+        str(latest.get("detail") or ""),
+        status=str(latest.get("status") or "done"),
+    )
+    session["updated_at"] = utc_now()
+    return True
+
+
 def session_brief_items(
     user_id: str | None = None,
     limit: int = 10,
@@ -3618,14 +3740,39 @@ def session_brief_items(
             session = {}
         state = str(item.get("state") or "unknown")
         blocker = safe_brief_text(item.get("blocker") or "none reported")
-        timeline = [safe_brief_text(line.lstrip("- ")) for line in timeline_lines(session, limit=3)] if session else []
+        progress = session.get("current_progress") if isinstance(session.get("current_progress"), dict) else {}
+        progress_title = safe_brief_text(progress.get("title") if isinstance(progress, dict) else "")
+        progress_detail = safe_brief_text(progress.get("detail") if isinstance(progress, dict) else "")
+        progress_status = str(progress.get("status") or "") if isinstance(progress, dict) else ""
+        progress_signals = session.get("progress_signals") if isinstance(session.get("progress_signals"), list) else []
+        warning_signals = [
+            signal
+            for signal in progress_signals
+            if isinstance(signal, dict) and str(signal.get("status") or "") == "warn"
+        ]
+        specific_warnings = [signal for signal in warning_signals if safe_brief_text(signal.get("title")) != "Blocker reported"]
+        warning_signal = (specific_warnings or warning_signals)[-1] if (specific_warnings or warning_signals) else None
+        if isinstance(warning_signal, dict):
+            progress_title = safe_brief_text(warning_signal.get("title"))
+            progress_detail = safe_brief_text(warning_signal.get("detail"))
+            blocker = f"{progress_title}: {progress_detail}"
+        elif progress_status == "warn" and progress_title != "-":
+            blocker = f"{progress_title}: {progress_detail}"
+        signal_lines = [
+            f"{safe_brief_text(signal.get('title'))} - {safe_brief_text(signal.get('detail'))}"
+            for signal in progress_signals[-3:]
+            if isinstance(signal, dict)
+        ]
+        timeline = signal_lines or ([safe_brief_text(line.lstrip("- ")) for line in timeline_lines(session, limit=3)] if session else [])
         timeline = [line for line in timeline if line and line != "-"]
         if state == "running":
             summary = f"Codex is actively working. Current focus: {item.get('current_step') or item.get('phase') or 'progress update unavailable'}."
         elif "approval" in blocker.lower():
             summary = "Work is paused because Commander needs your approval before continuing."
         elif state in {"failed", "finished_unknown", "stop_failed"}:
-            summary = "This session needs review before more work is started."
+            summary = f"{progress_title}: {progress_detail}" if progress_title != "-" else "This session needs review before more work is started."
+        elif isinstance(warning_signal, dict):
+            summary = f"Finished with blocker: {progress_title}: {progress_detail}"
         elif item.get("kind") == "changes":
             summary = "There are local project changes to review, but no active Commander-run Codex session."
         elif item.get("kind") == "task":
@@ -3735,6 +3882,12 @@ def command_watch(project_id: str | None, user_id: str) -> str:
                 *timeline_lines(session),
             ]
         )
+        signals = session.get("progress_signals") if isinstance(session.get("progress_signals"), list) else []
+        if signals:
+            lines.extend(["", "Human progress signals:"])
+            for signal in signals[-4:]:
+                if isinstance(signal, dict):
+                    lines.append(f"- {safe_brief_text(signal.get('title'))}: {safe_brief_text(signal.get('detail'))}")
         log_file = Path(str(session.get("log_file", "")))
         if log_file.exists():
             age_seconds = int(time.time() - log_file.stat().st_mtime)
@@ -4245,8 +4398,13 @@ def heartbeat_summary(user_id: str) -> str:
     if active:
         lines.append(f"Active project: {active}")
     lines.extend(["", command_status()])
+    lines.append("")
     if active and get_project(str(active)):
-        lines.extend(["", command_diff(str(active))])
+        lines.append(command_briefs([str(active)], user_id=user_id))
+    else:
+        lines.append(command_briefs([], user_id=user_id))
+    lines.append("")
+    lines.append("Technical filenames and local paths are hidden in heartbeat updates. Ask for /diff or /projects full when you want code-level detail.")
     return compact("\n".join(lines))
 
 

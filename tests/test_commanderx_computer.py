@@ -45,6 +45,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("what needs my attention"), "/inbox")
         self.assertEqual(commander.natural_computer_command("show pending approvals"), "/approvals")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
+        self.assertEqual(commander.natural_computer_command("give me a plain English Codex brief"), "/briefs")
         self.assertEqual(commander.natural_computer_command("show all codex progress"), "/feed")
         self.assertEqual(commander.natural_computer_command("watch codex progress"), "/watch")
         self.assertEqual(commander.natural_computer_command("show the run timeline"), "/timeline")
@@ -311,6 +312,87 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn("src/", text)
         self.assertNotIn("README.md", text)
         self.assertNotIn("App.tsx", text)
+
+    def test_log_progress_signals_detect_blockers_without_paths(self) -> None:
+        raw = """
+        exec "powershell" -Command 'git status' in C:\\AI-Company\\Example
+        ERROR codex_core::exec: exec error: windows sandbox: setup refresh failed with status exit code: 1
+        src/components/App.tsx
+        Current blocker: cannot inspect C:\\AI-Company\\Example\\src\\components\\App.tsx
+        """
+
+        signals = commander.progress_signals_from_text(raw)
+        rendered = "\n".join(f"{item['title']}: {item['detail']}" for item in signals)
+
+        self.assertIn("Inspecting project", rendered)
+        self.assertIn("Local shell blocked", rendered)
+        self.assertIn("Blocker reported", rendered)
+        self.assertNotIn("C:\\AI-Company", rendered)
+        self.assertNotIn("App.tsx", rendered)
+
+    def test_refresh_session_progress_updates_timeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "session.log"
+            log_path.write_text(
+                "ERROR codex_core::exec: exec error: windows sandbox: setup refresh failed with status exit code: 1\n",
+                encoding="utf-8",
+            )
+            session = {"log_file": str(log_path), "timeline": []}
+
+            changed = commander.refresh_session_progress("example", session)
+            text = "\n".join(commander.timeline_lines(session))
+
+        self.assertTrue(changed)
+        self.assertEqual(session["current_progress"]["title"], "Local shell blocked")
+        self.assertIn("Local shell blocked", text)
+
+    def test_session_brief_keeps_warning_visible_after_final_report(self) -> None:
+        sessions = {
+            "example": {
+                "state": "completed",
+                "task": "Fix onboarding",
+                "current_progress": {"title": "Final report ready", "detail": "Codex wrote a summary.", "status": "done"},
+                "progress_signals": [
+                    {
+                        "title": "Local shell blocked",
+                        "detail": "Codex could not run project commands because the Windows sandbox failed before checks could start.",
+                        "status": "warn",
+                    },
+                    {"title": "Final report ready", "detail": "Codex wrote an outcome summary for review.", "status": "done"},
+                ],
+                "timeline": [],
+            }
+        }
+        changes = [{"project": "example", "changed_count": 0, "areas": "no changed areas"}]
+
+        text = commander.format_session_briefs(commander.session_brief_items(sessions=sessions, changes=changes, tasks=[]))
+
+        self.assertIn("Finished with blocker: Local shell blocked", text)
+        self.assertIn("Local shell blocked", text)
+
+    def test_heartbeat_summary_uses_briefs_not_diff(self) -> None:
+        original_user_state = commander.user_state
+        original_get_project = commander.get_project
+        original_status = commander.command_status
+        original_briefs = commander.command_briefs
+        original_diff = commander.command_diff
+        try:
+            commander.user_state = lambda user_id: {"active_project": "example"}  # type: ignore[assignment]
+            commander.get_project = lambda project_id: {"allowed": True}  # type: ignore[assignment]
+            commander.command_status = lambda: "Active Codex sessions:\n- example: running"  # type: ignore[assignment]
+            commander.command_briefs = lambda args, user_id: "Commander X session brief: example\nWork areas: app/user interface"  # type: ignore[assignment]
+            commander.command_diff = lambda project_id: (_ for _ in ()).throw(AssertionError("heartbeat should not call diff"))  # type: ignore[assignment]
+
+            text = commander.heartbeat_summary("user")
+        finally:
+            commander.user_state = original_user_state  # type: ignore[assignment]
+            commander.get_project = original_get_project  # type: ignore[assignment]
+            commander.command_status = original_status  # type: ignore[assignment]
+            commander.command_briefs = original_briefs  # type: ignore[assignment]
+            commander.command_diff = original_diff  # type: ignore[assignment]
+
+        self.assertIn("Commander X session brief", text)
+        self.assertIn("Technical filenames and local paths are hidden", text)
 
     def test_session_timeline_summarizes_phases(self) -> None:
         plan = commander.build_work_plan("example", "Fix onboarding", {"verification_commands": ["npm test"]})

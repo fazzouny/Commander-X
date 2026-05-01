@@ -11,10 +11,12 @@ It is intentionally narrow:
 - Telegram voice notes are transcribed with OpenAI, then routed through the same command parser
 - Telegram responses use HTML formatting and inline action buttons
 - automatic heartbeat summaries can be sent back to Telegram
+- heartbeat summaries use executive briefs and hide technical filenames by default
 - Commander memory stores durable preferences and project facts
 - project profiles detect stack, useful scripts, verification commands, and risk notes
 - a task queue tracks queued/running/review/done work
 - a local dashboard exposes sessions, executive briefs, Git state, queue, memory, evidence, capabilities, and approval/task controls
+- managed Codex logs are translated into human progress signals such as inspecting, verifying, blocked, and final report ready
 - a safe computer tool broker can open URLs, open allowlisted apps, read registered-project files, adjust volume, capture screenshots, and inspect Codex processes
 - a browser broker can inspect websites without opening an unsafe raw shell
 - a ClickUp API bridge can read recent tasks when `CLICKUP_API_TOKEN` and `CLICKUP_WORKSPACE_ID` are configured
