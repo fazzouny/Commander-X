@@ -461,6 +461,8 @@ The Capabilities card gives a quick operator-readable snapshot of what Commander
 
 The Work Feed card is the closest dashboard view to the Codex app experience. It shows each active project in plain English: task, current step, direction, human-readable work areas, blocker, last activity, and the next useful command. It intentionally hides filenames unless you explicitly open `/diff`.
 
+Each Work Feed card has dashboard actions for Watch, Areas, and Plan. These are read-only summaries. A Stop button appears only for running managed sessions and calls the same controlled stop endpoint as `/stop`.
+
 The dashboard serves the latest cached snapshot immediately and refreshes stale snapshots in the background. The top metrics show whether the snapshot is fresh, stale, or refreshing. Tune it with:
 
 ```text

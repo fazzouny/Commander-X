@@ -64,6 +64,7 @@ Commander X now follows that shape:
 - The dashboard is the control UI and can approve/cancel prepared actions plus start/done/cancel queued tasks through token-gated buttons.
 - The dashboard includes a capabilities snapshot so an operator can see what Commander can do before digging into raw logs or file names.
 - The dashboard includes a Work Feed that approximates the Codex app progress experience without exposing filenames by default.
+- Work Feed cards expose controlled dashboard buttons for Watch, Areas, Plan, and Stop only when a managed session is running.
 - The dashboard serves cached snapshots immediately and refreshes in the background, so slow Git/MCP/OpenClaw checks do not block the control room.
 - Session timelines show phases like task received, planned, launched, stopped, failed, or finished.
 - Work plans are deterministic and stored with new sessions, so the dashboard can show intent before raw logs.

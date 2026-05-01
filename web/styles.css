@@ -351,6 +351,13 @@ span {
   margin: 12px 0;
 }
 
+.work-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .approval-actions,
 .task-actions {
   display: flex;

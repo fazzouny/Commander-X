@@ -594,6 +594,43 @@ def dashboard_task_action(payload: dict[str, Any], action: str) -> tuple[dict[st
     return {"ok": True, "text": result}, 200
 
 
+def dashboard_project_read_action(project_id: str, action: str) -> tuple[dict[str, Any], int]:
+    project_id = project_id.strip()
+    if not project_id:
+        return {"ok": False, "error": "project is required"}, 400
+    if not commander.get_project(project_id):
+        return {"ok": False, "error": "unknown or disabled project"}, 404
+    if action == "watch":
+        text = commander.command_watch(project_id, user_id="dashboard")
+    elif action == "plan":
+        text = commander.command_plan(project_id, user_id="dashboard")
+    elif action == "feed":
+        text = commander.command_feed([project_id], user_id="dashboard")
+    elif action == "changes":
+        rows = [
+            row
+            for row in commander.changed_project_details(limit=30, max_files=0)
+            if str(row.get("project")) == project_id
+        ]
+        if not rows:
+            text = f"No local Git changes found for {project_id}."
+        else:
+            row = rows[0]
+            text = "\n".join(
+                [
+                    f"Changed work areas: {project_id}",
+                    f"- Files changed: {row.get('changed_count', 0)}",
+                    f"- Branch: {row.get('branch') or '-'}",
+                    f"- Areas: {row.get('areas') or 'changed areas unavailable'}",
+                    "",
+                    "Technical filenames are hidden here. Use the Diff button only when you want code-level detail.",
+                ]
+            )
+    else:
+        return {"ok": False, "error": "Unknown work feed action"}, 400
+    return {"ok": True, "project": project_id, "action": action, "text": text}, 200
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "CommanderXDashboard/0.1"
 
@@ -627,6 +664,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/evidence/"):
             project_id = urllib.parse.unquote(path.removeprefix("/api/evidence/"))
             self.send_json({"project": project_id, "text": commander.session_evidence(project_id)})
+            return
+        if path.startswith("/api/work/"):
+            parts = path.removeprefix("/api/work/").split("/", 1)
+            action = urllib.parse.unquote(parts[0]) if parts else ""
+            project_id = urllib.parse.unquote(parts[1]) if len(parts) > 1 else ""
+            result, status = dashboard_project_read_action(project_id, action)
+            self.send_json(result, status=status)
             return
         self.send_error(404, "Not found")
 

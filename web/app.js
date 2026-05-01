@@ -136,6 +136,12 @@ function renderWorkFeed(data) {
               <div><span>Last activity</span><strong>${escapeHtml(age)}</strong></div>
               <div><span>Next</span><strong>${escapeHtml(item.next_step || item.command || "-")}</strong></div>
             </div>
+            <div class="work-actions">
+              <button data-work-action="watch" data-project="${escapeHtml(item.project || "")}">Watch</button>
+              <button data-work-action="changes" data-project="${escapeHtml(item.project || "")}">Areas</button>
+              <button data-work-action="plan" data-project="${escapeHtml(item.project || "")}">Plan</button>
+              ${item.state === "running" ? `<button class="danger" data-work-action="stop" data-project="${escapeHtml(item.project || "")}">Stop</button>` : ""}
+            </div>
           </div>
         `;
       })
@@ -585,6 +591,29 @@ async function handleTaskClick(event) {
   await refresh();
 }
 
+async function handleWorkFeedClick(event) {
+  const button = event.target.closest("[data-work-action]");
+  if (!button) return;
+  const action = button.dataset.workAction;
+  const project = button.dataset.project;
+  if (!action || !project) return;
+  button.disabled = true;
+  qs("#evidence").textContent = `${action === "stop" ? "Stopping" : "Loading"} ${project}...`;
+  try {
+    const result =
+      action === "stop"
+        ? await api("/api/stop", {
+            method: "POST",
+            body: JSON.stringify({ project }),
+          })
+        : await api(`/api/work/${encodeURIComponent(action)}/${encodeURIComponent(project)}`);
+    qs("#evidence").textContent = result.text || result.error || JSON.stringify(result, null, 2);
+  } finally {
+    button.disabled = false;
+  }
+  if (action === "stop") await refresh();
+}
+
 async function handleCapabilityClick(event) {
   const button = event.target.closest("[data-command]");
   if (!button) return;
@@ -666,6 +695,7 @@ qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);
 qs("#clear-dashboard-token").addEventListener("click", clearDashboardToken);
 qs("#approvals").addEventListener("click", handleApprovalClick);
 qs("#tasks").addEventListener("click", handleTaskClick);
+qs("#work-feed").addEventListener("click", handleWorkFeedClick);
 qs("#capabilities").addEventListener("click", handleCapabilityClick);
 
 hydrateDashboardToken();
