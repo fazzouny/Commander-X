@@ -491,6 +491,8 @@ Each Work Feed card has dashboard actions for Watch, Areas, and Plan. These are 
 
 The Conversation Inspector card reads recent Commander Telegram service logs and turns them into a masked, plain-English activity stream: user asks, button presses, voice/image events, and first-line Commander replies. User IDs are shortened, secrets are redacted, and local paths/filenames are hidden by default.
 
+The Decision Memory Suggestions card looks at the sanitized Conversation Inspector stream and proposes behavior memories, such as hiding technical names by default or treating screenshots as context. It does not learn automatically. Use Save Memory to approve a suggestion into Commander memory.
+
 The Recent Image Context card shows the latest Telegram screenshots/images Commander analyzed, including a safe summary, visible text, likely intent, risk, and copyable suggested slash commands. Images remain context only; Commander still requires a text, voice, or button action before doing work. The card also includes a local dashboard image sandbox so you can upload a screenshot from the browser, run the same safe OpenAI vision analysis, and verify the dashboard flow without sending a Telegram image.
 
 The dashboard serves the latest cached snapshot immediately and refreshes stale snapshots in the background. The top metrics show whether the snapshot is fresh, stale, or refreshing. Tune it with:

@@ -101,6 +101,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(payload["session_briefs"], [])
         self.assertIn("conversation", payload)
         self.assertEqual(payload["conversation"]["items"], [])
+        self.assertIn("decision_suggestions", payload)
+        self.assertEqual(payload["decision_suggestions"], [])
         self.assertIn("recent_images", payload)
         self.assertEqual(payload["recent_images"], [])
         self.assertIn("work_feed", payload)
@@ -159,6 +161,49 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(items[1]["kind"], "reply")
         self.assertEqual(items[2]["kind"], "voice")
 
+    def test_dashboard_decision_suggestions_propose_safe_memories(self) -> None:
+        conversation = {
+            "items": [
+                {
+                    "direction": "User asked",
+                    "kind": "user",
+                    "summary": "I don't want the heartbeat to send me folder file names. its useless",
+                },
+                {
+                    "direction": "Button pressed",
+                    "kind": "button",
+                    "summary": "/heartbeat off",
+                },
+            ]
+        }
+
+        suggestions = dashboard.dashboard_decision_suggestions(conversation, memories=[])
+
+        notes = [item["note"] for item in suggestions]
+        self.assertTrue(any("hide folder paths and filenames" in note for note in notes))
+        self.assertTrue(any("heartbeat quiet/disabled" in note for note in notes))
+        self.assertNotIn("C:\\Users", " ".join(notes))
+
+    def test_dashboard_decision_suggestions_skip_existing_memory(self) -> None:
+        conversation = {
+            "items": [
+                {
+                    "direction": "User asked",
+                    "kind": "user",
+                    "summary": "I don't want folder file names",
+                }
+            ]
+        }
+        memories = [
+            {
+                "note": "Keep routine Telegram and heartbeat updates plain-English: hide folder paths and filenames unless I explicitly ask for technical details."
+            }
+        ]
+
+        suggestions = dashboard.dashboard_decision_suggestions(conversation, memories=memories)
+
+        self.assertFalse(any(item["id"] == "hide-technical-names" for item in suggestions))
+
     def test_dashboard_recent_images_sanitizes_user_image_context(self) -> None:
         users = {
             "123456789": {
@@ -207,6 +252,37 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertFalse(result["ok"])
         self.assertIn("base64 data URL", result["error"])
+
+    def test_dashboard_decision_memory_action_saves_for_active_user(self) -> None:
+        original_memory_data = dashboard.commander.memory_data
+        original_add_memory = dashboard.commander.add_memory
+        original_active_user_id = dashboard.commander.active_user_id
+        saved = []
+        try:
+            dashboard.commander.memory_data = lambda: {"memories": []}  # type: ignore[assignment]
+            dashboard.commander.active_user_id = lambda: "owner"  # type: ignore[assignment]
+            dashboard.commander.add_memory = (  # type: ignore[assignment]
+                lambda note, user_id, scope="user", project_id=None, source="telegram": saved.append(
+                    {"id": "abc123", "note": note, "user_id": user_id, "scope": scope, "source": source}
+                )
+                or saved[-1]
+            )
+
+            result, status = dashboard.dashboard_decision_memory_action(
+                {
+                    "note": "Keep routine updates plain-English unless technical details are requested.",
+                    "scope": "user",
+                }
+            )
+        finally:
+            dashboard.commander.memory_data = original_memory_data  # type: ignore[assignment]
+            dashboard.commander.add_memory = original_add_memory  # type: ignore[assignment]
+            dashboard.commander.active_user_id = original_active_user_id  # type: ignore[assignment]
+
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertEqual(saved[0]["user_id"], "owner")
+        self.assertEqual(saved[0]["source"], "dashboard-decision")
 
     def test_capabilities_payload_summarizes_tools_without_secret_values(self) -> None:
         original_computer_tools_config = dashboard.commander.computer_tools_config

@@ -110,6 +110,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "projects": {},
         "sessions": {},
         "conversation": {"summary": message, "counts": {}, "items": []},
+        "decision_suggestions": [],
         "session_briefs": [],
         "recent_images": [],
         "work_feed": [],
@@ -681,6 +682,96 @@ def dashboard_conversation(limit: int = 12) -> dict[str, Any]:
     return {"summary": commander.safe_brief_text(summary), "counts": counts, "items": latest}
 
 
+def dashboard_decision_suggestion_exists(note: str, memories: list[dict[str, Any]]) -> bool:
+    key = re.sub(r"\W+", " ", note.lower()).strip()
+    if not key:
+        return True
+    key_terms = [term for term in key.split() if len(term) >= 5][:8]
+    for memory in memories:
+        memory_note = re.sub(r"\W+", " ", str(memory.get("note") or "").lower()).strip()
+        if not memory_note:
+            continue
+        if key in memory_note or memory_note in key:
+            return True
+        if key_terms and sum(1 for term in key_terms if term in memory_note) >= min(4, len(key_terms)):
+            return True
+    return False
+
+
+def dashboard_decision_suggestions(
+    conversation: dict[str, Any],
+    memories: list[dict[str, Any]],
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    items = conversation.get("items") if isinstance(conversation.get("items"), list) else []
+    candidates = [
+        {
+            "id": "hide-technical-names",
+            "title": "Keep updates non-technical by default",
+            "note": "Keep routine Telegram and heartbeat updates plain-English: hide folder paths and filenames unless I explicitly ask for technical details.",
+            "terms": ("file names", "folder", "technical path", "technical file", "useless"),
+            "scope": "user",
+        },
+        {
+            "id": "image-context-first",
+            "title": "Treat screenshots as context",
+            "note": "When I send a screenshot or image, analyze it as context first and explain what is visible before asking me to describe it again.",
+            "terms": ("image", "screenshot", "unsupported media", "image received"),
+            "scope": "user",
+        },
+        {
+            "id": "act-on-proceed",
+            "title": "Proceed means execute",
+            "note": "When I say proceed, make it work, or build it, take reasonable safe assumptions, execute the next useful step, verify it, and report briefly.",
+            "terms": ("proceed", "make it work", "start working", "build"),
+            "scope": "user",
+        },
+        {
+            "id": "heartbeat-respect",
+            "title": "Respect heartbeat preference",
+            "note": "Respect heartbeat quiet/disabled state and avoid proactive Telegram messages unless a decision, approval, blocker, or important result needs attention.",
+            "terms": ("heartbeat off", "heartbeat disabled", "quiet", "sleep"),
+            "scope": "user",
+        },
+    ]
+    suggestions: list[dict[str, Any]] = []
+    for candidate in candidates:
+        matches: list[dict[str, Any]] = []
+        terms = tuple(str(term).lower() for term in candidate["terms"])
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            haystack = " ".join(
+                [
+                    str(item.get("direction") or ""),
+                    str(item.get("kind") or ""),
+                    str(item.get("summary") or ""),
+                ]
+            ).lower()
+            if any(term in haystack for term in terms):
+                matches.append(item)
+        if not matches:
+            continue
+        note = commander.safe_brief_text(candidate["note"])
+        if dashboard_decision_suggestion_exists(note, memories):
+            continue
+        evidence = commander.safe_brief_text(str(matches[0].get("summary") or matches[0].get("direction") or "conversation signal"))
+        suggestions.append(
+            {
+                "id": candidate["id"],
+                "title": candidate["title"],
+                "note": note,
+                "scope": candidate["scope"],
+                "evidence": evidence,
+                "confidence": "medium" if len(matches) == 1 else "high",
+                "matches": len(matches),
+            }
+        )
+        if len(suggestions) >= limit:
+            break
+    return suggestions
+
+
 def dashboard_recent_images(users: dict[str, dict[str, Any]], limit: int = 6) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for user_id, user in users.items():
@@ -737,6 +828,7 @@ def build_dashboard_payload() -> dict[str, Any]:
     recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw)
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
     approvals = commander.pending_approvals()
+    conversation = dashboard_conversation()
     return {
         "status": commander.command_status(),
         "doctor": {
@@ -745,7 +837,8 @@ def build_dashboard_payload() -> dict[str, Any]:
         },
         "projects": projects,
         "sessions": sessions,
-        "conversation": dashboard_conversation(),
+        "conversation": conversation,
+        "decision_suggestions": dashboard_decision_suggestions(conversation, memories),
         "session_briefs": session_briefs,
         "recent_images": dashboard_recent_images(users),
         "work_feed": work_feed,
@@ -873,6 +966,20 @@ def dashboard_image_analyze_action(payload: dict[str, Any]) -> tuple[dict[str, A
         "text": commander.format_image_analysis(analysis, caption=caption),
         "image": image[0] if image else {},
     }, 200
+
+
+def dashboard_decision_memory_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    note = commander.safe_brief_text(commander.compact(str(payload.get("note") or ""), limit=900))
+    scope = str(payload.get("scope") or "user").strip().lower()
+    if scope not in {"user", "global"}:
+        return {"ok": False, "error": "scope must be user or global"}, 400
+    if len(note) < 20:
+        return {"ok": False, "error": "decision memory note is too short"}, 400
+    memories = commander.memory_data().get("memories", [])
+    if dashboard_decision_suggestion_exists(note, memories):
+        return {"ok": True, "duplicate": True, "text": "A similar Commander memory already exists."}, 200
+    item = commander.add_memory(note, user_id=commander.active_user_id(), scope=scope, source="dashboard-decision")
+    return {"ok": True, "memory": item, "text": f"Saved decision memory {item['id']}."}, 200
 
 
 def dashboard_project_read_action(project_id: str, action: str) -> tuple[dict[str, Any], int]:
@@ -1033,6 +1140,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/image/analyze":
             result, status = dashboard_image_analyze_action(payload)
+            invalidate_dashboard_cache()
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/decision-memory":
+            result, status = dashboard_decision_memory_action(payload)
             invalidate_dashboard_cache()
             self.send_json(result, status=status)
             return

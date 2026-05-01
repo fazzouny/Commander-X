@@ -180,6 +180,32 @@ function renderConversation(data) {
       .join("") || `<p>No recent Telegram conversation events.</p>`;
 }
 
+function renderDecisionSuggestions(data) {
+  const items = data.decision_suggestions || [];
+  qs("#decision-suggestion-count").textContent = `${items.length} suggestions`;
+  qs("#decision-suggestions").innerHTML =
+    items
+      .slice(0, 6)
+      .map((item) => {
+        const type = item.confidence === "high" ? "good" : "warn";
+        return `
+          <div class="row">
+            <div class="row-main">
+              <div class="row-title">${escapeHtml(item.title || "Suggested memory")}</div>
+              <div class="row-meta">${escapeHtml(item.note || "-")}</div>
+              <div class="row-meta">Evidence: ${escapeHtml(item.evidence || "-")} - Matches: ${escapeHtml(item.matches || 1)}</div>
+              <div class="action-center-actions">
+                <button data-decision-note="${escapeHtml(item.note || "")}" data-decision-scope="${escapeHtml(item.scope || "user")}">Save Memory</button>
+                <button data-command="${escapeHtml(`/remember ${item.scope || "user"} ${item.note || ""}`)}">Copy Command</button>
+              </div>
+            </div>
+            <div>${pill(item.confidence || "medium", type)}</div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No new behavior suggestions. Existing memories already cover the current signals.</p>`;
+}
+
 function renderSessionBriefs(data) {
   const items = data.session_briefs || [];
   qs("#session-brief-count").textContent = `${items.length} briefs`;
@@ -662,6 +688,7 @@ async function refresh() {
   renderMetrics(data);
   renderActionCenter(data);
   renderConversation(data);
+  renderDecisionSuggestions(data);
   renderSessionBriefs(data);
   renderRecentImages(data);
   renderWorkFeed(data);
@@ -821,6 +848,26 @@ async function handleCapabilityClick(event) {
   }
 }
 
+async function handleDecisionSuggestionClick(event) {
+  const button = event.target.closest("[data-decision-note]");
+  if (!button) return;
+  const note = button.dataset.decisionNote;
+  const scope = button.dataset.decisionScope || "user";
+  if (!note) return;
+  button.disabled = true;
+  qs("#action-output").textContent = "Saving Commander decision memory...";
+  try {
+    const result = await api("/api/decision-memory", {
+      method: "POST",
+      body: JSON.stringify({ note, scope }),
+    });
+    qs("#action-output").textContent = result.text || (result.memory ? `Saved memory ${result.memory.id}` : JSON.stringify(result, null, 2));
+  } finally {
+    button.disabled = false;
+  }
+  await refresh();
+}
+
 async function showDiff() {
   const project = qs("#evidence-project").value;
   const result = await api(`/api/diff/${encodeURIComponent(project)}`);
@@ -893,6 +940,8 @@ qs("#tasks").addEventListener("click", handleTaskClick);
 qs("#action-center").addEventListener("click", handleApprovalClick);
 qs("#action-center").addEventListener("click", handleTaskClick);
 qs("#action-center").addEventListener("click", handleWorkFeedClick);
+qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionClick);
+qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
 qs("#session-briefs").addEventListener("click", handleWorkFeedClick);
 qs("#recent-images").addEventListener("click", handleCapabilityClick);
 qs("#work-feed").addEventListener("click", handleWorkFeedClick);
