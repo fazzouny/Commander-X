@@ -104,6 +104,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("start OpenClaw"), "/openclaw start")
         self.assertEqual(commander.natural_computer_command("what needs my attention"), "/inbox")
         self.assertEqual(commander.natural_computer_command("show pending approvals"), "/approvals")
+        self.assertEqual(commander.natural_computer_command("You will tell me when it's done?"), "/heartbeat on")
         self.assertEqual(commander.natural_computer_command("show approval history"), "/audit")
         self.assertEqual(commander.natural_computer_command("make me an operator report"), "/report")
         self.assertEqual(commander.natural_computer_command("show mission control"), "/mission")

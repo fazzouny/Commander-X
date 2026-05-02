@@ -6993,6 +6993,11 @@ def natural_computer_command(text: str) -> str | None:
         return "/report"
     if re.search(r"\b(approvals?|approve list|pending approvals?|decisions? to approve|approve or cancel)\b", lowered):
         return "/approvals"
+    if re.search(r"\b(tell|notify|let me know|message|ping)\b", lowered) and re.search(
+        r"\b(done|finished|complete|completed|completion)\b",
+        lowered,
+    ):
+        return "/heartbeat on"
     if re.search(r"\b(inbox|what needs my attention|needs attention|pending items|what needs me|decision inbox)\b", lowered):
         return "/inbox"
     if re.search(r"\b(executive brief|executive update|session briefs?|codex briefs?|plain english summary|non[- ]technical update|what is codex doing right now|what are my codex sessions doing)\b", lowered):
