@@ -730,6 +730,14 @@ def get_project(project_id: str) -> dict[str, Any] | None:
     return project
 
 
+def project_label(project_id: str, project: dict[str, Any] | None = None, include_id: bool = True) -> str:
+    project = project or projects_config().get("projects", {}).get(project_id) or {}
+    label = str(project.get("display_name") or project.get("name") or project_id).strip() or project_id
+    if include_id and label != project_id:
+        return f"{label} ({project_id})"
+    return label
+
+
 def project_path(project: dict[str, Any]) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(str(project["path"])))).resolve()
 
@@ -766,7 +774,7 @@ def project_context_summary(project_id: str, max_files: int = 4, show_path: bool
         return f"No enabled project found for {project_id}."
     path = project_path(project)
     lines = [
-        f"Project: {project_id}",
+        f"Project: {project_label(project_id, project)}",
         f"Allowed: {project.get('allowed', False)}",
     ]
     if show_path:
@@ -2173,7 +2181,7 @@ def command_status() -> str:
         updated = session.get("updated_at") or session.get("started_at") or "-"
         pending = session.get("pending_actions") or {}
         pending_note = f", pending approvals: {len(pending)}" if pending else ""
-        lines.append(f"- {project_id}: {state}, phase {phase}, PID {pid}, updated {updated}{pending_note}")
+        lines.append(f"- {project_label(project_id, include_id=False)}: {state}, phase {phase}, PID {pid}, updated {updated}{pending_note}")
     return "\n".join(lines)
 
 
@@ -2275,7 +2283,8 @@ def project_session_line(project_id: str) -> str:
         return "No Commander-started Codex session is running or recorded for this project."
     pid = int(session.get("pid", 0) or 0)
     running = "running" if pid_running(pid) else "not running"
-    return f"{session.get('state', 'unknown')} - PID {pid or '-'} ({running}) - task: {session.get('task', '-')}"
+    task = summarize_task_for_human(session.get("task"))
+    return f"{session.get('state', 'unknown')} ({running}) - task: {task}"
 
 
 def project_queue_lines(project_id: str, limit: int = 4) -> list[str]:
@@ -2287,7 +2296,30 @@ def project_queue_lines(project_id: str, limit: int = 4) -> list[str]:
     ]
     if not tasks:
         return ["No active queued Commander tasks for this project."]
-    return [f"[{task.get('id')}] {task.get('status')}: {task.get('title')}" for task in tasks[-limit:]]
+    return [f"{task.get('status')}: {summarize_task_for_human(task.get('title'))}" for task in tasks[-limit:]]
+
+
+def short_human_text(value: Any, limit: int = 180) -> str:
+    text = safe_brief_text(value)
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def summarize_task_for_human(value: Any) -> str:
+    raw = str(value or "").strip()
+    lowered = raw.lower()
+    if not raw:
+        return "-"
+    if "local mvp" in lowered and ("telegram" in lowered or "whatsapp" in lowered):
+        return "Build the local web MVP with Telegram and WhatsApp-ready channel scaffolding."
+    if ("npm run test" in lowered or "npm.cmd run test" in lowered) and ("smoke" in lowered or "build" in lowered):
+        return "Verify the current milestone with test, build, and smoke checks, then report evidence."
+    if "audit" in lowered and "onboarding" in lowered:
+        return "Audit the onboarding flow, fix blockers, and verify the result."
+    if "production ready" in lowered or "100%" in lowered:
+        return "Close remaining blockers against the project objective and verify completion evidence."
+    return short_human_text(raw, limit=150)
 
 
 def command_updates(project_id: str | None, user_id: str, query: str | None = None) -> str:
@@ -2301,7 +2333,7 @@ def command_updates(project_id: str | None, user_id: str, query: str | None = No
     changed = changed_files(path) if path.exists() and is_git_repo(path) else []
     recent_docs = recent_project_documents(resolved)
 
-    lines = [f"Latest updates: {resolved}"]
+    lines = [f"Latest updates: {project_label(resolved, project, include_id=False)}"]
     lines.append("")
     lines.append("Codex:")
     lines.append(f"- {project_session_line(resolved)}")
@@ -2311,8 +2343,7 @@ def command_updates(project_id: str | None, user_id: str, query: str | None = No
     lines.append("")
     lines.append("Local work:")
     if path.exists() and is_git_repo(path):
-        lines.append(f"- Branch: {current_branch(path)}")
-        lines.append(f"- Changed files: {len(changed)}")
+        lines.append(f"- Review state: {len(changed)} changed file(s) on the current task branch.")
         areas = change_bucket_summary(changed)
         if areas:
             lines.append(f"- Areas: {areas}")
@@ -2387,10 +2418,11 @@ def command_projects(show_details: bool = False) -> str:
         exists = "exists" if path.exists() else "missing"
         git = "git" if path.exists() and is_git_repo(path) else "no-git"
         branch = current_branch(path) if path.exists() and is_git_repo(path) else "-"
+        label = project_label(project_id, project)
         if show_details:
-            lines.append(f"- {project_id}: {allowed}, {exists}, {git}, branch {branch}, path {path}")
+            lines.append(f"- {label}: {allowed}, {exists}, {git}, branch {branch}, path {path}")
         else:
-            lines.append(f"- {project_id}: {allowed}, branch {branch}")
+            lines.append(f"- {label}: {allowed}, branch {branch}")
     if not show_details:
         lines.append("")
         lines.append("Use /projects full to show local paths.")
@@ -2410,7 +2442,7 @@ def command_focus(project_id: str | None, user_id: str, chat_id: int | str | Non
     if chat_id is not None:
         updates["last_chat_id"] = chat_id
     update_user_state(user_id, updates)
-    return f"Active project set to {resolved}.\n\n{project_context_summary(resolved, max_files=2)}"
+    return f"Active project set to {project_label(resolved)}.\n\n{project_context_summary(resolved, max_files=2)}"
 
 
 def command_mode(args: list[str], user_id: str, chat_id: int | str | None = None) -> str:
@@ -6886,6 +6918,22 @@ def looks_like_brief_request(text: str) -> bool:
     )
 
 
+def project_info_response(text: str, user_id: str, execute: bool = True) -> list[str] | None:
+    projects = mentioned_projects(text)
+    if len(projects) != 1 or looks_like_start_request(text):
+        return None
+    if not re.search(
+        r"\b(about|know|knows|tell|explain|info|information|context|brief|status|update|updates|what is|what's|whats)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return None
+    project_id = projects[0]
+    if not execute:
+        return [f"Would run: /updates {project_id}"]
+    return [command_updates(project_id, user_id=user_id, query=text)]
+
+
 def volume_command_from_natural_text(text: str) -> str | None:
     lowered = text.lower()
     if not re.search(r"\b(volume|sound|audio)\b", lowered):
@@ -7055,6 +7103,10 @@ def natural_language_response(
     focus = focus_project_response(text, user_id=user_id, chat_id=chat_id, execute=execute_commands)
     if focus:
         return focus
+
+    project_info = project_info_response(text, user_id=user_id, execute=execute_commands)
+    if project_info:
+        return project_info
 
     if looks_like_brief_request(text) and not looks_like_start_request(text):
         if not execute_commands:

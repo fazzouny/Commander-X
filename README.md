@@ -14,6 +14,7 @@ It is intentionally narrow:
 - automatic heartbeat summaries can be sent back to Telegram
 - heartbeat summaries use executive briefs and hide technical filenames by default
 - Commander memory stores durable preferences and project facts
+- project display names and aliases let natural language like "ask about the health assistant project" resolve to the correct registered project
 - project profiles detect stack, useful scripts, verification commands, and risk notes
 - a task queue tracks queued/running/review/done work
 - a local dashboard exposes sessions, executive briefs, Git state, queue, memory, evidence, capabilities, and approval/task controls

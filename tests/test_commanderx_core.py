@@ -34,6 +34,10 @@ class ProjectTests(unittest.TestCase):
             "example-app": {"aliases": ["example", "app"]},
             "billing-api": {"aliases": ["billing api", "billz"]},
             "taalam-campaigns": {"aliases": ["taalam campaigns", "taalim campaigns", "talim campaigns"]},
+            "comx-omnichannel-test": {
+                "display_name": "Health Assistant",
+                "aliases": ["health assistant", "health assistant project"],
+            },
         }
 
     def test_alias_map_includes_ids_space_variants_and_aliases(self) -> None:
@@ -41,11 +45,13 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(aliases["example-app"], "example-app")
         self.assertEqual(aliases["example app"], "example-app")
         self.assertEqual(aliases["billz"], "billing-api")
+        self.assertEqual(aliases["health assistant"], "comx-omnichannel-test")
 
     def test_resolve_project_uses_aliases_and_active_fallback(self) -> None:
         self.assertEqual(resolve_project(self.projects, "billing api"), "billing-api")
         self.assertEqual(resolve_project(self.projects, None, active_project="example-app"), "example-app")
         self.assertIsNone(resolve_project(self.projects, None, active_project="missing"))
+        self.assertEqual(resolve_project(self.projects, "tell me about the health assistant project"), "comx-omnichannel-test")
 
     def test_mentioned_projects_dedupes_multiple_alias_hits(self) -> None:
         self.assertEqual(
@@ -57,6 +63,12 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(
             mentioned_projects(self.projects, "Focus on Talim campaigns."),
             ["taalam-campaigns"],
+        )
+
+    def test_mentioned_projects_uses_display_name_inside_sentence(self) -> None:
+        self.assertEqual(
+            mentioned_projects(self.projects, "Asking about the Health Assistant project."),
+            ["comx-omnichannel-test"],
         )
 
 

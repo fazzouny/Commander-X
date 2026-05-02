@@ -6,6 +6,7 @@
   },
   "projects": {
     "example-app": {
+      "display_name": "Example App",
       "path": "C:\\path\\to\\your\\project",
       "allowed": true,
       "default_branch": "main",
