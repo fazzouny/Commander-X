@@ -12,6 +12,24 @@
         "npm run test",
         "npm run build"
       ],
+      "objective": "Deliver the intended user workflow with no known blockers, verified locally and ready for review.",
+      "done_criteria": [
+        {
+          "text": "Primary user workflow works end to end.",
+          "status": "open",
+          "evidence": ""
+        },
+        {
+          "text": "Required verification commands pass.",
+          "status": "open",
+          "evidence": ""
+        },
+        {
+          "text": "No pending approvals, blockers, or unsettled local changes remain.",
+          "status": "open",
+          "evidence": ""
+        }
+      ],
       "notes": [
         "Keep production credentials out of Telegram and logs."
       ],

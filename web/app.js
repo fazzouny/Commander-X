@@ -323,6 +323,53 @@ function renderOperatorPlayback(data) {
       .join("") || `<p>No operator playback views yet.</p>`;
 }
 
+function renderProjectCompletion(data) {
+  const items = data.project_completion || [];
+  qs("#project-completion-count").textContent = `${items.length} checks`;
+  qs("#project-completion").innerHTML =
+    items
+      .slice(0, 6)
+      .map((item) => {
+        const verdict = String(item.verdict || "").toLowerCase();
+        const type = verdict.includes("100") || verdict === "done candidate" ? "good" : verdict.includes("blocked") || verdict.includes("missing") ? "bad" : "warn";
+        const criteria = (item.criteria || [])
+          .slice(0, 5)
+          .map((criterion, index) => `<span>${index + 1}. [${escapeHtml(criterion.status || "open")}] ${escapeHtml(criterion.text || "-")}</span>`)
+          .join("");
+        const checks = (item.checks || [])
+          .slice(0, 3)
+          .map((line) => `<span>${escapeHtml(line)}</span>`)
+          .join("");
+        return `
+          <div class="work-card">
+            <div class="work-card-head">
+              <div>
+                <div class="row-title">${escapeHtml(item.project || "-")}</div>
+                <div class="row-meta">${escapeHtml(item.objective || "Objective not set")}</div>
+              </div>
+              <div>${pill(`${item.completion_percent || 0}% ${item.verdict || "unknown"}`, type)}</div>
+            </div>
+            <div class="work-grid">
+              <div><span>Criteria</span><strong>${escapeHtml(item.done_criteria || 0)} / ${escapeHtml(item.total_criteria || 0)} done</strong></div>
+              <div><span>State</span><strong>${escapeHtml(item.state || "unknown")}</strong></div>
+              <div><span>Blocker</span><strong>${escapeHtml(item.blocker || "none reported")}</strong></div>
+              <div><span>Changed count</span><strong>${escapeHtml(item.changed_count || 0)}</strong></div>
+              <div><span>Next</span><strong>${escapeHtml(item.next_step || "-")}</strong></div>
+              <div><span>Primary action</span><strong>${escapeHtml(item.primary_action || "-")}</strong></div>
+            </div>
+            <div class="timeline-mini">${criteria || "<span>No Definition of Done configured</span>"}</div>
+            <div class="timeline-mini">${checks || "<span>No verification proof recorded yet</span>"}</div>
+            <div class="work-actions">
+              <button data-work-action="done" data-project="${escapeHtml(item.project || "")}">Done?</button>
+              <button data-work-action="playback" data-project="${escapeHtml(item.project || "")}">Playback</button>
+              <button data-work-action="watch" data-project="${escapeHtml(item.project || "")}">Watch</button>
+            </div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No completion checks yet.</p>`;
+}
+
 function renderSessionEvidence(data) {
   const items = data.session_evidence || [];
   qs("#session-evidence-count").textContent = `${items.length} cards`;
@@ -904,6 +951,7 @@ async function refresh() {
   renderDecisionSuggestions(data);
   renderMissionTimeline(data);
   renderOperatorPlayback(data);
+  renderProjectCompletion(data);
   renderSessionEvidence(data);
   renderSessionReplay(data);
   renderSessionBriefs(data);
@@ -1196,6 +1244,7 @@ qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionCl
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
 qs("#mission-timeline").addEventListener("click", handleWorkFeedClick);
 qs("#operator-playback").addEventListener("click", handleWorkFeedClick);
+qs("#project-completion").addEventListener("click", handleWorkFeedClick);
 qs("#session-evidence").addEventListener("click", handleWorkFeedClick);
 qs("#session-replay").addEventListener("click", handleWorkFeedClick);
 qs("#session-briefs").addEventListener("click", handleWorkFeedClick);

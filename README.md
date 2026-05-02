@@ -105,6 +105,11 @@ Remove it later with:
 /evidence
 /replay
 /playback
+/objective
+/objective set example-app "Ship onboarding end to end"
+/objective add example-app "Signup, login, and first action work in a browser"
+/objective done example-app 1 "Manual QA and smoke test passed"
+/done
 /watch
 /timeline
 /plan

@@ -116,6 +116,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "session_evidence": [],
         "session_replay": [],
         "operator_playback": [],
+        "project_completion": [],
         "session_briefs": [],
         "recent_images": [],
         "work_feed": [],
@@ -333,6 +334,8 @@ def capabilities_payload(openclaw_status: str | None = None) -> dict[str, Any]:
             "/evidence",
             "/replay",
             "/playback",
+            "/objective",
+            "/done",
             "/watch",
             "/queue",
             "/approvals",
@@ -887,6 +890,11 @@ def build_dashboard_payload() -> dict[str, Any]:
     session_evidence = commander.session_evidence_cards(user_id=user_id, limit=8)
     session_replay = commander.session_replay_cards(user_id=user_id, limit=6)
     operator_playback = commander.operator_playback_cards(user_id=user_id, limit=6)
+    project_completion = [
+        commander.project_completion_card(str(card.get("project")), user_id=user_id)
+        for card in operator_playback
+        if card.get("project")
+    ]
     openclaw = safe_openclaw_dashboard_payload()
     recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw)
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
@@ -908,6 +916,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "session_evidence": session_evidence,
         "session_replay": session_replay,
         "operator_playback": operator_playback,
+        "project_completion": project_completion,
         "session_briefs": session_briefs,
         "recent_images": dashboard_recent_images(users),
         "work_feed": work_feed,
@@ -1088,6 +1097,8 @@ def dashboard_project_read_action(project_id: str, action: str) -> tuple[dict[st
         text = commander.session_replay(project_id)
     elif action == "playback":
         text = commander.operator_playback(project_id, user_id="dashboard")
+    elif action == "done":
+        text = commander.project_completion(project_id, user_id="dashboard")
     elif action == "changes":
         rows = [
             row
@@ -1154,6 +1165,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/playback/"):
             project_id = urllib.parse.unquote(path.removeprefix("/api/playback/"))
             self.send_json({"project": project_id, "text": commander.operator_playback(project_id, user_id="dashboard")})
+            return
+        if path.startswith("/api/done/"):
+            project_id = urllib.parse.unquote(path.removeprefix("/api/done/"))
+            self.send_json({"project": project_id, "text": commander.project_completion(project_id, user_id="dashboard")})
             return
         if path.startswith("/api/work/"):
             parts = path.removeprefix("/api/work/").split("/", 1)

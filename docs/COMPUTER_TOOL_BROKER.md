@@ -36,6 +36,8 @@ Commander X uses a broker instead of raw shell access from Telegram.
 - `/evidence` shows clean proof cards with checks, blockers, and approval signals.
 - `/replay` reconstructs a Codex run as a short non-technical story with outcome, checks, blocker, and next step.
 - `/playback` combines replay, proof, approvals, recent visual context, and the next useful command into one operator view.
+- `/objective` stores the intended project objective and Definition of Done criteria.
+- `/done` checks whether the project can be considered complete without trusting an AI final message alone.
 - `/watch` gives a Codex-app-like plain-English live view of a managed session.
 - `/timeline` is an alias for the same live run view and shows the managed session phases.
 - `/plan [project] [task]` shows the plain-English goal, approach, risk, expected checks, and approval boundaries before work starts.

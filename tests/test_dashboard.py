@@ -129,6 +129,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(payload["session_replay"], [])
         self.assertIn("operator_playback", payload)
         self.assertEqual(payload["operator_playback"], [])
+        self.assertIn("project_completion", payload)
+        self.assertEqual(payload["project_completion"], [])
         self.assertIn("recent_images", payload)
         self.assertEqual(payload["recent_images"], [])
         self.assertIn("work_feed", payload)
@@ -352,6 +354,18 @@ class DashboardCapabilityTests(unittest.TestCase):
                         "primary_action": "Review config.json",
                     }
                 ],
+                "project_completion": [
+                    {
+                        "project": "example",
+                        "verdict": "not done",
+                        "completion_percent": 70,
+                        "objective": "Fix C:\\Users\\Name\\repo\\secret.py",
+                        "done_criteria": 1,
+                        "total_criteria": 2,
+                        "blocker": "none",
+                        "next_step": "Review README.md",
+                    }
+                ],
                 "session_briefs": [
                     {
                         "project": "example",
@@ -468,6 +482,7 @@ class DashboardApprovalTests(unittest.TestCase):
         original_evidence = dashboard.commander.session_evidence
         original_replay = dashboard.commander.session_replay
         original_playback = dashboard.commander.operator_playback
+        original_done = dashboard.commander.project_completion
         original_changes = dashboard.commander.changed_project_details
         try:
             dashboard.commander.get_project = lambda project: {"allowed": True} if project == "example" else None  # type: ignore[assignment]
@@ -478,6 +493,7 @@ class DashboardApprovalTests(unittest.TestCase):
             dashboard.commander.session_evidence = lambda project: f"evidence {project}"  # type: ignore[assignment]
             dashboard.commander.session_replay = lambda project: f"replay {project}"  # type: ignore[assignment]
             dashboard.commander.operator_playback = lambda project, user_id=None: f"playback {project} {user_id}"  # type: ignore[assignment]
+            dashboard.commander.project_completion = lambda project, user_id=None: f"done {project} {user_id}"  # type: ignore[assignment]
             dashboard.commander.changed_project_details = lambda limit=30, max_files=0: [  # type: ignore[assignment]
                 {"project": "example", "changed_count": 2, "branch": "main", "areas": "app/user interface (2)"}
             ]
@@ -489,6 +505,7 @@ class DashboardApprovalTests(unittest.TestCase):
             evidence, evidence_status = dashboard.dashboard_project_read_action("example", "evidence")
             replay, replay_status = dashboard.dashboard_project_read_action("example", "replay")
             playback, playback_status = dashboard.dashboard_project_read_action("example", "playback")
+            done, done_status = dashboard.dashboard_project_read_action("example", "done")
             changes, changes_status = dashboard.dashboard_project_read_action("example", "changes")
             missing, missing_status = dashboard.dashboard_project_read_action("missing", "watch")
         finally:
@@ -500,6 +517,7 @@ class DashboardApprovalTests(unittest.TestCase):
             dashboard.commander.session_evidence = original_evidence  # type: ignore[assignment]
             dashboard.commander.session_replay = original_replay  # type: ignore[assignment]
             dashboard.commander.operator_playback = original_playback  # type: ignore[assignment]
+            dashboard.commander.project_completion = original_done  # type: ignore[assignment]
             dashboard.commander.changed_project_details = original_changes  # type: ignore[assignment]
 
         self.assertEqual(watch_status, 200)
@@ -516,6 +534,8 @@ class DashboardApprovalTests(unittest.TestCase):
         self.assertEqual(replay["text"], "replay example")
         self.assertEqual(playback_status, 200)
         self.assertEqual(playback["text"], "playback example dashboard")
+        self.assertEqual(done_status, 200)
+        self.assertEqual(done["text"], "done example dashboard")
         self.assertEqual(changes_status, 200)
         self.assertIn("Changed work areas: example", changes["text"])
         self.assertIn("app/user interface", changes["text"])

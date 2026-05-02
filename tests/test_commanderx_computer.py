@@ -110,6 +110,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("show evidence cards"), "/evidence")
         self.assertEqual(commander.natural_computer_command("show me the session replay"), "/replay")
         self.assertEqual(commander.natural_computer_command("what do I need to know about this project"), "/playback")
+        self.assertEqual(commander.natural_computer_command("is this project 100% done?"), "/done")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
         self.assertEqual(commander.natural_computer_command("give me a plain English Codex brief"), "/briefs")
         self.assertEqual(commander.natural_computer_command("show all codex progress"), "/feed")
@@ -644,6 +645,70 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn("C:\\Users", rendered)
         self.assertNotIn("secret.py", rendered)
         self.assertNotIn("src/app.py", rendered)
+
+    def test_project_completion_requires_objective_criteria_and_clean_state(self) -> None:
+        original_profile = commander.project_profile
+        original_playback = commander.operator_playback_card
+        try:
+            commander.project_profile = lambda project: {  # type: ignore[assignment]
+                "project": project,
+                "objective": "Ship C:\\Users\\Name\\repo\\secret.py workflow",
+                "done_criteria": [
+                    {"text": "Workflow works in README.md", "status": "done", "evidence": "Manual QA passed"},
+                    {"text": "Verification passes", "status": "done", "evidence": "python -m unittest discover"},
+                ],
+            }
+            commander.operator_playback_card = lambda project, user_id=None: {  # type: ignore[assignment]
+                "project": project,
+                "state": "completed",
+                "confidence": "reviewable",
+                "checks": ["python -m py_compile src/app.py"],
+                "pending_approvals": [],
+                "changed_count": 0,
+                "blocker": "none reported",
+                "primary_action": "Archive project",
+            }
+
+            card = commander.project_completion_card("example", user_id="1")
+            rendered = commander.format_project_completion(card)
+        finally:
+            commander.project_profile = original_profile  # type: ignore[assignment]
+            commander.operator_playback_card = original_playback  # type: ignore[assignment]
+
+        self.assertEqual(card["verdict"], "100% done candidate")
+        self.assertEqual(card["completion_percent"], 100)
+        self.assertIn("Definition of Done", rendered)
+        self.assertNotIn("C:\\Users", rendered)
+        self.assertNotIn("README.md", rendered)
+        self.assertNotIn("src/app.py", rendered)
+
+    def test_project_completion_caps_at_99_when_changes_remain(self) -> None:
+        original_profile = commander.project_profile
+        original_playback = commander.operator_playback_card
+        try:
+            commander.project_profile = lambda project: {  # type: ignore[assignment]
+                "project": project,
+                "objective": "Ship the workflow",
+                "done_criteria": [{"text": "Workflow works", "status": "done", "evidence": "QA passed"}],
+            }
+            commander.operator_playback_card = lambda project, user_id=None: {  # type: ignore[assignment]
+                "project": project,
+                "state": "completed",
+                "confidence": "reviewable",
+                "checks": ["Python test suite"],
+                "pending_approvals": [],
+                "changed_count": 2,
+                "blocker": "none reported",
+                "primary_action": "Review evidence",
+            }
+
+            card = commander.project_completion_card("example", user_id="1")
+        finally:
+            commander.project_profile = original_profile  # type: ignore[assignment]
+            commander.operator_playback_card = original_playback  # type: ignore[assignment]
+
+        self.assertEqual(card["verdict"], "reviewable, not final")
+        self.assertLess(card["completion_percent"], 100)
 
     def test_log_progress_signals_detect_blockers_without_paths(self) -> None:
         raw = """

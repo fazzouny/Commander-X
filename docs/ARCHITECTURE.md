@@ -46,6 +46,7 @@ Example templates are safe to commit:
 - `/log`: reads the latest session log.
 - `/diff`: summarizes Git state.
 - `/mission`, `/evidence`, `/replay`, `/playback`: convert managed Codex activity into operator-readable direction, proof, run stories, and next-action briefings.
+- `/objective` and `/done`: define the intended outcome and check completion proof before Commander X can call work complete.
 - `/commit` and `/push`: create approval requests.
 - `/remember`, `/memory`, `/forget`: manage Commander learning.
 - `/profile`: shows detected and configured project profile.

@@ -117,6 +117,8 @@ NL_ALLOWED_COMMANDS = {
     "/evidence",
     "/replay",
     "/playback",
+    "/objective",
+    "/done",
     "/watch",
     "/timeline",
     "/plan",
@@ -176,6 +178,8 @@ TELEGRAM_COMMANDS = [
     ("evidence", "Show clean session evidence"),
     ("replay", "Show a plain-English session replay"),
     ("playback", "Show the operator playback view"),
+    ("objective", "Set or show project objective"),
+    ("done", "Check project completion proof"),
     ("watch", "Show live project work view"),
     ("timeline", "Show session timeline"),
     ("plan", "Show pre-work plan"),
@@ -227,6 +231,7 @@ DEFAULT_BUTTON_ROWS = [
     [("Mode", "cmd:/mode"), ("Free Mode", "cmd:/free")],
     [("Mission", "cmd:/mission"), ("Briefs", "cmd:/briefs"), ("Feed", "cmd:/feed")],
     [("Playback", "cmd:/playback"), ("Evidence", "cmd:/evidence"), ("Replay", "cmd:/replay")],
+    [("Done?", "cmd:/done"), ("Objective", "cmd:/objective")],
     [("Report", "cmd:/report")],
     [("Morning", "cmd:/morning"), ("Next", "cmd:/next")],
     [("Inbox", "cmd:/inbox"), ("Approvals", "cmd:/approvals"), ("Audit", "cmd:/audit")],
@@ -913,6 +918,34 @@ def detect_stack(path: Path, package: dict[str, Any]) -> list[str]:
     return stack
 
 
+def normalize_done_criteria(value: Any) -> list[dict[str, str]]:
+    criteria: list[dict[str, str]] = []
+    if not isinstance(value, list):
+        return criteria
+    for index, item in enumerate(value, start=1):
+        if isinstance(item, dict):
+            text = audit_clean(item.get("text") or item.get("criterion") or item.get("title"), limit=280)
+            status = audit_clean(item.get("status") or "open", limit=80).lower()
+            evidence = audit_clean(item.get("evidence") or "", limit=360) if item.get("evidence") else ""
+        else:
+            text = audit_clean(item, limit=280)
+            status = "open"
+            evidence = ""
+        if not text or text == "-":
+            continue
+        if status not in {"open", "done", "blocked", "waived"}:
+            status = "open"
+        criteria.append({"id": str(index), "text": text, "status": status, "evidence": evidence})
+    return criteria
+
+
+def profile_store(project_id: str) -> dict[str, Any]:
+    data = profiles_data()
+    profiles = data.setdefault("profiles", {})
+    profile = profiles.setdefault(project_id, {})
+    return profile if isinstance(profile, dict) else {}
+
+
 def project_profile(project_id: str) -> dict[str, Any]:
     project = get_project(project_id)
     if not project:
@@ -941,6 +974,8 @@ def project_profile(project_id: str) -> dict[str, Any]:
         "stack": stored.get("stack") or detect_stack(path, package),
         "scripts": {key: scripts[key] for key in sorted(scripts) if key in {"dev", "build", "test", "lint", "typecheck", "smoke", "preview"}},
         "verification_commands": verification,
+        "objective": stored.get("objective") or "",
+        "done_criteria": normalize_done_criteria(stored.get("done_criteria") or []),
         "context_files": [str(item) for item in context_files],
         "notes": stored.get("notes", []),
         "risk_rules": stored.get("risk_rules", []),
@@ -956,6 +991,15 @@ def format_project_profile(profile: dict[str, Any]) -> str:
         f"Changed files: {profile.get('changed_count', 0)}",
         "Stack: " + (", ".join(profile.get("stack") or []) or "not detected"),
     ]
+    if profile.get("objective"):
+        lines.extend(["", f"Objective: {profile.get('objective')}"])
+    done_criteria = profile.get("done_criteria") or []
+    if done_criteria:
+        lines.extend(["", "Definition of Done:"])
+        for item in done_criteria[:10]:
+            if isinstance(item, dict):
+                suffix = f" - {item.get('evidence')}" if item.get("evidence") else ""
+                lines.append(f"- [{item.get('status')}] {item.get('text')}{suffix}")
     scripts = profile.get("scripts") or {}
     if scripts:
         lines.extend(["", "Useful scripts:"])
@@ -1510,6 +1554,179 @@ def operator_playback(project_id: str, user_id: str | None = None) -> str:
     return format_operator_playback_card(operator_playback_card(project_id, user_id=user_id))
 
 
+def project_completion_card(project_id: str, user_id: str | None = None) -> dict[str, Any]:
+    profile = project_profile(project_id)
+    playback = operator_playback_card(project_id, user_id=user_id)
+    criteria = normalize_done_criteria(profile.get("done_criteria") or [])
+    objective = audit_clean(profile.get("objective") or "", limit=500) if profile.get("objective") else ""
+    checks = playback.get("checks") if isinstance(playback.get("checks"), list) else []
+    approvals = playback.get("pending_approvals") if isinstance(playback.get("pending_approvals"), list) else []
+    open_criteria = [item for item in criteria if item.get("status") == "open"]
+    blocked_criteria = [item for item in criteria if item.get("status") == "blocked"]
+    done_criteria = [item for item in criteria if item.get("status") in {"done", "waived"}]
+    confidence = str(playback.get("confidence") or "")
+    state = str(playback.get("state") or "")
+    changed_count = int(playback.get("changed_count") or 0)
+    no_hazards = not approvals and confidence != "blocked" and state != "running"
+    strict_done = bool(objective) and bool(criteria) and not open_criteria and not blocked_criteria and bool(checks) and no_hazards and changed_count == 0
+    if strict_done:
+        verdict = "100% done candidate"
+        next_step = "Archive or start the next objective."
+    elif not objective:
+        verdict = "objective missing"
+        next_step = f"Set the intended objective with /objective set {project_id} \"objective\"."
+    elif not criteria:
+        verdict = "definition of done missing"
+        next_step = f"Add proof criteria with /objective add {project_id} \"criterion\"."
+    elif state == "running":
+        verdict = "in progress"
+        next_step = f"Watch the active run: /watch {project_id}"
+    elif confidence == "blocked" or blocked_criteria:
+        verdict = "blocked"
+        next_step = f"Inspect the blocker: /playback {project_id}"
+    elif approvals:
+        verdict = "waiting for approval"
+        next_step = "Review pending approval requests with /approvals."
+    elif open_criteria:
+        verdict = "not done"
+        next_step = f"Continue work on open criteria or mark proof with /objective done {project_id} <number> \"evidence\"."
+    elif not checks:
+        verdict = "needs verification"
+        next_step = f"Run or request verification before done: /playback {project_id}"
+    elif changed_count:
+        verdict = "reviewable, not final"
+        next_step = f"Review evidence and approve commit/push when ready: /evidence {project_id}"
+    else:
+        verdict = "done candidate"
+        next_step = "Review the final proof before calling it complete."
+    criteria_score = (len(done_criteria) / len(criteria)) if criteria else 0.0
+    percent = 0
+    if objective:
+        percent += 20
+    percent += int(criteria_score * 50)
+    if checks:
+        percent += 15
+    if no_hazards:
+        percent += 15
+    if not strict_done:
+        percent = min(percent, 99)
+    return {
+        "project": audit_clean(project_id, limit=120),
+        "objective": objective,
+        "verdict": verdict,
+        "completion_percent": percent,
+        "state": audit_clean(state, limit=80),
+        "confidence": audit_clean(confidence, limit=120),
+        "criteria": criteria,
+        "done_criteria": len(done_criteria),
+        "total_criteria": len(criteria),
+        "checks": [audit_clean(item, limit=180) for item in checks[:5]],
+        "pending_approvals": approvals,
+        "changed_count": changed_count,
+        "blocker": audit_clean(playback.get("blocker") or "none reported", limit=260),
+        "next_step": audit_clean(next_step, limit=300),
+        "primary_action": audit_clean(playback.get("primary_action"), limit=300),
+    }
+
+
+def format_project_completion(card: dict[str, Any]) -> str:
+    lines = [
+        f"Completion check: {card.get('project')}",
+        f"- Verdict: {card.get('verdict')}",
+        f"- Completion: {card.get('completion_percent')}%",
+        f"- Objective: {card.get('objective') or 'not set'}",
+        f"- State: {card.get('state')} ({card.get('confidence')})",
+        f"- Blocker: {card.get('blocker')}",
+        f"- Changed work areas count: {card.get('changed_count')}",
+        f"- Next: {card.get('next_step')}",
+    ]
+    criteria = card.get("criteria") if isinstance(card.get("criteria"), list) else []
+    lines.append("")
+    lines.append("Definition of Done:")
+    if criteria:
+        for index, item in enumerate(criteria[:12], start=1):
+            if isinstance(item, dict):
+                evidence = f" - {item.get('evidence')}" if item.get("evidence") else ""
+                lines.append(f"{index}. [{item.get('status')}] {item.get('text')}{evidence}")
+    else:
+        lines.append("- Not configured.")
+    checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+    lines.append("")
+    lines.append("Verification proof:")
+    if checks:
+        lines.extend(f"- {item}" for item in checks[:5])
+    else:
+        lines.append("- No verification proof recorded yet.")
+    approvals = card.get("pending_approvals") if isinstance(card.get("pending_approvals"), list) else []
+    if approvals:
+        lines.append("")
+        lines.append("Pending approvals:")
+        for item in approvals[:4]:
+            if isinstance(item, dict):
+                lines.append(f"- {item.get('type')} [{item.get('id')}]: {item.get('message') or item.get('branch')}")
+    lines.append("")
+    lines.append("Commander X must not call a project 100% done unless the objective is set, all criteria have proof, verification exists, no blockers/approvals are pending, and local changes are settled.")
+    return compact("\n".join(lines), limit=3600)
+
+
+def project_completion(project_id: str, user_id: str | None = None) -> str:
+    return format_project_completion(project_completion_card(project_id, user_id=user_id))
+
+
+def update_project_objective(project_id: str, objective: str | None = None, add_criterion: str | None = None, mark_done: tuple[int, str] | None = None) -> None:
+    data = profiles_data()
+    profiles = data.setdefault("profiles", {})
+    profile = profiles.setdefault(project_id, {})
+    if not isinstance(profile, dict):
+        profile = {}
+        profiles[project_id] = profile
+    if objective is not None:
+        profile["objective"] = audit_clean(objective, limit=600)
+    criteria = normalize_done_criteria(profile.get("done_criteria") or [])
+    if add_criterion:
+        criteria.append({"id": str(len(criteria) + 1), "text": audit_clean(add_criterion, limit=280), "status": "open", "evidence": ""})
+    if mark_done:
+        index, evidence = mark_done
+        if 1 <= index <= len(criteria):
+            criteria[index - 1]["status"] = "done"
+            criteria[index - 1]["evidence"] = audit_clean(evidence or "Marked done by operator.", limit=360)
+    profile["done_criteria"] = criteria
+    save_profiles(data)
+
+
+def command_objective(args: list[str], user_id: str) -> str:
+    action = args[0].lower() if args else "show"
+    if action == "set":
+        project_id, rest = project_and_rest(args[1:], user_id=user_id)
+        if not project_id or not rest:
+            return 'Usage: /objective set <project> "intended objective"'
+        update_project_objective(project_id, objective=" ".join(rest))
+        return f"Objective set for {project_id}.\n\n" + project_completion(project_id, user_id=user_id)
+    if action == "add":
+        project_id, rest = project_and_rest(args[1:], user_id=user_id)
+        if not project_id or not rest:
+            return 'Usage: /objective add <project> "done criterion"'
+        update_project_objective(project_id, add_criterion=" ".join(rest))
+        return f"Definition-of-Done criterion added for {project_id}.\n\n" + project_completion(project_id, user_id=user_id)
+    if action in {"done", "check"}:
+        project_id, rest = project_and_rest(args[1:], user_id=user_id)
+        if not project_id or len(rest) < 2 or not rest[0].isdigit():
+            return 'Usage: /objective done <project> <criterion_number> "evidence"'
+        update_project_objective(project_id, mark_done=(int(rest[0]), " ".join(rest[1:])))
+        return f"Criterion {rest[0]} marked done for {project_id}.\n\n" + project_completion(project_id, user_id=user_id)
+    project_id, _rest = project_and_rest(args if action != "show" else args[1:], user_id=user_id)
+    if not project_id:
+        return "Usage: /objective <project>, /objective set <project> \"objective\", /objective add <project> \"criterion\""
+    return project_completion(project_id, user_id=user_id)
+
+
+def command_done(args: list[str], user_id: str) -> str:
+    project_id, _rest = project_and_rest(args, user_id=user_id)
+    if not project_id:
+        return "Usage: /done <project> or set /focus <project> first."
+    return project_completion(project_id, user_id=user_id)
+
+
 def load_system_prompt() -> str:
     if not SYSTEM_PROMPT_FILE.exists():
         return "You are Codex Commander. Work only inside the selected project."
@@ -1650,6 +1867,7 @@ Execution constraints:
 - Do not delete production data.
 - Do not reveal secrets or print .env values.
 - Return evidence before saying work is complete: files changed, checks run, current blocker, and next step.
+- Do not claim the project is 100% done unless the objective and every Definition-of-Done criterion are satisfied with evidence.
 - If you need a high-impact action, stop and state exactly what approval is needed.
 - Before finishing, run the narrowest useful verification available and report any checks you could not run.
 """
@@ -3762,6 +3980,7 @@ def operator_report_payload(user_id: str | None = None, limit: int | None = None
     evidence_cards = session_evidence_cards(user_id=user_id, limit=min(limit, 8))
     replay_cards = session_replay_cards(user_id=user_id, limit=min(limit, 6))
     playback_cards = operator_playback_cards(user_id=user_id, limit=min(limit, 6))
+    completion_cards = [project_completion_card(str(card.get("project")), user_id=user_id) for card in playback_cards if card.get("project")][: min(limit, 6)]
     events = audit_data().get("events", [])
     audit_items: list[dict[str, Any]] = []
     for event in reversed(events[-limit:]):
@@ -3804,6 +4023,7 @@ def operator_report_payload(user_id: str | None = None, limit: int | None = None
         "session_evidence": evidence_cards,
         "session_replay": replay_cards,
         "operator_playback": playback_cards,
+        "project_completion": completion_cards,
         "session_briefs": briefs,
         "work_feed": work_feed,
         "approvals": pending_approvals(),
@@ -3919,6 +4139,22 @@ def format_operator_report(payload: dict[str, Any], source: str | None = None, l
             )
     else:
         lines.append("- No operator playback cards recorded yet.")
+
+    completion_cards = report_items(payload, "project_completion")[:limit]
+    lines.extend(["", "## Completion Checks"])
+    if completion_cards:
+        for index, card in enumerate(completion_cards, start=1):
+            lines.extend(
+                [
+                    f"{index}. {report_clean(card.get('project'), 120)} - {report_clean(card.get('verdict'), 120)} ({int(card.get('completion_percent') or 0)}%)",
+                    f"   Objective: {report_clean(card.get('objective') or 'not set', 420)}",
+                    f"   Criteria: {int(card.get('done_criteria') or 0)}/{int(card.get('total_criteria') or 0)} done",
+                    f"   Blocker: {report_clean(card.get('blocker'), 220)}",
+                    f"   Next: {report_clean(card.get('next_step'), 260)}",
+                ]
+            )
+    else:
+        lines.append("- No completion checks recorded yet.")
 
     briefs = report_items(payload, "session_briefs")[:limit]
     lines.extend(["", "## Session Briefs"])
@@ -5899,6 +6135,11 @@ def command_help() -> str:
 /evidence [project]
 /replay [project]
 /playback [project]
+/objective [project]
+/objective set <project> "<objective>"
+/objective add <project> "<done criterion>"
+/objective done <project> <criterion_number> "<evidence>"
+/done [project]
 /watch [project]
 /timeline [project]
 /plan [project] [task]
@@ -6503,6 +6744,11 @@ def natural_computer_command(text: str) -> str | None:
     if re.search(r"\b(operator playback|playback view|project playback|assistant playback|what do i need to know|what should i do about this project|brief me on this project|one view|single view)\b", lowered):
         projects = mentioned_projects(text)
         return f"/playback {projects[0]}" if projects else "/playback"
+    if re.search(r"\b(100% done|one hundred percent done|is .* done|done yet|completion check|definition of done|objective|intended objective|done criteria|completion proof)\b", lowered):
+        projects = mentioned_projects(text)
+        if re.search(r"\b(set|define|add|mark)\b", lowered) and re.search(r"\b(objective|criterion|criteria|definition of done)\b", lowered):
+            return None
+        return f"/done {projects[0]}" if projects else "/done"
     if re.search(r"\b(evidence card|session evidence|proof of work|what was verified|checks run|show evidence)\b", lowered):
         projects = mentioned_projects(text)
         return f"/evidence {projects[0]}" if projects else "/evidence"
@@ -6665,6 +6911,8 @@ Allowed commands:
 /mission [project]
 /replay [project]
 /playback [project]
+/objective [project]
+/done [project]
 /check
 /heartbeat on [minutes]
 /heartbeat off
@@ -6714,6 +6962,8 @@ Rules:
 - If the user asks for evidence cards, proof of work, checks run, or what was verified, map to /evidence.
 - If the user asks for a session replay, run story, or what happened during a Codex run, map to /replay.
 - If the user asks for operator playback, a one-view project briefing, what they need to know, or what to do next for a project, map to /playback.
+- If the user asks whether a project is done, 100% done, or fulfilled its objective, map to /done.
+- If the user asks to set an intended objective or add Definition-of-Done criteria, map to /objective set or /objective add.
 - If the user asks to watch progress, see the live view, or understand what Codex is doing, map to /watch.
 - If the user asks what keys/env setup is missing, map to /env.
 - If the user asks device, battery, disk, memory, or system status, map to /system.
@@ -6877,6 +7127,10 @@ def handle_text(
         return [command_replay(args, user_id=user_id)]
     if command == "/playback":
         return [command_playback(args, user_id=user_id)]
+    if command == "/objective":
+        return [command_objective(args, user_id=user_id)]
+    if command == "/done":
+        return [command_done(args, user_id=user_id)]
     if command in {"/watch", "/timeline"}:
         project_id, _rest = project_and_rest(args, user_id=user_id)
         return [command_watch(project_id, user_id=user_id)]
