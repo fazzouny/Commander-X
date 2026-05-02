@@ -1,6 +1,7 @@
 {
   "codex": {
     "sandbox": "workspace-write",
+    "approval_policy": "never",
     "extra_args": []
   },
   "projects": {

@@ -727,6 +727,45 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn("C:\\AI-Company", rendered)
         self.assertNotIn("App.tsx", rendered)
 
+    def test_log_model_output_ignores_prompt_expected_checks(self) -> None:
+        raw = """
+        Commander work plan:
+        Expected checks:
+        - npm run test
+        - npm run build
+        2026-05-02T08:09:01Z ERROR AuthRequired oauth-protected-resource
+        codex
+        I will inspect the project first.
+        """
+
+        output = commander.codex_output_text(raw)
+        checks = commander.verification_evidence_from_text(output)
+        signals = commander.progress_signals_from_text(output)
+        rendered = "\n".join(f"{item['title']}: {item['detail']}" for item in signals)
+
+        self.assertEqual(checks, [])
+        self.assertIn("Inspecting project", rendered)
+        self.assertNotIn("Connector needs authentication", rendered)
+        self.assertNotIn("Running checks", rendered)
+
+    def test_verification_evidence_ignores_planned_check_mentions(self) -> None:
+        raw = "I will wire npm run test and npm run build into package scripts."
+
+        self.assertEqual(commander.verification_evidence_from_text(raw), [])
+        self.assertEqual(commander.progress_signals_from_text(raw), [])
+
+        actual = "exec\npowershell -Command 'npm run test' in C:\\Project\nsucceeded in 1s"
+        self.assertIn("JavaScript test suite: run", commander.verification_evidence_from_text(actual))
+        self.assertIn("Running checks", str(commander.progress_signals_from_text(actual)))
+
+    def test_verification_command_args_uses_windows_npm_cmd(self) -> None:
+        args = commander.verification_command_args("npm run test")
+        if commander.os.name == "nt":
+            self.assertTrue(args[0].lower().endswith("npm.cmd"))
+        else:
+            self.assertEqual(args[0], "npm")
+        self.assertEqual(args[-2:], ["run", "test"])
+
     def test_refresh_session_progress_updates_timeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "session.log"
