@@ -112,6 +112,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("show me the session replay"), "/replay")
         self.assertEqual(commander.natural_computer_command("what do I need to know about this project"), "/playback")
         self.assertEqual(commander.natural_computer_command("give me the owner review pack"), "/review")
+        self.assertEqual(commander.natural_computer_command("save the owner review pack"), "/review save")
         self.assertEqual(commander.natural_computer_command("is this project 100% done?"), "/done")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
         self.assertEqual(commander.natural_computer_command("give me a plain English Codex brief"), "/briefs")
@@ -897,7 +898,7 @@ class BrowserAndClickUpTests(unittest.TestCase):
                 "verdict": "reviewable, not final",
                 "blocker": "none reported",
                 "changed_count": 4,
-                "checks": ["Python test suite: passed", "Criterion 12: local e2e passed"],
+                "checks": ["Python test suite: passed", "Criterion 12: C:\\AI-Company\\Example\\src\\app.tsx passed"],
                 "pending_approvals": [],
             }
             commander.session_evidence_card = lambda project_id: {"checks": ["Fallback proof"]}  # type: ignore[assignment]
@@ -915,6 +916,47 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("/evidence example", rendered)
         self.assertIn("/commit example", rendered)
         self.assertNotIn("C:\\", rendered)
+        self.assertNotIn("app.tsx", rendered)
+
+    def test_owner_review_pack_can_be_saved_without_paths_or_secrets(self) -> None:
+        original_project_and_rest = commander.project_and_rest
+        original_completion = commander.project_completion_card
+        original_evidence = commander.session_evidence_card
+        original_label = commander.project_label
+        original_report_dir = commander.report_dir
+        try:
+            commander.project_and_rest = lambda args, user_id, allow_active=None: ("example", [])  # type: ignore[assignment]
+            commander.project_label = lambda project_id, project=None, include_id=True: "Example Product"  # type: ignore[assignment]
+            commander.project_completion_card = lambda project_id, user_id=None: {  # type: ignore[assignment]
+                "total_criteria": 2,
+                "done_criteria": 2,
+                "completion_percent": 99,
+                "verdict": "reviewable, not final",
+                "blocker": "none reported",
+                "changed_count": 1,
+                "checks": ["Local checks passed for C:\\AI-Company\\Example\\src\\app.py", "api_key=secret123"],
+                "pending_approvals": [],
+            }
+            commander.session_evidence_card = lambda project_id: {"checks": []}  # type: ignore[assignment]
+            with tempfile.TemporaryDirectory() as tmp:
+                commander.report_dir = lambda: Path(tmp)  # type: ignore[assignment]
+                rendered = commander.command_review(["example", "save"], user_id="1")
+                files = list(Path(tmp).glob("example-owner-review-*.md"))
+                self.assertEqual(len(files), 1)
+                saved = files[0].read_text(encoding="utf-8")
+        finally:
+            commander.project_and_rest = original_project_and_rest  # type: ignore[assignment]
+            commander.project_completion_card = original_completion  # type: ignore[assignment]
+            commander.session_evidence_card = original_evidence  # type: ignore[assignment]
+            commander.project_label = original_label  # type: ignore[assignment]
+            commander.report_dir = original_report_dir  # type: ignore[assignment]
+
+        self.assertIn("Saved locally in Commander reports as:", rendered)
+        self.assertIn("Owner review pack: Example Product", saved)
+        self.assertNotIn("C:\\", saved)
+        self.assertNotIn("app.py", saved)
+        self.assertNotIn("secret123", saved)
+        self.assertIn("[REDACTED]", saved)
 
     def test_log_progress_signals_detect_blockers_without_paths(self) -> None:
         raw = """

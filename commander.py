@@ -1803,19 +1803,30 @@ def command_done(args: list[str], user_id: str) -> str:
     return project_completion(project_id, user_id=user_id)
 
 
+def save_owner_review_pack(project_id: str, content: str) -> str:
+    directory = report_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"{slugify(project_id, limit=48)}-owner-review-{timestamp}.md"
+    (directory / filename).write_text(redact(content).strip() + "\n", encoding="utf-8")
+    return filename
+
+
 def command_review(args: list[str], user_id: str) -> str:
-    project_id, _rest = project_and_rest(args, user_id=user_id)
+    save_requested = any(arg.lower() in {"save", "saved", "export", "report"} for arg in args)
+    project_args = [arg for arg in args if arg.lower() not in {"save", "saved", "export", "report"}]
+    project_id, _rest = project_and_rest(project_args, user_id=user_id)
     if not project_id:
-        return "Usage: /review <project> or set /focus <project> first."
+        return "Usage: /review <project> [save] or set /focus <project> first."
     completion = project_completion_card(project_id, user_id=user_id)
     evidence = session_evidence_card(project_id)
-    project_name = project_label(project_id, include_id=False)
+    project_name = safe_brief_text(project_label(project_id, include_id=False))
     criteria_total = int(completion.get("total_criteria") or 0)
     criteria_done = int(completion.get("done_criteria") or 0)
     changed_count = int(completion.get("changed_count") or 0)
     checks = completion.get("checks") if isinstance(completion.get("checks"), list) else []
-    blocker = str(completion.get("blocker") or "none reported")
-    verdict = str(completion.get("verdict") or "unknown")
+    blocker = safe_brief_text(completion.get("blocker") or "none reported")
+    verdict = safe_brief_text(completion.get("verdict") or "unknown")
 
     if criteria_total and criteria_done == criteria_total and not re.search(r"\b(blocked|running)\b", verdict, flags=re.IGNORECASE):
         owner_status = "The intended local build objective is complete and ready for owner review."
@@ -1831,7 +1842,8 @@ def command_review(args: list[str], user_id: str) -> str:
     else:
         final_gate = "It has no reported blocker; final sign-off is a review decision."
 
-    proof = checks[:4] or (evidence.get("checks") if isinstance(evidence.get("checks"), list) else [])[:4]
+    proof_raw = checks[:4] or (evidence.get("checks") if isinstance(evidence.get("checks"), list) else [])[:4]
+    proof = [safe_brief_text(item) for item in proof_raw if str(item or "").strip()]
     lines = [
         f"Owner review pack: {project_name}",
         f"- Status: {owner_status}",
@@ -1855,7 +1867,11 @@ def command_review(args: list[str], user_id: str) -> str:
             "No deploy, push, production credentials, or external messages are included in this review pack.",
         ]
     )
-    return compact("\n".join(lines), limit=3000)
+    content = compact("\n".join(lines), limit=3000)
+    if save_requested:
+        filename = save_owner_review_pack(project_id, content)
+        content += f"\n\nSaved locally in Commander reports as: {filename}"
+    return content
 
 
 def load_system_prompt() -> str:
@@ -6813,7 +6829,7 @@ def command_help() -> str:
 /evidence [project]
 /replay [project]
 /playback [project]
-/review [project]
+/review [project] [save]
 /objective [project]
 /objective set <project> "<objective>"
 /objective add <project> "<done criterion>"
@@ -7476,7 +7492,8 @@ def natural_computer_command(text: str) -> str | None:
         return f"/playback {projects[0]}" if projects else "/playback"
     if re.search(r"\b(owner review|review pack|handoff pack|sign[- ]?off|ready for review|review this project|what should i review)\b", lowered):
         projects = mentioned_projects(text)
-        return f"/review {projects[0]}" if projects else "/review"
+        save_suffix = " save" if re.search(r"\b(save|export|report|download|write)\b", lowered) else ""
+        return f"/review {projects[0]}{save_suffix}" if projects else f"/review{save_suffix}"
     if re.search(r"\b(100% done|one hundred percent done|is .* done|done yet|completion check|definition of done|objective|intended objective|done criteria|completion proof)\b", lowered):
         projects = mentioned_projects(text)
         if re.search(r"\b(set|define|add|mark)\b", lowered) and re.search(r"\b(objective|criterion|criteria|definition of done)\b", lowered):
