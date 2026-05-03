@@ -4647,6 +4647,7 @@ def latest_timeline_summary(session: dict[str, Any]) -> tuple[str, str]:
 def feed_item_from_session(project_id: str, session: dict[str, Any], change: dict[str, Any] | None = None) -> dict[str, Any]:
     state = str(session.get("state") or "unknown")
     phase = str(session.get("current_phase") or state)
+    project_name = project_label(project_id, include_id=False)
     title, detail = latest_timeline_summary(session)
     pending = session.get("pending_actions") or {}
     age = session_last_activity_minutes(session)
@@ -4654,19 +4655,19 @@ def feed_item_from_session(project_id: str, session: dict[str, Any], change: dic
     risk = str(plan.get("risk") or "unknown")
     if pending:
         blocker = f"{len(pending)} approval(s) waiting"
-        next_step = f"Review /approvals or /watch {project_id}."
+        next_step = f"Review approvals or ask to watch {project_name}."
     elif state == "running":
         blocker = "none reported"
-        next_step = f"Watch progress with /watch {project_id}."
+        next_step = f"Watch progress for {project_name}."
     elif state in {"failed", "finished_unknown", "stop_failed"}:
         blocker = "session needs review"
-        next_step = f"Open /watch {project_id} before continuing."
+        next_step = f"Review {project_name} before continuing."
     elif state in {"stopped", "idle"}:
         blocker = "idle"
-        next_step = f"Start new work with /start {project_id} \"task\"."
+        next_step = f"Start new work for {project_name}."
     else:
         blocker = "review current state"
-        next_step = f"Use /watch {project_id} for detail."
+        next_step = f"Review {project_name} for detail."
     return {
         "project": project_id,
         "kind": "session",
