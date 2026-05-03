@@ -111,6 +111,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("show evidence cards"), "/evidence")
         self.assertEqual(commander.natural_computer_command("show me the session replay"), "/replay")
         self.assertEqual(commander.natural_computer_command("what do I need to know about this project"), "/playback")
+        self.assertEqual(commander.natural_computer_command("give me the owner review pack"), "/review")
         self.assertEqual(commander.natural_computer_command("is this project 100% done?"), "/done")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
         self.assertEqual(commander.natural_computer_command("give me a plain English Codex brief"), "/briefs")
@@ -880,6 +881,40 @@ class BrowserAndClickUpTests(unittest.TestCase):
 
         self.assertEqual(card["blocker"], "none reported")
         self.assertTrue(card["checks"])
+
+    def test_owner_review_pack_is_nontechnical_and_actionable(self) -> None:
+        original_project_and_rest = commander.project_and_rest
+        original_completion = commander.project_completion_card
+        original_evidence = commander.session_evidence_card
+        original_label = commander.project_label
+        try:
+            commander.project_and_rest = lambda args, user_id, allow_active=None: ("example", [])  # type: ignore[assignment]
+            commander.project_label = lambda project_id, project=None, include_id=True: "Example Product"  # type: ignore[assignment]
+            commander.project_completion_card = lambda project_id, user_id=None: {  # type: ignore[assignment]
+                "total_criteria": 12,
+                "done_criteria": 12,
+                "completion_percent": 99,
+                "verdict": "reviewable, not final",
+                "blocker": "none reported",
+                "changed_count": 4,
+                "checks": ["Python test suite: passed", "Criterion 12: local e2e passed"],
+                "pending_approvals": [],
+            }
+            commander.session_evidence_card = lambda project_id: {"checks": ["Fallback proof"]}  # type: ignore[assignment]
+
+            rendered = commander.command_review(["example"], user_id="1")
+        finally:
+            commander.project_and_rest = original_project_and_rest  # type: ignore[assignment]
+            commander.project_completion_card = original_completion  # type: ignore[assignment]
+            commander.session_evidence_card = original_evidence  # type: ignore[assignment]
+            commander.project_label = original_label  # type: ignore[assignment]
+
+        self.assertIn("Owner review pack: Example Product", rendered)
+        self.assertIn("12/12 complete", rendered)
+        self.assertIn("Python test suite: passed", rendered)
+        self.assertIn("/evidence example", rendered)
+        self.assertIn("/commit example", rendered)
+        self.assertNotIn("C:\\", rendered)
 
     def test_log_progress_signals_detect_blockers_without_paths(self) -> None:
         raw = """

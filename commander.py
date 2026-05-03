@@ -118,6 +118,7 @@ NL_ALLOWED_COMMANDS = {
     "/evidence",
     "/replay",
     "/playback",
+    "/review",
     "/objective",
     "/done",
     "/verify",
@@ -181,6 +182,7 @@ TELEGRAM_COMMANDS = [
     ("evidence", "Show clean session evidence"),
     ("replay", "Show a plain-English session replay"),
     ("playback", "Show the operator playback view"),
+    ("review", "Show owner review pack"),
     ("objective", "Set or show project objective"),
     ("done", "Check project completion proof"),
     ("verify", "Run project verification checks"),
@@ -1799,6 +1801,61 @@ def command_done(args: list[str], user_id: str) -> str:
     if not project_id:
         return "Usage: /done <project> or set /focus <project> first."
     return project_completion(project_id, user_id=user_id)
+
+
+def command_review(args: list[str], user_id: str) -> str:
+    project_id, _rest = project_and_rest(args, user_id=user_id)
+    if not project_id:
+        return "Usage: /review <project> or set /focus <project> first."
+    completion = project_completion_card(project_id, user_id=user_id)
+    evidence = session_evidence_card(project_id)
+    project_name = project_label(project_id, include_id=False)
+    criteria_total = int(completion.get("total_criteria") or 0)
+    criteria_done = int(completion.get("done_criteria") or 0)
+    changed_count = int(completion.get("changed_count") or 0)
+    checks = completion.get("checks") if isinstance(completion.get("checks"), list) else []
+    blocker = str(completion.get("blocker") or "none reported")
+    verdict = str(completion.get("verdict") or "unknown")
+
+    if criteria_total and criteria_done == criteria_total and not re.search(r"\b(blocked|running)\b", verdict, flags=re.IGNORECASE):
+        owner_status = "The intended local build objective is complete and ready for owner review."
+    else:
+        owner_status = "The project still needs work before owner sign-off."
+
+    if changed_count:
+        final_gate = "It is not called final yet because local changes still need human review and a commit decision."
+    elif completion.get("pending_approvals"):
+        final_gate = "It is waiting for an approval decision."
+    elif blocker.lower() not in {"none reported", "none", "-"}:
+        final_gate = f"It still has a blocker: {blocker}."
+    else:
+        final_gate = "It has no reported blocker; final sign-off is a review decision."
+
+    proof = checks[:4] or (evidence.get("checks") if isinstance(evidence.get("checks"), list) else [])[:4]
+    lines = [
+        f"Owner review pack: {project_name}",
+        f"- Status: {owner_status}",
+        f"- Definition of Done: {criteria_done}/{criteria_total or '-'} complete",
+        f"- Completion view: {completion.get('completion_percent')}% ({verdict})",
+        f"- Blocker: {blocker}",
+        f"- Review gate: {final_gate}",
+    ]
+    if proof:
+        lines.append("")
+        lines.append("Proof you can trust:")
+        lines.extend(f"- {item}" for item in proof[:4])
+    lines.extend(
+        [
+            "",
+            "Next safe actions:",
+            f"- Read proof: /evidence {project_id}",
+            f"- See code-level changes only if needed: /diff {project_id}",
+            f"- Prepare a commit after review: /commit {project_id} \"reviewed local milestone\"",
+            "",
+            "No deploy, push, production credentials, or external messages are included in this review pack.",
+        ]
+    )
+    return compact("\n".join(lines), limit=3000)
 
 
 def load_system_prompt() -> str:
@@ -6756,6 +6813,7 @@ def command_help() -> str:
 /evidence [project]
 /replay [project]
 /playback [project]
+/review [project]
 /objective [project]
 /objective set <project> "<objective>"
 /objective add <project> "<done criterion>"
@@ -7416,6 +7474,9 @@ def natural_computer_command(text: str) -> str | None:
     if re.search(r"\b(operator playback|playback view|project playback|assistant playback|what do i need to know|what should i do about this project|brief me on this project|one view|single view)\b", lowered):
         projects = mentioned_projects(text)
         return f"/playback {projects[0]}" if projects else "/playback"
+    if re.search(r"\b(owner review|review pack|handoff pack|sign[- ]?off|ready for review|review this project|what should i review)\b", lowered):
+        projects = mentioned_projects(text)
+        return f"/review {projects[0]}" if projects else "/review"
     if re.search(r"\b(100% done|one hundred percent done|is .* done|done yet|completion check|definition of done|objective|intended objective|done criteria|completion proof)\b", lowered):
         projects = mentioned_projects(text)
         if re.search(r"\b(set|define|add|mark)\b", lowered) and re.search(r"\b(objective|criterion|criteria|definition of done)\b", lowered):
@@ -7809,6 +7870,8 @@ def handle_text(
         return [command_replay(args, user_id=user_id)]
     if command == "/playback":
         return [command_playback(args, user_id=user_id)]
+    if command == "/review":
+        return [command_review(args, user_id=user_id)]
     if command == "/objective":
         return [command_objective(args, user_id=user_id)]
     if command == "/done":
