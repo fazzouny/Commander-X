@@ -1174,6 +1174,12 @@ def approval_events_for_project(project_id: str, limit: int = 6) -> list[dict[st
     return events
 
 
+def final_summary_reports_no_blocker(text: str) -> bool:
+    if not text:
+        return False
+    return bool(re.search(r"\b(?:current\s+blocker|blocker)\s*:\s*(?:none|no\s+blockers?|nothing)\b", text, flags=re.IGNORECASE))
+
+
 def session_evidence_card(project_id: str) -> dict[str, Any]:
     refresh_session_states()
     session = sessions_data().get("sessions", {}).get(project_id) or {}
@@ -1181,7 +1187,9 @@ def session_evidence_card(project_id: str) -> dict[str, Any]:
     path = project_path(project) if project else None
     plan = session.get("work_plan") if isinstance(session.get("work_plan"), dict) else {}
     log_file = Path(str(session.get("log_file", ""))) if session else Path()
+    last_message_file = Path(str(session.get("last_message_file", ""))) if session else Path()
     log_text = read_recent_log_text(log_file, max_bytes=100_000) if log_file.exists() else ""
+    last_message_text = read_recent_log_text(last_message_file, max_bytes=30_000) if last_message_file.exists() else ""
     signals = session.get("progress_signals") if isinstance(session.get("progress_signals"), list) else []
     timeline = timeline_lines(session, limit=6) if session else []
     changed_count = 0
@@ -1213,7 +1221,13 @@ def session_evidence_card(project_id: str) -> dict[str, Any]:
                 if candidate.lower() not in {"review current state", "review before starting more work", "waiting for instruction", "idle"}:
                     blocker = candidate
                 break
-    checks = verification_results_as_checks(session.get("verification_results")) + verification_evidence_from_text(codex_output_text(log_text))
+    checks = (
+        verification_results_as_checks(session.get("verification_results"))
+        + verification_evidence_from_text(codex_output_text(log_text))
+        + verification_evidence_from_text(last_message_text)
+    )
+    if str(session.get("state") or "").lower() == "completed" and final_summary_reports_no_blocker(last_message_text) and checks:
+        blocker = "none reported"
     expected = plan.get("expected_checks") if isinstance(plan.get("expected_checks"), list) else []
     return {
         "project": audit_clean(project_id, limit=120),

@@ -820,6 +820,67 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("Criterion 1: Local verification passed", card["checks"])
         self.assertNotIn("No verification proof recorded yet", rendered)
 
+    def test_completed_session_final_summary_clears_stale_blocker(self) -> None:
+        original_sessions = commander.sessions_data
+        original_refresh = commander.refresh_session_states
+        original_project = commander.get_project
+        original_project_path = commander.project_path
+        original_is_git = commander.is_git_repo
+        original_changed = commander.changed_files
+        original_branch = commander.current_branch
+        original_pid = commander.pid_running
+        original_audit = commander.audit_data
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "session.log"
+            last_message = Path(tmp) / "last-message.txt"
+            log.write_text("python -m pytest\npassed\n", encoding="utf-8")
+            last_message.write_text(
+                "3. Verified\npython -m pytest passed\n4. Risks / Notes\nCurrent blocker: none for local evidence.\n",
+                encoding="utf-8",
+            )
+            try:
+                commander.refresh_session_states = lambda: None  # type: ignore[assignment]
+                commander.sessions_data = lambda: {  # type: ignore[assignment]
+                    "sessions": {
+                        "example": {
+                            "state": "completed",
+                            "pid": 0,
+                            "task": "Verify local app",
+                            "task_id": "task1",
+                            "log_file": str(log),
+                            "last_message_file": str(last_message),
+                            "branch": "main",
+                            "work_plan": {"risk": "medium"},
+                            "progress_signals": [
+                                {"title": "Blocker reported", "detail": "Codex reported a blocker that needs review.", "status": "warn"}
+                            ],
+                            "timeline": [{"title": "Codex run finished", "detail": "Review summary.", "status": "done"}],
+                        }
+                    }
+                }
+                commander.get_project = lambda project_id: {"allowed": True, "path": tmp}  # type: ignore[assignment]
+                commander.project_path = lambda project: Path(tmp)  # type: ignore[assignment]
+                commander.is_git_repo = lambda path: True  # type: ignore[assignment]
+                commander.changed_files = lambda path: []  # type: ignore[assignment]
+                commander.current_branch = lambda path: "main"  # type: ignore[assignment]
+                commander.pid_running = lambda pid: False  # type: ignore[assignment]
+                commander.audit_data = lambda: {"events": []}  # type: ignore[assignment]
+
+                card = commander.session_evidence_card("example")
+            finally:
+                commander.sessions_data = original_sessions  # type: ignore[assignment]
+                commander.refresh_session_states = original_refresh  # type: ignore[assignment]
+                commander.get_project = original_project  # type: ignore[assignment]
+                commander.project_path = original_project_path  # type: ignore[assignment]
+                commander.is_git_repo = original_is_git  # type: ignore[assignment]
+                commander.changed_files = original_changed  # type: ignore[assignment]
+                commander.current_branch = original_branch  # type: ignore[assignment]
+                commander.pid_running = original_pid  # type: ignore[assignment]
+                commander.audit_data = original_audit  # type: ignore[assignment]
+
+        self.assertEqual(card["blocker"], "none reported")
+        self.assertTrue(card["checks"])
+
     def test_log_progress_signals_detect_blockers_without_paths(self) -> None:
         raw = """
         exec "powershell" -Command 'git status' in C:\\AI-Company\\Example
