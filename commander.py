@@ -4138,7 +4138,15 @@ def service_log_line(path: Path, patterns: list[str] | None = None) -> str:
 
 
 def command_service() -> str:
-    process_lines = computer_process_lines(["commander.py --poll", "dashboard.py"])
+    process_warning = ""
+    try:
+        process_lines = computer_process_lines(["commander.py --poll", "dashboard.py"], timeout=8)
+    except subprocess.TimeoutExpired:
+        process_lines = []
+        process_warning = "Process scan timed out; Commander will keep serving logs and commands."
+    except Exception as exc:
+        process_lines = []
+        process_warning = f"Process scan unavailable: {sanitize_service_line(str(exc))}"
     poller = service_process_state(process_lines, "commander.py --poll")
     dashboard = service_process_state(process_lines, "dashboard.py")
     lines = [
@@ -4151,9 +4159,10 @@ def command_service() -> str:
         "- Poller errors: " + service_log_line(LOG_DIR / "commander-service.err.log", ["Traceback", "Error", "Exception", "failed", "ConnectionReset"]),
         "- Dashboard: " + service_log_line(LOG_DIR / "dashboard.out.log", ["listening", "GET /api/dashboard", "error"]),
         "- Dashboard errors: " + service_log_line(LOG_DIR / "dashboard.err.log", ["Traceback", "Error", "Exception", "failed"]),
-        "",
-        "No secrets or raw process command lines are shown here.",
     ]
+    if process_warning:
+        lines.append("- Process scan: " + process_warning)
+    lines.extend(["", "No secrets or raw process command lines are shown here."])
     return compact("\n".join(lines), limit=2600)
 
 

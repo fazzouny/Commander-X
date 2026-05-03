@@ -121,6 +121,27 @@ class StorageTests(unittest.TestCase):
             write_json_file(path, {"items": [{"id": "1"}]})
             self.assertEqual(read_json_file(path, {"items": []})["items"][0]["id"], "1")
 
+    def test_read_json_file_retries_transient_permission_error(self) -> None:
+        class FlakyPath:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def exists(self) -> bool:
+                return True
+
+            def read_text(self, encoding: str = "utf-8") -> str:
+                self.calls += 1
+                if self.calls == 1:
+                    raise PermissionError("locked")
+                return '{"ok": true}'
+
+            def __str__(self) -> str:
+                return "state.json"
+
+        path = FlakyPath()
+        self.assertEqual(read_json_file(path, {"ok": False}), {"ok": True})  # type: ignore[arg-type]
+        self.assertEqual(path.calls, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

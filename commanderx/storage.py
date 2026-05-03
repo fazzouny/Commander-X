@@ -11,10 +11,18 @@ from typing import Any
 def read_json_file(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     if not path.exists():
         return copy.deepcopy(default)
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Invalid JSON in {path}: {exc}") from exc
+    for attempt in range(6):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.15 * (attempt + 1))
+        except FileNotFoundError:
+            return copy.deepcopy(default)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Invalid JSON in {path}: {exc}") from exc
+    return copy.deepcopy(default)
 
 
 def write_json_file(path: Path, payload: dict[str, Any]) -> None:

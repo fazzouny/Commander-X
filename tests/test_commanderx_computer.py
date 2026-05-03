@@ -9,6 +9,7 @@ import commander
 from commanderx.browser import PageSummaryParser, format_inspection, BrowserInspection
 from commanderx.clickup_api import filter_tasks, format_tasks, settings_from_env
 from commanderx.cleanup import bytes_to_mb, format_cleanup_scan
+from commanderx import computer as computer_tools
 from commanderx.computer import app_catalog, normalize_url
 
 
@@ -22,6 +23,33 @@ class ComputerToolTests(unittest.TestCase):
         self.assertIn("notepad", apps)
         self.assertEqual(apps["chrome"], ["chrome.exe"])
         self.assertEqual(apps["solo"], ["solo.exe"])
+
+    def test_wmic_process_lines_parses_matching_rows(self) -> None:
+        original_run = computer_tools.run_command
+        try:
+            computer_tools.run_command = lambda args, timeout=8: subprocess.CompletedProcess(  # type: ignore[assignment]
+                args,
+                0,
+                "Node,CommandLine,Name,ProcessId\nHOST,\"python commander.py --poll\",python.exe,123\nHOST,\"node server.js\",node.exe,456\n",
+                "",
+            )
+
+            lines = computer_tools.wmic_process_lines([], ["commander.py --poll"])
+        finally:
+            computer_tools.run_command = original_run  # type: ignore[assignment]
+
+        self.assertEqual(lines, ["123 python.exe python commander.py --poll"])
+
+    def test_wmic_process_lines_falls_back_when_unavailable(self) -> None:
+        original_run = computer_tools.run_command
+        try:
+            computer_tools.run_command = lambda args, timeout=8: (_ for _ in ()).throw(FileNotFoundError())  # type: ignore[assignment]
+
+            lines = computer_tools.wmic_process_lines([], ["commander.py --poll"])
+        finally:
+            computer_tools.run_command = original_run  # type: ignore[assignment]
+
+        self.assertIsNone(lines)
 
     def test_image_media_from_photo_selects_largest_photo(self) -> None:
         message = {
@@ -1499,6 +1527,24 @@ class BrowserAndClickUpTests(unittest.TestCase):
             line = commander.service_log_line(log, ["Traceback"])
         self.assertIn("[local path]", line)
         self.assertNotIn("someone", line)
+
+    def test_command_service_tolerates_process_scan_timeout(self) -> None:
+        original_process_lines = commander.computer_process_lines
+        original_service_log_line = commander.service_log_line
+        try:
+            commander.computer_process_lines = (  # type: ignore[assignment]
+                lambda terms, timeout=8: (_ for _ in ()).throw(subprocess.TimeoutExpired(["powershell"], timeout))
+            )
+            commander.service_log_line = lambda path, patterns=None: "empty"  # type: ignore[assignment]
+
+            text = commander.command_service()
+        finally:
+            commander.computer_process_lines = original_process_lines  # type: ignore[assignment]
+            commander.service_log_line = original_service_log_line  # type: ignore[assignment]
+
+        self.assertIn("Commander X service status", text)
+        self.assertIn("Process scan timed out", text)
+        self.assertIn("No secrets", text)
 
     def test_inbox_items_include_pending_approvals(self) -> None:
         original_sessions = commander.sessions_data

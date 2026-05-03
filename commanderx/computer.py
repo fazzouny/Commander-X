@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ctypes
+import csv
 import datetime as dt
+import io
 import json
 import os
 import subprocess
@@ -112,6 +114,9 @@ def process_lines(names: list[str], timeout: int = 30) -> list[str]:
     if os.name == "nt":
         exact = [name for name in cleaned if name.lower().endswith(".exe")]
         terms = [name for name in cleaned if not name.lower().endswith(".exe")]
+        wmic_lines = wmic_process_lines(exact, terms, timeout=max(3, min(timeout, 8)))
+        if wmic_lines is not None:
+            return wmic_lines
         quoted_exact = ", ".join("'" + name.replace("'", "''") + "'" for name in exact)
         quoted_terms = ", ".join("'" + name.replace("'", "''") + "'" for name in terms)
         script = (
@@ -154,4 +159,37 @@ def process_lines(names: list[str], timeout: int = 30) -> list[str]:
     for line in result.stdout.splitlines():
         if any(name.lower() in line.lower() for name in cleaned):
             lines.append(line)
+    return lines
+
+
+def wmic_process_lines(exact: list[str], terms: list[str], timeout: int = 8) -> list[str] | None:
+    """Fast Windows process scan fallback; returns None when WMIC is unavailable."""
+    try:
+        result = run_command(
+            ["wmic", "process", "get", "ProcessId,Name,CommandLine", "/format:csv"],
+            timeout=timeout,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    output = (result.stdout or "").strip()
+    if not output:
+        return []
+    exact_lower = {item.lower() for item in exact}
+    terms_lower = [item.lower() for item in terms]
+    lines: list[str] = []
+    reader = csv.DictReader(io.StringIO(output))
+    for row in reader:
+        name = str(row.get("Name") or "").strip()
+        command = str(row.get("CommandLine") or "").replace("\r", " ").replace("\n", " ").strip()
+        pid = str(row.get("ProcessId") or "-").strip()
+        if not name:
+            continue
+        haystack = f"{name} {command}".lower()
+        if name.lower() not in exact_lower and not any(term in haystack for term in terms_lower):
+            continue
+        if len(command) > 180:
+            command = command[:177].rstrip() + "..."
+        lines.append(f"{pid} {name} {command}".strip())
     return lines
