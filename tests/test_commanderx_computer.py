@@ -130,6 +130,39 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("take a screenshot"), "/computer screenshot")
         self.assertEqual(commander.natural_computer_command("check codex"), "/computer codex")
 
+    def test_single_project_start_response_starts_resolved_project(self) -> None:
+        original_projects_config = commander.projects_config
+        original_get_project = commander.get_project
+        original_mentioned_projects = commander.mentioned_projects
+        original_start_codex = commander.start_codex
+        original_update_user_state = commander.update_user_state
+        try:
+            commander.projects_config = lambda: {
+                "projects": {"comx-omnichannel-test": {"allowed": True, "aliases": ["health assistant"]}}
+            }
+            commander.get_project = lambda project_id: {"allowed": True} if project_id == "comx-omnichannel-test" else None
+            commander.mentioned_projects = lambda _text: ["comx-omnichannel-test"]
+            commander.update_user_state = lambda *_args, **_kwargs: {}
+            calls = []
+
+            def fake_start(project_id, task, **_kwargs):
+                calls.append((project_id, task))
+                return "started"
+
+            commander.start_codex = fake_start
+
+            self.assertEqual(
+                commander.single_project_start_response("Continue building the health assistant.", "u1", "c1"),
+                ["started"],
+            )
+            self.assertEqual(calls, [("comx-omnichannel-test", "Continue building")])
+        finally:
+            commander.projects_config = original_projects_config
+            commander.get_project = original_get_project
+            commander.mentioned_projects = original_mentioned_projects
+            commander.start_codex = original_start_codex
+            commander.update_user_state = original_update_user_state
+
     def test_secret_files_are_blocked(self) -> None:
         self.assertTrue(commander.is_sensitive_relative_path(commander.Path(".env")))
         self.assertTrue(commander.is_sensitive_relative_path(commander.Path("config/private.key")))

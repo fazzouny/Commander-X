@@ -6866,6 +6866,7 @@ def task_without_project_names(text: str) -> str:
         pattern = rf"(?<![\w-]){re.escape(alias)}(?![\w-])"
         result = re.sub(pattern, "", result, flags=re.IGNORECASE)
     result = re.sub(r"\b(and|both|all|projects?)\b", " ", result, flags=re.IGNORECASE)
+    result = re.sub(r"\b(the|this|that)\s*[.,!?;:]*\s*$", " ", result, flags=re.IGNORECASE)
     result = re.sub(r"\s+", " ", result).strip(" ,.-")
     if len(result) < 12:
         result = text.strip().rstrip("?")
@@ -6892,6 +6893,31 @@ def multi_project_start_response(text: str, user_id: str, chat_id: int | str | N
         )
         responses.append(start_codex(project_id, task, user_id=user_id))
     return responses
+
+
+def single_project_start_response(text: str, user_id: str, chat_id: int | str | None, execute: bool = True) -> list[str] | None:
+    if not looks_like_start_request(text):
+        return None
+    projects = mentioned_projects(text)
+    if len(projects) > 1:
+        return None
+    project_id = projects[0] if projects else None
+    if not project_id and allows_active_project_fallback(user_id):
+        project_id = resolve_project_id(None, user_id=user_id)
+    if not project_id or not get_project(project_id):
+        return None
+    task = task_without_project_names(text)
+    if not execute:
+        return [f"Would start {project_id} with task: {task}"]
+    update_user_state(
+        user_id,
+        {
+            "active_project": project_id,
+            "active_project_set_at": utc_now(),
+            **({"last_chat_id": chat_id} if chat_id is not None else {}),
+        },
+    )
+    return [start_codex(project_id, task, user_id=user_id)]
 
 
 def focus_project_response(text: str, user_id: str, chat_id: int | str | None, execute: bool = True) -> list[str] | None:
@@ -7122,6 +7148,10 @@ def natural_language_response(
     multi = multi_project_start_response(text, user_id=user_id, chat_id=chat_id, execute=execute_commands)
     if multi:
         return multi
+
+    single = single_project_start_response(text, user_id=user_id, chat_id=chat_id, execute=execute_commands)
+    if single:
+        return single
 
     state = user_state(user_id)
     active = state.get("active_project")
