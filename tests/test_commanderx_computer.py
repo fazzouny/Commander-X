@@ -845,6 +845,47 @@ class BrowserAndClickUpTests(unittest.TestCase):
             self.assertEqual(args[0], "npm")
         self.assertEqual(args[-2:], ["run", "test"])
 
+    def test_health_companion_dod_does_not_use_legacy_node_mvp_evidence(self) -> None:
+        original_profiles_data = commander.profiles_data
+        original_save_profiles = commander.save_profiles
+        profile_data = {
+            "profiles": {
+                "health": {
+                    "objective": "Build Health Companion AI V1",
+                    "done_criteria": [
+                        {
+                            "text": "WhatsApp and Telegram intake paths support safe patient messages.",
+                            "status": "open",
+                            "evidence": "",
+                        }
+                    ],
+                }
+            }
+        }
+        saved: dict[str, object] = {}
+        try:
+            commander.profiles_data = lambda: profile_data  # type: ignore[assignment]
+            commander.save_profiles = lambda data: saved.update(data)  # type: ignore[assignment]
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "src" / "adapters").mkdir(parents=True)
+                (root / "src" / "model.js").write_text("module.exports = {}", encoding="utf-8")
+                (root / "src" / "adapters" / "telegram.js").write_text("", encoding="utf-8")
+                (root / "src" / "adapters" / "whatsapp.js").write_text("", encoding="utf-8")
+
+                changed = commander.auto_update_done_criteria_from_verification(
+                    "health",
+                    root,
+                    [{"command": "python -m pytest", "status": "passed"}],
+                )
+        finally:
+            commander.profiles_data = original_profiles_data  # type: ignore[assignment]
+            commander.save_profiles = original_save_profiles  # type: ignore[assignment]
+
+        self.assertEqual(changed, 0)
+        self.assertEqual(profile_data["profiles"]["health"]["done_criteria"][0]["status"], "open")
+        self.assertEqual(saved, {})
+
     def test_refresh_session_progress_updates_timeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "session.log"

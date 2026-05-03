@@ -6273,6 +6273,8 @@ def auto_update_done_criteria_from_verification(project_id: str, path: Path, res
     if not isinstance(profile, dict):
         return 0
     criteria = normalize_done_criteria(profile.get("done_criteria") or [])
+    objective_text = str(profile.get("objective") or "").lower()
+    uses_legacy_node_mvp = "health companion" not in objective_text and "diabetes companion" not in objective_text
     changed = 0
 
     def mark(index: int, evidence: str) -> None:
@@ -6285,13 +6287,13 @@ def auto_update_done_criteria_from_verification(project_id: str, path: Path, res
 
     for index, criterion in enumerate(criteria):
         text = str(criterion.get("text") or "").lower()
-        if any(word in text for word in ("message", "inbox", "data model", "conversation")) and (path / "src/model.js").exists():
+        if uses_legacy_node_mvp and any(word in text for word in ("message", "inbox", "data model", "conversation")) and (path / "src/model.js").exists():
             mark(index, "Shared conversation/message model exists.")
-        elif ("web app" in text or "dashboard" in text or "local web" in text) and (path / "src/server.js").exists() and (path / "public/index.html").exists() and any("smoke" in item for item in passed_commands):
+        elif uses_legacy_node_mvp and ("web app" in text or "dashboard" in text or "local web" in text) and (path / "src/server.js").exists() and (path / "public/index.html").exists() and any("smoke" in item for item in passed_commands):
             mark(index, "Local server and browser UI files exist; smoke verification passed.")
-        elif "telegram" in text and (path / "src/adapters/telegram.js").exists():
+        elif uses_legacy_node_mvp and "telegram" in text and (path / "src/adapters/telegram.js").exists():
             mark(index, "Telegram adapter scaffold exists in the local MVP.")
-        elif "whatsapp" in text and (path / "src/adapters/whatsapp.js").exists():
+        elif uses_legacy_node_mvp and "whatsapp" in text and (path / "src/adapters/whatsapp.js").exists():
             mark(index, "WhatsApp mock adapter boundary exists in the local MVP.")
         elif ("setup" in text or "docs" in text or ".env" in text) and (path / "README.md").exists() and (path / ".env.example").exists():
             mark(index, "README setup notes and .env.example exist without committing .env.")
