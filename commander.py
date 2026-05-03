@@ -119,6 +119,7 @@ NL_ALLOWED_COMMANDS = {
     "/replay",
     "/playback",
     "/review",
+    "/reviews",
     "/objective",
     "/done",
     "/verify",
@@ -183,6 +184,7 @@ TELEGRAM_COMMANDS = [
     ("replay", "Show a plain-English session replay"),
     ("playback", "Show the operator playback view"),
     ("review", "Show owner review pack"),
+    ("reviews", "List saved owner review packs"),
     ("objective", "Set or show project objective"),
     ("done", "Check project completion proof"),
     ("verify", "Run project verification checks"),
@@ -239,7 +241,7 @@ DEFAULT_BUTTON_ROWS = [
     [("Mission", "cmd:/mission"), ("Briefs", "cmd:/briefs"), ("Feed", "cmd:/feed")],
     [("Playback", "cmd:/playback"), ("Evidence", "cmd:/evidence"), ("Replay", "cmd:/replay")],
     [("Done?", "cmd:/done"), ("Objective", "cmd:/objective")],
-    [("Report", "cmd:/report")],
+    [("Report", "cmd:/report"), ("Reviews", "cmd:/reviews")],
     [("Morning", "cmd:/morning"), ("Next", "cmd:/next")],
     [("Inbox", "cmd:/inbox"), ("Approvals", "cmd:/approvals"), ("Audit", "cmd:/audit")],
     [("Save Report", "cmd:/report save")],
@@ -1810,6 +1812,81 @@ def save_owner_review_pack(project_id: str, content: str) -> str:
     filename = f"{slugify(project_id, limit=48)}-owner-review-{timestamp}.md"
     (directory / filename).write_text(redact(content).strip() + "\n", encoding="utf-8")
     return filename
+
+
+def human_report_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def owner_review_label_from_file(path: Path, slug: str) -> str:
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()[:8]:
+            if line.lower().startswith("owner review pack:"):
+                return safe_brief_text(line.split(":", 1)[1].strip())
+    except OSError:
+        pass
+    projects = projects_config().get("projects", {})
+    for project_id, project in projects.items():
+        label = project_label(project_id, project=project, include_id=False)
+        if slug in {slugify(project_id, limit=48), slugify(label, limit=48)}:
+            return safe_brief_text(label)
+    return safe_brief_text(slug.replace("-", " ").title())
+
+
+def saved_owner_review_packs(limit: int = 8) -> list[dict[str, Any]]:
+    directory = report_dir()
+    if not directory.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    try:
+        paths = list(directory.glob("*-owner-review-*.md"))
+    except OSError:
+        return []
+    for path in paths:
+        if not path.is_file():
+            continue
+        match = re.match(r"(?P<slug>.+)-owner-review-(?P<stamp>\d{8}-\d{6})\.md$", path.name)
+        if not match:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        saved_at = dt.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+        records.append(
+            {
+                "project": owner_review_label_from_file(path, match.group("slug")),
+                "saved_at": saved_at,
+                "size": human_report_size(stat.st_size),
+                "filename": redact(path.name),
+            }
+        )
+    records.sort(key=lambda item: str(item["saved_at"]), reverse=True)
+    return records[:limit]
+
+
+def command_reviews(args: list[str]) -> str:
+    show_files = any(arg.lower() in {"details", "detail", "file", "files", "full"} for arg in args)
+    records = saved_owner_review_packs(limit=10)
+    if not records:
+        return "No saved owner review packs yet.\nCreate one with /review <project> save."
+    lines = ["Saved owner review packs"]
+    for index, record in enumerate(records, start=1):
+        lines.append(f"{index}. {record['project']} - saved {record['saved_at']} ({record['size']})")
+        if show_files:
+            lines.append(f"   File: {record['filename']}")
+    lines.extend(
+        [
+            "",
+            "Create a fresh pack with: /review <project> save",
+            "Default view hides local paths and technical filenames.",
+        ]
+    )
+    return compact("\n".join(lines), limit=2800)
 
 
 def command_review(args: list[str], user_id: str) -> str:
@@ -6873,6 +6950,7 @@ def command_help() -> str:
 /cancel <project> [approval_id]
 /audit
 /report [save]
+/reviews [details]
 /heartbeat on [minutes]
 /heartbeat off
 /heartbeat status
@@ -6988,6 +7066,7 @@ def normalize_voice_command(transcript: str) -> str:
         "forget",
         "profile",
         "queue",
+        "reviews",
     }
     if tokens and not tokens[0].startswith("/") and tokens[0].lower() in known:
         return "/" + text
@@ -7490,6 +7569,8 @@ def natural_computer_command(text: str) -> str | None:
     if re.search(r"\b(operator playback|playback view|project playback|assistant playback|what do i need to know|what should i do about this project|brief me on this project|one view|single view)\b", lowered):
         projects = mentioned_projects(text)
         return f"/playback {projects[0]}" if projects else "/playback"
+    if re.search(r"\b(saved owner reviews?|saved review packs?|previous review packs?|review history|saved project reports?)\b", lowered):
+        return "/reviews"
     if re.search(r"\b(owner review|review pack|handoff pack|sign[- ]?off|ready for review|review this project|what should i review)\b", lowered):
         projects = mentioned_projects(text)
         save_suffix = " save" if re.search(r"\b(save|export|report|download|write)\b", lowered) else ""
@@ -7666,6 +7747,7 @@ Allowed commands:
 /cancel <project> [approval_id]
 /audit
 /report [save]
+/reviews [details]
 /mission [project]
 /replay [project]
 /playback [project]
@@ -7713,6 +7795,7 @@ Rules:
 - If the user asks for approvals, pending approvals, approve list, or decisions to approve/cancel, map to /approvals.
 - If the user asks for approval history, audit trail, what was approved, or what was cancelled, map to /audit.
 - If the user asks for an operator report, Commander report, exportable status report, report snapshot, or briefing pack, map to /report.
+- If the user asks for saved owner review packs, previous review packs, review history, or saved project reports, map to /reviews.
 - If the user asks for changed projects, dirty worktrees, local changes, or changes across projects, map to /changes.
 - If the user asks for a work feed, live feed, or all project/Codex progress, map to /feed.
 - If the user asks for an executive brief, plain-English session update, non-technical update, or what Codex is doing right now, map to /briefs.
@@ -7873,6 +7956,8 @@ def handle_text(
         return [command_audit()]
     if command == "/report":
         return [command_report(args, user_id=user_id)]
+    if command == "/reviews":
+        return [command_reviews(args)]
     if command == "/changes":
         return [command_changes(args, user_id=user_id)]
     if command == "/feed":

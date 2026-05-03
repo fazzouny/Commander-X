@@ -113,6 +113,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("what do I need to know about this project"), "/playback")
         self.assertEqual(commander.natural_computer_command("give me the owner review pack"), "/review")
         self.assertEqual(commander.natural_computer_command("save the owner review pack"), "/review save")
+        self.assertEqual(commander.natural_computer_command("show saved review packs"), "/reviews")
         self.assertEqual(commander.natural_computer_command("is this project 100% done?"), "/done")
         self.assertEqual(commander.natural_computer_command("what changed across projects"), "/changes")
         self.assertEqual(commander.natural_computer_command("give me a plain English Codex brief"), "/briefs")
@@ -957,6 +958,30 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn("app.py", saved)
         self.assertNotIn("secret123", saved)
         self.assertIn("[REDACTED]", saved)
+
+    def test_saved_owner_reviews_list_hides_filenames_by_default(self) -> None:
+        original_report_dir = commander.report_dir
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                report = root / "example-owner-review-20260503-230945.md"
+                report.write_text(
+                    "Owner review pack: Example Product\n"
+                    "- Proof: Local checks passed for C:\\AI-Company\\Example\\src\\app.py\n",
+                    encoding="utf-8",
+                )
+                commander.report_dir = lambda: root  # type: ignore[assignment]
+
+                rendered = commander.command_reviews([])
+                detailed = commander.command_reviews(["details"])
+        finally:
+            commander.report_dir = original_report_dir  # type: ignore[assignment]
+
+        self.assertIn("Saved owner review packs", rendered)
+        self.assertIn("Example Product", rendered)
+        self.assertNotIn("example-owner-review", rendered)
+        self.assertNotIn("C:\\", rendered)
+        self.assertIn("example-owner-review", detailed)
 
     def test_log_progress_signals_detect_blockers_without_paths(self) -> None:
         raw = """
