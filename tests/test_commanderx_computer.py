@@ -886,6 +886,55 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertEqual(profile_data["profiles"]["health"]["done_criteria"][0]["status"], "open")
         self.assertEqual(saved, {})
 
+    def test_autopilot_task_keeps_external_boundaries(self) -> None:
+        task = commander.autopilot_task_for_criterion(
+            "health",
+            {"id": "5", "text": "Patient web experience supports Arabic-first onboarding."},
+        )
+
+        self.assertIn("Definition-of-Done criterion 5", task)
+        self.assertIn("permission to edit", task)
+        self.assertIn("Do not deploy", task)
+        self.assertIn("claim V1 is done", task)
+
+    def test_autopilot_tick_starts_open_criterion(self) -> None:
+        original_profiles_data = commander.profiles_data
+        original_save_profiles = commander.save_profiles
+        original_can_start = commander.autopilot_can_start
+        original_start = commander.start_codex
+        original_label = commander.project_label
+        profile_data = {"profiles": {"health": {"autopilot": {"enabled": True, "interval_minutes": 1}}}}
+        saved: dict[str, object] = {}
+        calls: list[tuple[str, str, str]] = []
+        try:
+            commander.profiles_data = lambda: profile_data  # type: ignore[assignment]
+            commander.save_profiles = lambda data: saved.update(data)  # type: ignore[assignment]
+            commander.autopilot_can_start = lambda project_id: (  # type: ignore[assignment]
+                True,
+                "ready",
+                {"id": "5", "text": "Patient web experience supports Arabic-first onboarding."},
+            )
+            commander.start_codex = lambda project_id, task, user_id="system", task_id=None: calls.append(  # type: ignore[assignment]
+                (project_id, task, user_id)
+            ) or "Started health."
+            commander.project_label = lambda project_id, project=None, include_id=True: "Health Companion AI"  # type: ignore[assignment]
+
+            messages = commander.autopilot_tick_once(user_id="autopilot")
+        finally:
+            commander.profiles_data = original_profiles_data  # type: ignore[assignment]
+            commander.save_profiles = original_save_profiles  # type: ignore[assignment]
+            commander.autopilot_can_start = original_can_start  # type: ignore[assignment]
+            commander.start_codex = original_start  # type: ignore[assignment]
+            commander.project_label = original_label  # type: ignore[assignment]
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], "health")
+        self.assertEqual(calls[0][2], "autopilot")
+        self.assertIn("criterion 5", calls[0][1])
+        self.assertIn("health: started criterion 5", messages)
+        self.assertEqual(profile_data["profiles"]["health"]["autopilot"]["last_criterion_id"], "5")
+        self.assertTrue(saved)
+
     def test_refresh_session_progress_updates_timeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "session.log"

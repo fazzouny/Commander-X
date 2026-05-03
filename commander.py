@@ -164,6 +164,7 @@ NL_ALLOWED_COMMANDS = {
     "/forget",
     "/profile",
     "/queue",
+    "/autopilot",
 }
 TELEGRAM_COMMANDS = [
     ("help", "Show Commander commands"),
@@ -225,6 +226,7 @@ TELEGRAM_COMMANDS = [
     ("forget", "Delete a Commander memory"),
     ("profile", "Show project profile"),
     ("queue", "Show or manage task queue"),
+    ("autopilot", "Manage autonomous project build loop"),
     ("check", "Check Commander config"),
     ("whoami", "Show your Telegram user ID"),
 ]
@@ -990,6 +992,7 @@ def project_profile(project_id: str) -> dict[str, Any]:
         "context_files": [str(item) for item in context_files],
         "notes": stored.get("notes", []),
         "risk_rules": stored.get("risk_rules", []),
+        "autopilot": stored.get("autopilot") if isinstance(stored.get("autopilot"), dict) else {},
     }
 
 
@@ -1822,6 +1825,12 @@ def build_work_plan(project_id: str, task: str, profile: dict[str, Any] | None =
         "Commit, push, deploy, publish, launch, or spend money only after explicit approval.",
         "Ask before package installs, credential/env changes, destructive actions, or external messages.",
     ]
+    autopilot = profile.get("autopilot") if isinstance(profile.get("autopilot"), dict) else {}
+    if autopilot.get("enabled") and autopilot.get("local_full_access"):
+        approval_boundaries[1] = (
+            "Local project edits, local cleanup, test/build commands, and development dependency installs are allowed; "
+            "still ask before production credentials, deployment, pushing, external messages, spending money, or destructive actions outside this project."
+        )
     if risk == "high":
         approval_boundaries.insert(0, "Treat this as high-impact until proven otherwise.")
 
@@ -1888,6 +1897,7 @@ Project context:
 
 Execution constraints:
 - Stay inside this project unless the task explicitly requires reading a registered dependency path.
+- If this project is in autonomous local-build mode, continue through the requested local milestone without waiting for operator approval for normal local edits, local cleanup, tests, builds, or development dependency installs.
 - Do not push, publish, deploy, spend money, send external messages, change credentials, or modify billing/legal/identity settings.
 - Do not delete production data.
 - Do not reveal secrets or print .env values.
@@ -5802,6 +5812,171 @@ def command_queue(args: list[str], user_id: str) -> str:
     return "Usage: /queue, /queue add <project> <task>, /queue start <task_id>, /queue done <task_id>, /queue cancel <task_id>"
 
 
+def update_project_autopilot(project_id: str, enabled: bool, user_id: str, interval_minutes: int | None = None) -> dict[str, Any]:
+    data = profiles_data()
+    profiles = data.setdefault("profiles", {})
+    profile = profiles.setdefault(project_id, {})
+    if not isinstance(profile, dict):
+        profile = {}
+        profiles[project_id] = profile
+    autopilot = profile.setdefault("autopilot", {})
+    if not isinstance(autopilot, dict):
+        autopilot = {}
+        profile["autopilot"] = autopilot
+    autopilot.update(
+        {
+            "enabled": enabled,
+            "local_full_access": True,
+            "updated_at": utc_now(),
+            "updated_by": str(user_id),
+            "mode": "continue_until_definition_of_done",
+        }
+    )
+    if interval_minutes is not None:
+        autopilot["interval_minutes"] = max(1, min(240, interval_minutes))
+    else:
+        autopilot.setdefault("interval_minutes", 5)
+    save_profiles(data)
+    return autopilot
+
+
+def autopilot_profile(project_id: str) -> dict[str, Any]:
+    profile = profiles_data().get("profiles", {}).get(project_id)
+    if not isinstance(profile, dict):
+        return {}
+    autopilot = profile.get("autopilot")
+    return autopilot if isinstance(autopilot, dict) else {}
+
+
+def autopilot_open_criterion(project_id: str) -> dict[str, str] | None:
+    profile = project_profile(project_id)
+    criteria = normalize_done_criteria(profile.get("done_criteria") or [])
+    for criterion in criteria:
+        if criterion.get("status") == "open":
+            return criterion
+    return None
+
+
+def autopilot_task_for_criterion(project_id: str, criterion: dict[str, str]) -> str:
+    project_name = project_label(project_id, include_id=False)
+    criterion_id = criterion.get("id") or "next"
+    criterion_text = criterion.get("text") or "next open Definition-of-Done criterion"
+    return (
+        f"Autonomous continuation for {project_name}. Continue from the completed and verified local checkpoints. "
+        f"Focus only on Definition-of-Done criterion {criterion_id}: {criterion_text}. "
+        "Build the local product capability, update or add tests, run the relevant verification commands, and leave clear evidence. "
+        "You have permission to edit, create, reorganize, and clean files inside this new local project, run local checks/builds, and install development dependencies if needed. "
+        "Do not deploy, push, spend money, send real external messages, use production credentials, modify billing/legal/identity settings, or claim V1 is done until every Definition-of-Done criterion has proof. "
+        "Report for a non-technical owner: what capability became possible, what can be seen, what was verified, blockers, and the next criterion."
+    )
+
+
+def autopilot_can_start(project_id: str, now: dt.datetime | None = None) -> tuple[bool, str, dict[str, str] | None]:
+    now = now or dt.datetime.now(dt.timezone.utc)
+    autopilot = autopilot_profile(project_id)
+    if not autopilot.get("enabled"):
+        return False, "autopilot is off", None
+    refresh_session_states()
+    session = sessions_data().get("sessions", {}).get(project_id) or {}
+    if session.get("state") == "running":
+        return False, "session already running", None
+    pending = session.get("pending_actions") if isinstance(session.get("pending_actions"), dict) else {}
+    if pending:
+        return False, "pending approval exists", None
+    last_started = parse_iso_datetime(str(autopilot.get("last_started_at") or ""))
+    interval = int(autopilot.get("interval_minutes") or 5)
+    if last_started and last_started + dt.timedelta(minutes=interval) > now:
+        return False, "cooldown active", None
+    card = project_completion_card(project_id)
+    verdict = str(card.get("verdict") or "")
+    if "100% done" in verdict:
+        return False, "objective already complete", None
+    if card.get("pending_approvals"):
+        return False, "pending approval exists", None
+    criterion = autopilot_open_criterion(project_id)
+    if not criterion:
+        return False, "no open criteria", None
+    return True, "ready", criterion
+
+
+def autopilot_tick_once(user_id: str = "autopilot") -> list[str]:
+    messages: list[str] = []
+    profiles = profiles_data().get("profiles", {})
+    for project_id, profile in sorted(profiles.items()):
+        if not isinstance(profile, dict):
+            continue
+        autopilot = profile.get("autopilot")
+        if not isinstance(autopilot, dict) or not autopilot.get("enabled"):
+            continue
+        ok, reason, criterion = autopilot_can_start(project_id)
+        if not ok or not criterion:
+            messages.append(f"{project_id}: {reason}")
+            continue
+        task = autopilot_task_for_criterion(project_id, criterion)
+        data = profiles_data()
+        live_profile = data.setdefault("profiles", {}).setdefault(project_id, {})
+        if isinstance(live_profile, dict):
+            live_autopilot = live_profile.setdefault("autopilot", {})
+            if isinstance(live_autopilot, dict):
+                live_autopilot["last_started_at"] = utc_now()
+                live_autopilot["last_criterion_id"] = criterion.get("id")
+                live_autopilot["last_task"] = task
+                save_profiles(data)
+        try:
+            started = start_codex(project_id, task, user_id=user_id)
+            messages.append(f"{project_id}: started criterion {criterion.get('id')}")
+            print(f"{utc_now()} autopilot started {project_id}: {criterion.get('id')}", flush=True)
+            print(redact(started.splitlines()[0] if started else "started"), flush=True)
+        except Exception as exc:
+            messages.append(f"{project_id}: start failed: {redact(str(exc))}")
+            print(f"{utc_now()} autopilot start failed for {project_id}: {redact(str(exc))}", flush=True)
+    return messages
+
+
+def command_autopilot(args: list[str], user_id: str) -> str:
+    action = args[0].lower() if args else "status"
+    if action in {"on", "enable", "start"}:
+        project_id, rest = project_and_rest(args[1:], user_id=user_id)
+        if not project_id:
+            return "Usage: /autopilot on <project> [minutes]"
+        interval = parse_interval_minutes(rest[0]) if rest else 5
+        update_project_autopilot(project_id, True, user_id=user_id, interval_minutes=interval)
+        ok, reason, criterion = autopilot_can_start(project_id)
+        line = f"Autopilot enabled for {project_label(project_id, include_id=False)} every {interval} minutes."
+        if criterion:
+            line += f"\nNext criterion: {criterion.get('id')}. {criterion.get('text')}"
+        line += f"\nStatus: {reason}."
+        return line
+    if action in {"off", "disable", "stop"}:
+        project_id, _rest = project_and_rest(args[1:], user_id=user_id)
+        if not project_id:
+            return "Usage: /autopilot off <project>"
+        update_project_autopilot(project_id, False, user_id=user_id)
+        return f"Autopilot disabled for {project_label(project_id, include_id=False)}."
+    if action in {"run", "tick", "now"}:
+        messages = autopilot_tick_once(user_id=user_id)
+        return "Autopilot tick:\n" + "\n".join(f"- {message}" for message in messages)
+    lines = ["Commander autopilot:"]
+    profiles = profiles_data().get("profiles", {})
+    found = False
+    for project_id, profile in sorted(profiles.items()):
+        if not isinstance(profile, dict):
+            continue
+        autopilot = profile.get("autopilot")
+        if not isinstance(autopilot, dict):
+            continue
+        found = True
+        ok, reason, criterion = autopilot_can_start(project_id)
+        next_text = f"{criterion.get('id')}. {criterion.get('text')}" if criterion else reason
+        lines.append(
+            f"- {project_label(project_id, include_id=False)}: {'on' if autopilot.get('enabled') else 'off'}; "
+            f"next: {next_text}; can start: {'yes' if ok else 'no'} ({reason})"
+        )
+    if not found:
+        lines.append("- No project autopilot configured.")
+    return compact("\n".join(lines), limit=2400)
+
+
 def command_log(project_id: str, lines: int = DEFAULT_LOG_LINES) -> str:
     refresh_session_states()
     session = sessions_data().get("sessions", {}).get(project_id)
@@ -6477,6 +6652,9 @@ def command_help() -> str:
 /queue
 /queue add <project> "<task>"
 /queue start <task_id>
+/autopilot status
+/autopilot on <project> [minutes]
+/autopilot off <project>
 /check
 
 Natural language and voice notes are routed through OpenAI into these same commands, then executed through the same safety gates.
@@ -7549,6 +7727,8 @@ def handle_text(
         return [command_profile(" ".join(args) if args else None, user_id=user_id)]
     if command == "/queue":
         return [command_queue(args, user_id=user_id)]
+    if command == "/autopilot":
+        return [command_autopilot(args, user_id=user_id)]
     if command == "/start":
         project_id, rest = project_and_rest(args, user_id=user_id)
         if not project_id or not rest:
@@ -7833,6 +8013,7 @@ def parse_iso_datetime(value: str | None) -> dt.datetime | None:
 def heartbeat_loop(bot: TelegramBot) -> None:
     while True:
         try:
+            autopilot_tick_once(user_id="autopilot")
             now = dt.datetime.now(dt.timezone.utc)
             now_local = local_now()
             data = state_data()
