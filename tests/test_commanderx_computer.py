@@ -163,6 +163,28 @@ class ComputerToolTests(unittest.TestCase):
             commander.start_codex = original_start_codex
             commander.update_user_state = original_update_user_state
 
+    def test_project_and_rest_does_not_consume_task_after_alias(self) -> None:
+        original_projects_config = commander.projects_config
+        original_user_state = commander.user_state
+        try:
+            commander.projects_config = lambda: {
+                "projects": {
+                    "comx-omnichannel-test": {
+                        "allowed": True,
+                        "aliases": ["health companion"],
+                    }
+                }
+            }
+            commander.user_state = lambda _user_id: {"assistant_mode": "focused"}
+
+            self.assertEqual(
+                commander.project_and_rest(["health", "companion", "Build", "checkpoint", "1"], user_id="u1"),
+                ("comx-omnichannel-test", ["Build", "checkpoint", "1"]),
+            )
+        finally:
+            commander.projects_config = original_projects_config
+            commander.user_state = original_user_state
+
     def test_secret_files_are_blocked(self) -> None:
         self.assertTrue(commander.is_sensitive_relative_path(commander.Path(".env")))
         self.assertTrue(commander.is_sensitive_relative_path(commander.Path("config/private.key")))

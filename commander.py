@@ -59,7 +59,7 @@ from commanderx.processes import codex_command_args as build_codex_command_args
 from commanderx.processes import pid_running as is_process_running
 from commanderx.processes import run_command as run_process_command
 from commanderx.processes import stop_pid as stop_process_tree
-from commanderx.projects import build_project_alias_map, mentioned_projects as detect_mentioned_projects, resolve_project
+from commanderx.projects import build_project_alias_map, mentioned_projects as detect_mentioned_projects, normalized_project_text, resolve_project
 from commanderx.storage import read_json_file, write_json_file
 from commanderx.system_info import format_system_snapshot
 from commanderx.system_info import system_snapshot
@@ -7365,9 +7365,11 @@ def project_and_rest(args: list[str], user_id: str, allow_active: bool | None = 
         allow_active = allows_active_project_fallback(user_id)
     if not args:
         return (resolve_project_id(None, user_id=user_id) if allow_active else None), []
+    aliases = project_alias_map()
     for span in range(min(3, len(args)), 0, -1):
         candidate = " ".join(args[:span])
-        resolved = resolve_project_id(candidate, user_id=None)
+        normalized = normalized_project_text(candidate)
+        resolved = aliases.get(candidate.strip().lower()) or aliases.get(normalized) or aliases.get(re.sub(r"\s+", "-", normalized))
         if resolved:
             return resolved, args[span:]
     return (resolve_project_id(None, user_id=user_id) if allow_active else None), args
