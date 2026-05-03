@@ -4996,7 +4996,7 @@ def session_brief_items(
                 "project": project_id,
                 "state": state,
                 "phase": safe_brief_text(item.get("phase") or state),
-                "task": safe_brief_text(item.get("task")),
+                "task": summarize_task_for_human(item.get("task")),
                 "summary": safe_brief_text(summary),
                 "areas": safe_brief_text(item.get("areas") or "no local changes tracked"),
                 "changed_count": int(item.get("changed_count") or 0),
@@ -5021,9 +5021,10 @@ def format_session_briefs(items: list[dict[str, Any]], title: str = "Commander X
         activity = f"{age} min ago" if isinstance(age, int) else "not available"
         attention = "yes" if item.get("needs_attention") else "no"
         timeline = "; ".join(str(line) for line in item.get("timeline", [])[:3]) or "No detailed timeline yet."
+        project_name = project_label(str(item.get("project") or ""), include_id=False)
         lines.extend(
             [
-                f"{index}. {item.get('project')} - {item.get('state')}",
+                f"{index}. {project_name} - {item.get('state')}",
                 f"   Update: {item.get('summary')}",
                 f"   Task: {item.get('task')}",
                 f"   Work areas: {item.get('areas')} ({item.get('changed_count')} changed)",
@@ -5227,7 +5228,7 @@ def command_briefs(args: list[str], user_id: str) -> str:
     items = session_brief_items(user_id=user_id, limit=12)
     if project_id:
         items = [item for item in items if item.get("project") == project_id]
-        return format_session_briefs(items, title=f"Commander X session brief: {project_id}")
+        return format_session_briefs(items, title=f"Commander X session brief: {project_label(project_id, include_id=False)}")
     return format_session_briefs(items)
 
 
@@ -5787,17 +5788,30 @@ def command_log(project_id: str, lines: int = DEFAULT_LOG_LINES) -> str:
 def heartbeat_summary(user_id: str) -> str:
     state = user_state(user_id)
     active = state.get("active_project")
-    lines = ["Codex Commander heartbeat", f"Time: {utc_now()}"]
+    lines = [
+        "Commander X update",
+        f"Time: {utc_now()}",
+        "Plain-English summary for a non-technical owner. I will focus on product progress, blockers, and decisions.",
+    ]
     if active:
-        lines.append(f"Active project: {active}")
-    lines.extend(["", command_status()])
+        lines.append(f"Focused project: {project_label(str(active), include_id=False)}")
+    refresh_session_states()
+    sessions = sessions_data().get("sessions", {})
+    lines.extend(["", "Projects Commander is tracking:"])
+    if sessions:
+        for project_id, session in sorted(sessions.items()):
+            status = str(session.get("state") or "unknown")
+            task = summarize_task_for_human(session.get("task"))
+            lines.append(f"- {project_label(project_id, include_id=False)}: {status}. {task}")
+    else:
+        lines.append("- No project work has been started yet.")
     lines.append("")
     if active and get_project(str(active)):
         lines.append(command_briefs([str(active)], user_id=user_id))
     else:
         lines.append(command_briefs([], user_id=user_id))
     lines.append("")
-    lines.append("Technical filenames and local paths are hidden in heartbeat updates. Ask for /diff or /projects full when you want code-level detail.")
+    lines.append("Technical filenames and local paths are hidden here, along with raw logs. Ask for /diff, /log, or /projects full only when you want code-level detail.")
     return compact("\n".join(lines))
 
 
