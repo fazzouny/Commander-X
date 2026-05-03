@@ -867,6 +867,206 @@ def dashboard_recent_images(users: dict[str, dict[str, Any]], limit: int = 6) ->
     return items[:limit]
 
 
+def dashboard_blocker_from_session(session: dict[str, Any], mission_item: dict[str, Any] | None = None) -> str:
+    signals = session.get("progress_signals") if isinstance(session.get("progress_signals"), list) else []
+    for signal in reversed(signals):
+        if isinstance(signal, dict) and str(signal.get("status") or "") == "warn":
+            return f"{commander.safe_brief_text(signal.get('title'))}: {commander.safe_brief_text(signal.get('detail'))}"
+    if mission_item and mission_item.get("blocker"):
+        return commander.safe_brief_text(mission_item.get("blocker"))
+    return "none reported"
+
+
+def dashboard_session_evidence_cards(
+    sessions: dict[str, Any],
+    changes: list[dict[str, Any]],
+    mission_timeline: list[dict[str, Any]],
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    change_map = {str(row.get("project")): row for row in changes}
+    mission_map = {str(row.get("project")): row for row in mission_timeline}
+    projects: list[str] = []
+    for project_id in sessions:
+        if project_id not in projects:
+            projects.append(project_id)
+    for item in mission_timeline:
+        project_id = str(item.get("project") or "")
+        if project_id and project_id not in projects:
+            projects.append(project_id)
+
+    cards: list[dict[str, Any]] = []
+    for project_id in projects[:limit]:
+        session = sessions.get(project_id) if isinstance(sessions.get(project_id), dict) else {}
+        plan = session.get("work_plan") if isinstance(session.get("work_plan"), dict) else {}
+        change = change_map.get(project_id, {})
+        mission_item = mission_map.get(project_id)
+        checks = commander.verification_results_as_checks(session.get("verification_results"))
+        expected = plan.get("expected_checks") if isinstance(plan.get("expected_checks"), list) else []
+        timeline = commander.timeline_lines(session, limit=5) if session else []
+        cards.append(
+            {
+                "project": commander.audit_clean(project_id, limit=120),
+                "state": commander.audit_clean(session.get("state") if session else "no session", limit=80),
+                "process": "running" if str(session.get("state") or "") == "running" else "not running",
+                "task": commander.audit_clean(session.get("task") if session else "No Commander session recorded.", limit=500),
+                "task_id": commander.audit_clean(session.get("task_id") if session else "-", limit=100),
+                "risk": commander.audit_clean(plan.get("risk") or "unknown", limit=80),
+                "approach": [commander.audit_clean(item, limit=260) for item in (plan.get("approach") if isinstance(plan.get("approach"), list) else [])[:4]],
+                "checks": [commander.audit_clean(item, limit=220) for item in checks[:6]],
+                "expected_checks": [commander.audit_clean(item, limit=220) for item in expected[:5]],
+                "changed_count": int(change.get("changed_count") or 0),
+                "areas": commander.audit_clean(change.get("areas") or "no local changes tracked", limit=260),
+                "branch": commander.audit_clean(session.get("branch") or "-", limit=160),
+                "blocker": dashboard_blocker_from_session(session, mission_item),
+                "timeline": [commander.audit_clean(line.lstrip("- "), limit=320) for line in timeline[:5]],
+                "approvals": [],
+                "log_age_minutes": mission_item.get("last_activity_minutes") if isinstance(mission_item, dict) else None,
+            }
+        )
+    return cards
+
+
+def dashboard_session_replay_cards(
+    evidence_cards: list[dict[str, Any]],
+    mission_timeline: list[dict[str, Any]],
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    mission_map = {str(row.get("project")): row for row in mission_timeline}
+    cards: list[dict[str, Any]] = []
+    for card in evidence_cards[:limit]:
+        project_id = str(card.get("project") or "")
+        mission_item = mission_map.get(project_id)
+        checks = card.get("checks") if isinstance(card.get("checks"), list) else []
+        timeline = card.get("timeline") if isinstance(card.get("timeline"), list) else []
+        cards.append(
+            {
+                "project": commander.audit_clean(project_id, limit=120),
+                "state": commander.audit_clean(card.get("state"), limit=80),
+                "task": commander.audit_clean(card.get("task"), limit=420),
+                "story": commander.audit_clean(commander.replay_story_from_card(card), limit=1000),
+                "outcome": commander.audit_clean(commander.replay_outcome_from_card(card), limit=320),
+                "work_areas": commander.audit_clean(card.get("areas"), limit=260),
+                "changed_count": int(card.get("changed_count") or 0),
+                "blocker": commander.audit_clean(card.get("blocker") or "none reported", limit=260),
+                "checks": [commander.audit_clean(item, limit=180) for item in checks[:5]],
+                "decisions": [],
+                "timeline": [commander.audit_clean(item, limit=260) for item in timeline[:5]],
+                "next_step": commander.replay_next_step_from_card(card, mission_item),
+                "freshness": commander.audit_clean(mission_item.get("freshness") if mission_item else "unknown", limit=80),
+                "last_activity_minutes": mission_item.get("last_activity_minutes") if mission_item else card.get("log_age_minutes"),
+            }
+        )
+    return cards
+
+
+def dashboard_operator_playback_cards(
+    replay_cards: list[dict[str, Any]],
+    approvals: list[dict[str, Any]],
+    user_id: str | None = None,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    approvals_by_project: dict[str, list[dict[str, Any]]] = {}
+    for item in approvals:
+        project_id = str(item.get("project") or "")
+        if project_id:
+            approvals_by_project.setdefault(project_id, []).append(item)
+    image_summary = "No recent image context."
+    if user_id:
+        image_summary = commander.audit_clean(commander.last_image_context_summary(user_id), limit=360)
+    cards: list[dict[str, Any]] = []
+    for replay in replay_cards[:limit]:
+        project_id = str(replay.get("project") or "")
+        project_approvals = approvals_by_project.get(project_id, [])
+        checks = replay.get("checks") if isinstance(replay.get("checks"), list) else []
+        card = {
+            "project": commander.audit_clean(project_id, limit=120),
+            "state": commander.audit_clean(replay.get("state"), limit=80),
+            "confidence": commander.playback_confidence(replay, project_approvals),
+            "story": commander.audit_clean(replay.get("story"), limit=900),
+            "outcome": commander.audit_clean(replay.get("outcome"), limit=320),
+            "blocker": commander.audit_clean(replay.get("blocker") or "none reported", limit=260),
+            "work_areas": commander.audit_clean(replay.get("work_areas"), limit=260),
+            "changed_count": int(replay.get("changed_count") or 0),
+            "checks": [commander.audit_clean(item, limit=180) for item in checks[:4]],
+            "decisions": [],
+            "pending_approvals": project_approvals[:4],
+            "visual_context": image_summary,
+            "next_step": commander.audit_clean(replay.get("next_step"), limit=260),
+            "primary_action": commander.playback_primary_action(replay, project_approvals),
+            "commands": [f"/playback {project_id}", f"/watch {project_id}", f"/evidence {project_id}", f"/replay {project_id}"],
+            "log_age_minutes": replay.get("last_activity_minutes"),
+        }
+        cards.append(card)
+    return cards
+
+
+def dashboard_project_completion_cards(operator_playback: list[dict[str, Any]], user_id: str | None = None) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for playback in operator_playback:
+        project_id = str(playback.get("project") or "")
+        if not project_id:
+            continue
+        profile = commander.project_profile(project_id)
+        criteria = commander.normalize_done_criteria(profile.get("done_criteria") or [])
+        objective = commander.audit_clean(profile.get("objective") or "", limit=500) if profile.get("objective") else ""
+        playback_checks = playback.get("checks") if isinstance(playback.get("checks"), list) else []
+        approvals = playback.get("pending_approvals") if isinstance(playback.get("pending_approvals"), list) else []
+        open_criteria = [item for item in criteria if item.get("status") == "open"]
+        blocked_criteria = [item for item in criteria if item.get("status") == "blocked"]
+        done_criteria = [item for item in criteria if item.get("status") in {"done", "waived"}]
+        checks = commander.merge_verification_signals(playback_checks, commander.done_criteria_evidence_signals(done_criteria))
+        confidence = str(playback.get("confidence") or "")
+        state = str(playback.get("state") or "")
+        changed_count = int(playback.get("changed_count") or 0)
+        no_hazards = not approvals and confidence != "blocked" and state != "running"
+        strict_done = bool(objective) and bool(criteria) and not open_criteria and not blocked_criteria and bool(checks) and no_hazards and changed_count == 0
+        if strict_done:
+            verdict = "100% done candidate"
+        elif not objective:
+            verdict = "objective missing"
+        elif not criteria:
+            verdict = "definition of done missing"
+        elif state == "running":
+            verdict = "in progress"
+        elif confidence == "blocked" or blocked_criteria:
+            verdict = "blocked"
+        elif approvals:
+            verdict = "waiting for approval"
+        elif open_criteria:
+            verdict = "not done"
+        elif not checks:
+            verdict = "needs verification"
+        elif changed_count:
+            verdict = "reviewable, not final"
+        else:
+            verdict = "done candidate"
+        percent = (20 if objective else 0) + int((len(done_criteria) / len(criteria)) * 50) if criteria else (20 if objective else 0)
+        if checks:
+            percent += 15
+        if no_hazards:
+            percent += 15
+        if not strict_done:
+            percent = min(percent, 99)
+        cards.append(
+            {
+                "project": commander.audit_clean(project_id, limit=120),
+                "objective": objective,
+                "verdict": verdict,
+                "completion_percent": percent,
+                "state": commander.audit_clean(state, limit=80),
+                "confidence": commander.audit_clean(confidence, limit=120),
+                "criteria": criteria,
+                "done_criteria": len(done_criteria),
+                "total_criteria": len(criteria),
+                "checks": [commander.audit_clean(item, limit=180) for item in checks[:5]],
+                "pending_approvals": approvals,
+                "changed_count": changed_count,
+                "blocker": commander.audit_clean(playback.get("blocker") or "none reported", limit=260),
+            }
+        )
+    return cards
+
+
 def build_dashboard_payload() -> dict[str, Any]:
     commander.refresh_session_states()
     commander.sync_tasks_with_sessions()
@@ -887,18 +1087,14 @@ def build_dashboard_payload() -> dict[str, Any]:
     work_feed = commander.work_feed_items(user_id=user_id, limit=10, sessions=sessions, changes=changes, tasks=tasks)
     session_briefs = commander.session_brief_items(user_id=user_id, limit=8, sessions=sessions, changes=changes, tasks=tasks)
     mission_timeline = commander.mission_timeline_items(user_id=user_id, limit=10, sessions=sessions, changes=changes, tasks=tasks)
-    session_evidence = commander.session_evidence_cards(user_id=user_id, limit=8)
-    session_replay = commander.session_replay_cards(user_id=user_id, limit=6)
-    operator_playback = commander.operator_playback_cards(user_id=user_id, limit=6)
-    project_completion = [
-        commander.project_completion_card(str(card.get("project")), user_id=user_id)
-        for card in operator_playback
-        if card.get("project")
-    ]
+    approvals = commander.pending_approvals()
+    session_evidence = dashboard_session_evidence_cards(sessions, changes, mission_timeline, limit=8)
+    session_replay = dashboard_session_replay_cards(session_evidence, mission_timeline, limit=6)
+    operator_playback = dashboard_operator_playback_cards(session_replay, approvals, user_id=user_id, limit=6)
+    project_completion = dashboard_project_completion_cards(operator_playback, user_id=user_id)
     openclaw = safe_openclaw_dashboard_payload()
     recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw)
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
-    approvals = commander.pending_approvals()
     conversation = dashboard_conversation()
     audit_trail = dashboard_audit_trail()
     return {

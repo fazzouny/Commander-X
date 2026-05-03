@@ -139,6 +139,30 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(payload["action_center"], [])
         self.assertIn("capabilities", payload)
 
+    def test_lightweight_dashboard_session_cards_do_not_need_log_scans(self) -> None:
+        sessions = {
+            "example": {
+                "state": "completed",
+                "task": "Finish local milestone",
+                "work_plan": {"risk": "low", "expected_checks": ["python -m unittest"]},
+                "verification_results": [{"command": "python -m unittest", "status": "passed"}],
+                "branch": "main",
+                "timeline": [{"title": "Done", "detail": "Local checks passed"}],
+            }
+        }
+        changes = [{"project": "example", "changed_count": 2, "areas": "app logic"}]
+        mission = [{"project": "example", "blocker": "none reported", "freshness": "fresh", "last_activity_minutes": 3}]
+
+        evidence = dashboard.dashboard_session_evidence_cards(sessions, changes, mission)
+        replay = dashboard.dashboard_session_replay_cards(evidence, mission)
+        playback = dashboard.dashboard_operator_playback_cards(replay, approvals=[], user_id=None)
+
+        self.assertEqual(evidence[0]["project"], "example")
+        self.assertEqual(evidence[0]["changed_count"], 2)
+        self.assertTrue(evidence[0]["checks"])
+        self.assertIn("Finish local milestone", replay[0]["story"])
+        self.assertEqual(playback[0]["confidence"], "reviewable")
+
     def test_dashboard_action_center_combines_decisions_sessions_tasks_and_changes(self) -> None:
         approvals = [
             {
