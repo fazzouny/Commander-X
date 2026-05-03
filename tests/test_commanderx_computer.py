@@ -789,6 +789,37 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertEqual(card["verdict"], "reviewable, not final")
         self.assertLess(card["completion_percent"], 100)
 
+    def test_project_completion_uses_done_criterion_evidence_as_proof(self) -> None:
+        original_profile = commander.project_profile
+        original_playback = commander.operator_playback_card
+        try:
+            commander.project_profile = lambda project: {  # type: ignore[assignment]
+                "project": project,
+                "objective": "Ship the workflow",
+                "done_criteria": [
+                    {"id": "1", "text": "Workflow works", "status": "done", "evidence": "Local verification passed"}
+                ],
+            }
+            commander.operator_playback_card = lambda project, user_id=None: {  # type: ignore[assignment]
+                "project": project,
+                "state": "completed",
+                "confidence": "reviewable",
+                "checks": [],
+                "pending_approvals": [],
+                "changed_count": 0,
+                "blocker": "none reported",
+                "primary_action": "Review evidence",
+            }
+
+            card = commander.project_completion_card("example", user_id="1")
+            rendered = commander.format_project_completion(card)
+        finally:
+            commander.project_profile = original_profile  # type: ignore[assignment]
+            commander.operator_playback_card = original_playback  # type: ignore[assignment]
+
+        self.assertIn("Criterion 1: Local verification passed", card["checks"])
+        self.assertNotIn("No verification proof recorded yet", rendered)
+
     def test_log_progress_signals_detect_blockers_without_paths(self) -> None:
         raw = """
         exec "powershell" -Command 'git status' in C:\\AI-Company\\Example

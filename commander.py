@@ -1582,16 +1582,48 @@ def operator_playback(project_id: str, user_id: str | None = None) -> str:
     return format_operator_playback_card(operator_playback_card(project_id, user_id=user_id))
 
 
+def done_criteria_evidence_signals(criteria: list[dict[str, str]], limit: int = 5) -> list[str]:
+    signals: list[str] = []
+    for index, item in enumerate(criteria, start=1):
+        if not isinstance(item, dict):
+            continue
+        if item.get("status") not in {"done", "waived"}:
+            continue
+        evidence = str(item.get("evidence") or "").strip()
+        if not evidence:
+            continue
+        criterion_id = str(item.get("id") or index)
+        signals.append(audit_clean(f"Criterion {criterion_id}: {evidence}", limit=180))
+        if len(signals) >= limit:
+            break
+    return signals
+
+
+def merge_verification_signals(primary: list[Any], secondary: list[str], limit: int = 5) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for raw in list(primary or []) + list(secondary or []):
+        item = audit_clean(raw, limit=180)
+        if not item or item in seen:
+            continue
+        merged.append(item)
+        seen.add(item)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
 def project_completion_card(project_id: str, user_id: str | None = None) -> dict[str, Any]:
     profile = project_profile(project_id)
     playback = operator_playback_card(project_id, user_id=user_id)
     criteria = normalize_done_criteria(profile.get("done_criteria") or [])
     objective = audit_clean(profile.get("objective") or "", limit=500) if profile.get("objective") else ""
-    checks = playback.get("checks") if isinstance(playback.get("checks"), list) else []
+    playback_checks = playback.get("checks") if isinstance(playback.get("checks"), list) else []
     approvals = playback.get("pending_approvals") if isinstance(playback.get("pending_approvals"), list) else []
     open_criteria = [item for item in criteria if item.get("status") == "open"]
     blocked_criteria = [item for item in criteria if item.get("status") == "blocked"]
     done_criteria = [item for item in criteria if item.get("status") in {"done", "waived"}]
+    checks = merge_verification_signals(playback_checks, done_criteria_evidence_signals(done_criteria))
     confidence = str(playback.get("confidence") or "")
     state = str(playback.get("state") or "")
     changed_count = int(playback.get("changed_count") or 0)
