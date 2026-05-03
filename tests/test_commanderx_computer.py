@@ -886,6 +886,56 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertEqual(profile_data["profiles"]["health"]["done_criteria"][0]["status"], "open")
         self.assertEqual(saved, {})
 
+    def test_session_summary_marks_completed_autopilot_criterion(self) -> None:
+        original_profiles_data = commander.profiles_data
+        original_save_profiles = commander.save_profiles
+        profile_data = {
+            "profiles": {
+                "health": {
+                    "objective": "Build Health Companion AI V1",
+                    "done_criteria": [
+                        {"text": "Source requirements extracted.", "status": "done", "evidence": "ok"},
+                        {"text": "Repository scaffold exists.", "status": "done", "evidence": "ok"},
+                        {"text": "Data foundation exists.", "status": "done", "evidence": "ok"},
+                        {"text": "Patient auth flow is usable locally.", "status": "done", "evidence": "ok"},
+                        {"id": "5", "text": "Patient web experience supports Arabic-first onboarding.", "status": "open", "evidence": ""},
+                        {"id": "6", "text": "WhatsApp and Telegram intake paths support safe patient messages.", "status": "open", "evidence": ""},
+                    ],
+                }
+            }
+        }
+        saved: dict[str, object] = {}
+        try:
+            commander.profiles_data = lambda: profile_data  # type: ignore[assignment]
+            commander.save_profiles = lambda data: saved.update(data)  # type: ignore[assignment]
+            with tempfile.TemporaryDirectory() as tmp:
+                last_message = Path(tmp) / "last-message.txt"
+                last_message.write_text(
+                    "\n".join(
+                        [
+                            "1. Done",
+                            "Criterion 5 is locally implemented and verified.",
+                            "Ran and passed: node companion/frontend/tests/unit/patient-web-criterion5.test.js",
+                            "Next recommended action: Proceed to criterion 6 for WhatsApp and Telegram intake.",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                changed = commander.auto_update_done_criteria_from_session_summary(
+                    "health",
+                    {"state": "completed", "last_message_file": str(last_message)},
+                )
+        finally:
+            commander.profiles_data = original_profiles_data  # type: ignore[assignment]
+            commander.save_profiles = original_save_profiles  # type: ignore[assignment]
+
+        criteria = profile_data["profiles"]["health"]["done_criteria"]
+        self.assertEqual(changed, 1)
+        self.assertEqual(criteria[4]["status"], "done")
+        self.assertIn("complete and verified", criteria[4]["evidence"])
+        self.assertEqual(criteria[5]["status"], "open")
+        self.assertTrue(saved)
+
     def test_autopilot_task_keeps_external_boundaries(self) -> None:
         task = commander.autopilot_task_for_criterion(
             "health",

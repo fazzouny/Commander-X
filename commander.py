@@ -1977,6 +1977,7 @@ def timeline_lines(session: dict[str, Any], limit: int = 7) -> list[str]:
 def watch_process(project_id: str, proc: subprocess.Popen[str]) -> None:
     exit_code = proc.wait()
     task_id = None
+    session_snapshot: dict[str, Any] | None = None
     with SESSION_LOCK:
         data = sessions_data()
         session = data.get("sessions", {}).get(project_id)
@@ -1993,7 +1994,10 @@ def watch_process(project_id: str, proc: subprocess.Popen[str]) -> None:
                 status="done" if exit_code == 0 else "warn",
             )
             task_id = session.get("task_id")
+            session_snapshot = dict(session)
             save_sessions(data)
+    if exit_code == 0 and session_snapshot:
+        auto_update_done_criteria_from_session_summary(project_id, session_snapshot)
     if task_id:
         update_task(str(task_id), {"status": "done" if exit_code == 0 else "failed", "completed_at": utc_now(), "exit_code": exit_code})
     PROCESSES.pop(project_id, None)
@@ -5880,6 +5884,7 @@ def autopilot_can_start(project_id: str, now: dt.datetime | None = None) -> tupl
     session = sessions_data().get("sessions", {}).get(project_id) or {}
     if session.get("state") == "running":
         return False, "session already running", None
+    auto_update_done_criteria_from_session_summary(project_id, session)
     pending = session.get("pending_actions") if isinstance(session.get("pending_actions"), dict) else {}
     if pending:
         return False, "pending approval exists", None
@@ -6437,6 +6442,113 @@ def verification_results_as_checks(results: Any) -> list[str]:
         status = audit_clean(item.get("status") or "unknown", limit=40)
         checks.append(f"{command}: {status}")
     return checks
+
+
+CRITERION_STOPWORDS = {
+    "and",
+    "are",
+    "for",
+    "from",
+    "into",
+    "locally",
+    "paths",
+    "real",
+    "support",
+    "supports",
+    "that",
+    "the",
+    "with",
+    "without",
+}
+
+
+def criterion_completion_evidence_from_text(criterion: dict[str, str], text: str) -> str:
+    summary = " ".join((text or "").split())
+    if not summary:
+        return ""
+    lowered = summary.lower()
+    if not re.search(r"\b(done|complete|completed|implemented|built|usable|supports)\b", lowered):
+        return ""
+    if not re.search(r"\b(verified|verification|checks?|tests?|passed|succeeded|green)\b", lowered):
+        return ""
+
+    criterion_id = str(criterion.get("id") or "").strip()
+    criterion_text = str(criterion.get("text") or "")
+    has_local_evidence = False
+    if criterion_id:
+        id_pattern = re.compile(rf"\b(?:criterion|definition-of-done criterion|dod criterion)\s*{re.escape(criterion_id)}\b", re.IGNORECASE)
+        for match in id_pattern.finditer(summary):
+            window = lowered[max(0, match.start() - 240) : match.end() + 520]
+            if re.search(r"\b(done|complete|completed|implemented|built|usable|supports)\b", window) and re.search(
+                r"\b(verified|verification|checks?|tests?|passed|succeeded|green)\b",
+                window,
+            ):
+                has_local_evidence = True
+                break
+
+    if not has_local_evidence:
+        tokens = [
+            token
+            for token in re.findall(r"[a-z0-9]+", criterion_text.lower())
+            if len(token) > 3 and token not in CRITERION_STOPWORDS
+        ]
+        threshold = min(6, max(3, len(set(tokens)) // 2))
+        segments = [
+            segment.strip().lower()
+            for segment in re.split(r"(?:\r?\n)+|(?<=[.!?])\s+|;\s+", text)
+            if segment.strip()
+        ]
+        for segment in segments:
+            if not re.search(r"\b(done|complete|completed|implemented|built|usable|supports)\b", segment):
+                continue
+            if not re.search(r"\b(verified|verification|checks?|tests?|passed|succeeded|green)\b", segment):
+                continue
+            token_hits = sum(1 for token in set(tokens) if token in segment)
+            if token_hits >= threshold:
+                has_local_evidence = True
+                break
+
+    if not has_local_evidence:
+        return ""
+
+    checks = verification_evidence_from_text(text, limit=4)
+    if checks:
+        return f"Codex final summary reported this criterion complete and verified; checks: {', '.join(checks)}."
+    return "Codex final summary reported this criterion complete and verified."
+
+
+def auto_update_done_criteria_from_session_summary(project_id: str, session: dict[str, Any]) -> int:
+    if not isinstance(session, dict) or session.get("state") != "completed":
+        return 0
+    last_message = Path(str(session.get("last_message_file") or ""))
+    if not last_message.exists() or not last_message.is_file():
+        return 0
+    try:
+        summary = last_message.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+
+    data = profiles_data()
+    profiles = data.setdefault("profiles", {})
+    profile = profiles.get(project_id)
+    if not isinstance(profile, dict):
+        return 0
+    criteria = normalize_done_criteria(profile.get("done_criteria") or [])
+    changed = 0
+    for criterion in criteria:
+        if criterion.get("status") == "done":
+            continue
+        evidence = criterion_completion_evidence_from_text(criterion, summary)
+        if not evidence:
+            continue
+        criterion["status"] = "done"
+        criterion["evidence"] = audit_clean(evidence, limit=360)
+        changed += 1
+        break
+    if changed:
+        profile["done_criteria"] = criteria
+        save_profiles(data)
+    return changed
 
 
 def auto_update_done_criteria_from_verification(project_id: str, path: Path, results: list[dict[str, Any]]) -> int:
