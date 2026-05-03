@@ -448,12 +448,35 @@ class BrowserAndClickUpTests(unittest.TestCase):
         items = commander.session_brief_items(user_id=None, sessions=sessions, changes=changes, tasks=[])
         text = commander.format_session_briefs(items)
 
-        self.assertIn("example - running", text)
+        self.assertIn("example - working now", text)
         self.assertIn("app/user interface", text)
         self.assertIn("Attention needed: no", text)
         self.assertNotIn("src/", text)
         self.assertNotIn("README.md", text)
         self.assertNotIn("App.tsx", text)
+
+    def test_session_briefs_use_owner_friendly_health_companion_task(self) -> None:
+        sessions = {
+            "comx-omnichannel-test": {
+                "state": "finished_unknown",
+                "task": "Read PROJECT_BRIEF.md, AGENTS.md, and docs/source/health-companion-source-requirements.md first. Build Checkpoint 1 from the Health Companion AI Codex spec only: create repository skeleton and FastAPI /healthz backend skeleton.",
+                "current_phase": "review",
+                "updated_at": commander.utc_now(),
+                "timeline": [{"title": "Final report ready", "detail": "Codex wrote an outcome summary for review.", "status": "done"}],
+                "work_plan": {"risk": "high"},
+                "pending_actions": {},
+            }
+        }
+        changes = [{"project": "comx-omnichannel-test", "changed_count": 4, "areas": "app/user interface (2), backend/service (2)"}]
+
+        items = commander.session_brief_items(user_id=None, sessions=sessions, changes=changes, tasks=[])
+        text = commander.format_session_briefs(items)
+
+        self.assertIn("Health Companion", text)
+        self.assertIn("finished, needs quick review", text)
+        self.assertIn("Build the first Health Companion foundation", text)
+        self.assertNotIn("technical file", text)
+        self.assertNotIn("PROJECT_BRIEF.md", text)
 
     def test_mission_timeline_formats_direction_without_filenames(self) -> None:
         sessions = {

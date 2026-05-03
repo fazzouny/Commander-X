@@ -2311,6 +2311,12 @@ def summarize_task_for_human(value: Any) -> str:
     lowered = raw.lower()
     if not raw:
         return "-"
+    if "health companion" in lowered or "diabetes companion" in lowered or "companion product" in lowered:
+        if "checkpoint 2" in lowered or "schema" in lowered or "alembic" in lowered:
+            return "Build the next Health Companion foundation: database design, patient records, safety logs, and first migration."
+        if "checkpoint 1" in lowered or "repository skeleton" in lowered or "healthz" in lowered:
+            return "Build the first Health Companion foundation from the real PRD: backend health check, patient and clinician starter screens, local infrastructure, and verification."
+        return "Build Health Companion AI from the real PRD, with Arabic-first patient and clinician experiences plus clinical safety boundaries."
     if "local mvp" in lowered and ("telegram" in lowered or "whatsapp" in lowered):
         return "Build the local web MVP with Telegram and WhatsApp-ready channel scaffolding."
     if ("npm run test" in lowered or "npm.cmd run test" in lowered) and ("smoke" in lowered or "build" in lowered):
@@ -2320,6 +2326,24 @@ def summarize_task_for_human(value: Any) -> str:
     if "production ready" in lowered or "100%" in lowered:
         return "Close remaining blockers against the project objective and verify completion evidence."
     return short_human_text(raw, limit=150)
+
+
+def friendly_session_state(state: Any) -> str:
+    raw = str(state or "unknown")
+    labels = {
+        "running": "working now",
+        "completed": "ready for review",
+        "done": "done",
+        "finished_unknown": "finished, needs quick review",
+        "failed": "blocked",
+        "stop_failed": "stop needs review",
+        "stopped": "stopped",
+        "idle": "idle",
+        "queued": "queued",
+        "review": "needs review",
+        "changed": "local changes waiting for review",
+    }
+    return labels.get(raw, raw.replace("_", " "))
 
 
 def command_updates(project_id: str | None, user_id: str, query: str | None = None) -> str:
@@ -5022,9 +5046,10 @@ def format_session_briefs(items: list[dict[str, Any]], title: str = "Commander X
         attention = "yes" if item.get("needs_attention") else "no"
         timeline = "; ".join(str(line) for line in item.get("timeline", [])[:3]) or "No detailed timeline yet."
         project_name = project_label(str(item.get("project") or ""), include_id=False)
+        state_label = friendly_session_state(item.get("state"))
         lines.extend(
             [
-                f"{index}. {project_name} - {item.get('state')}",
+                f"{index}. {project_name} - {state_label}",
                 f"   Update: {item.get('summary')}",
                 f"   Task: {item.get('task')}",
                 f"   Work areas: {item.get('areas')} ({item.get('changed_count')} changed)",
@@ -5800,7 +5825,7 @@ def heartbeat_summary(user_id: str) -> str:
     lines.extend(["", "Projects Commander is tracking:"])
     if sessions:
         for project_id, session in sorted(sessions.items()):
-            status = str(session.get("state") or "unknown")
+            status = friendly_session_state(session.get("state"))
             task = summarize_task_for_human(session.get("task"))
             lines.append(f"- {project_label(project_id, include_id=False)}: {status}. {task}")
     else:
