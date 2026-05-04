@@ -156,6 +156,30 @@ function renderActionCenter(data) {
       .join("") || `<p>No pending action-center items.</p>`;
 }
 
+function renderOwnerReviews(data) {
+  const items = data.owner_reviews || [];
+  qs("#owner-review-count").textContent = `${items.length} saved`;
+  qs("#owner-reviews").innerHTML =
+    items
+      .slice(0, 8)
+      .map((item) => {
+        return `
+          <div class="row">
+            <div class="row-main">
+              <div class="row-title">${escapeHtml(item.project || "-")}</div>
+              <div class="row-meta">${escapeHtml(item.summary || "Saved owner review pack ready.")}</div>
+              <div class="row-meta">Saved ${escapeHtml(item.saved_at || "-")} - ${escapeHtml(item.size || "-")}</div>
+              <div class="action-center-actions">
+                <button data-command="${escapeHtml(item.command || "/reviews")}">Copy Command</button>
+              </div>
+            </div>
+            <div>${pill("review pack", "good")}</div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No saved owner review packs yet. Use /review &lt;project&gt; save after a milestone is ready.</p>`;
+}
+
 function renderAuditTrail(data) {
   const audit = data.audit_trail || {};
   const items = audit.items || [];
@@ -946,6 +970,7 @@ async function refresh() {
   state.dashboard = data;
   renderMetrics(data);
   renderActionCenter(data);
+  renderOwnerReviews(data);
   renderAuditTrail(data);
   renderConversation(data);
   renderDecisionSuggestions(data);
@@ -1242,6 +1267,7 @@ qs("#action-center").addEventListener("click", handleTaskClick);
 qs("#action-center").addEventListener("click", handleWorkFeedClick);
 qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionClick);
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
+qs("#owner-reviews").addEventListener("click", handleCapabilityClick);
 qs("#mission-timeline").addEventListener("click", handleWorkFeedClick);
 qs("#operator-playback").addEventListener("click", handleWorkFeedClick);
 qs("#project-completion").addEventListener("click", handleWorkFeedClick);

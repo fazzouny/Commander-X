@@ -117,6 +117,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "session_replay": [],
         "operator_playback": [],
         "project_completion": [],
+        "owner_reviews": [],
         "session_briefs": [],
         "recent_images": [],
         "work_feed": [],
@@ -1067,6 +1068,22 @@ def dashboard_project_completion_cards(operator_playback: list[dict[str, Any]], 
     return cards
 
 
+def dashboard_owner_review_packs(limit: int = 8) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for record in commander.saved_owner_review_packs(limit=limit):
+        project = commander.safe_brief_text(record.get("project") or "-")
+        items.append(
+            {
+                "project": project,
+                "saved_at": commander.safe_brief_text(record.get("saved_at") or "-"),
+                "size": commander.safe_brief_text(record.get("size") or "-"),
+                "summary": f"{project} has a saved owner review pack ready for non-technical review.",
+                "command": "/reviews",
+            }
+        )
+    return items
+
+
 def build_dashboard_payload() -> dict[str, Any]:
     commander.refresh_session_states()
     commander.sync_tasks_with_sessions()
@@ -1113,6 +1130,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "session_replay": session_replay,
         "operator_playback": operator_playback,
         "project_completion": project_completion,
+        "owner_reviews": dashboard_owner_review_packs(limit=8),
         "session_briefs": session_briefs,
         "recent_images": dashboard_recent_images(users),
         "work_feed": work_feed,

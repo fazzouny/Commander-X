@@ -131,6 +131,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(payload["operator_playback"], [])
         self.assertIn("project_completion", payload)
         self.assertEqual(payload["project_completion"], [])
+        self.assertIn("owner_reviews", payload)
+        self.assertEqual(payload["owner_reviews"], [])
         self.assertIn("recent_images", payload)
         self.assertEqual(payload["recent_images"], [])
         self.assertIn("work_feed", payload)
@@ -162,6 +164,28 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertTrue(evidence[0]["checks"])
         self.assertIn("Finish local milestone", replay[0]["story"])
         self.assertEqual(playback[0]["confidence"], "reviewable")
+
+    def test_dashboard_owner_review_packs_hide_file_ids(self) -> None:
+        original_reviews = dashboard.commander.saved_owner_review_packs
+        try:
+            dashboard.commander.saved_owner_review_packs = lambda limit=8: [  # type: ignore[assignment]
+                {
+                    "project": "Example Product",
+                    "saved_at": "2026-05-04 01:00",
+                    "size": "1.1 KB",
+                    "filename": "example-owner-review-20260504-010000.md",
+                }
+            ]
+
+            items = dashboard.dashboard_owner_review_packs()
+        finally:
+            dashboard.commander.saved_owner_review_packs = original_reviews  # type: ignore[assignment]
+
+        text = str(items)
+        self.assertEqual(items[0]["project"], "Example Product")
+        self.assertIn("/reviews", items[0]["command"])
+        self.assertNotIn("example-owner-review", text)
+        self.assertNotIn(".md", text)
 
     def test_dashboard_action_center_combines_decisions_sessions_tasks_and_changes(self) -> None:
         approvals = [
