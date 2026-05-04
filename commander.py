@@ -48,6 +48,8 @@ from commanderx.computer import open_app as computer_open_app
 from commanderx.computer import open_url as computer_open_url
 from commanderx.computer import press_volume_key
 from commanderx.computer import process_lines as computer_process_lines
+from commanderx.computer import resolve_web_shortcut
+from commanderx.computer import web_shortcut_catalog
 from commanderx.gitops import changed_files as git_changed_files
 from commanderx.gitops import current_branch as git_current_branch
 from commanderx.gitops import git_args as build_git_args
@@ -6066,7 +6068,8 @@ def command_file(args: list[str], user_id: str) -> str:
 def command_open(args: list[str]) -> str:
     if not args:
         apps = ", ".join(sorted(app_catalog(computer_tools_config())))
-        return f"Usage: /open url <url> or /open app <name>\nAllowlisted apps: {apps}"
+        shortcuts = ", ".join(sorted(web_shortcut_catalog())[:10])
+        return f"Usage: /open url <url>, /open <web app>, or /open app <name>\nWeb shortcuts include: {shortcuts}\nAllowlisted apps: {apps}"
     first = args[0].lower()
     if first in {"url", "site", "website", "web"}:
         if len(args) < 2:
@@ -6081,6 +6084,9 @@ def command_open(args: list[str]) -> str:
     apps = app_catalog(computer_tools_config())
     joined = " ".join(args)
     if re.search(r"^(https?://|www\.)", joined, flags=re.IGNORECASE) or re.search(r"\.[A-Za-z]{2,}(/|$)", joined):
+        ok, message = computer_open_url(joined)
+        return message
+    if resolve_web_shortcut(joined):
         ok, message = computer_open_url(joined)
         return message
     if first in apps:
@@ -6139,9 +6145,11 @@ def command_computer(args: list[str], user_id: str) -> str:
             "Computer broker",
             f"Mode: {assistant_mode(user_id)}",
             f"Allowlisted apps: {apps}",
+            f"Web shortcuts: {', '.join(sorted(web_shortcut_catalog())[:12])}",
             "",
             "Commands:",
             "- /open url <url>",
+            "- /open <web app>",
             "- /open app <name>",
             "- /file <project> <relative_path> [lines]",
             "- /volume up|down|max|mute [steps]",
@@ -8017,7 +8025,11 @@ def natural_computer_command(text: str) -> str | None:
         return "/computer codex"
     if re.search(r"\b(processes|running processes|task manager)\b", lowered):
         return "/computer processes"
-    if re.search(r"\b(open|launch|start)\b", lowered):
+    if re.search(r"\b(open|launch|start|visit|go to|browse|pull up)\b", lowered):
+        target = re.sub(r"^\s*(open|launch|start|visit|go to|browse|pull up)\s+(the\s+)?", "", lowered).strip()
+        target = re.sub(r"\s+(please|for me)$", "", target).strip()
+        if resolve_web_shortcut(target):
+            return f"/open url {target}"
         apps = app_catalog(computer_tools_config())
         for name in sorted(apps, key=len, reverse=True):
             if re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", lowered):

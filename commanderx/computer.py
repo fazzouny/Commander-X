@@ -22,6 +22,33 @@ DEFAULT_APPS: dict[str, list[str]] = {
     "explorer": ["explorer.exe"],
 }
 
+WEB_SHORTCUTS: dict[str, str] = {
+    "gmail": "https://mail.google.com",
+    "google mail": "https://mail.google.com",
+    "google calendar": "https://calendar.google.com",
+    "calendar": "https://calendar.google.com",
+    "google drive": "https://drive.google.com",
+    "drive": "https://drive.google.com",
+    "google docs": "https://docs.google.com",
+    "docs": "https://docs.google.com",
+    "google sheets": "https://sheets.google.com",
+    "sheets": "https://sheets.google.com",
+    "github": "https://github.com",
+    "chatgpt": "https://chatgpt.com",
+    "openai": "https://platform.openai.com",
+    "clickup": "https://app.clickup.com",
+    "telegram": "https://web.telegram.org",
+    "whatsapp": "https://web.whatsapp.com",
+    "notion": "https://www.notion.so",
+    "linear": "https://linear.app",
+    "slack": "https://app.slack.com",
+    "figma": "https://www.figma.com/files",
+    "supabase": "https://supabase.com/dashboard",
+    "netlify": "https://app.netlify.com",
+    "render": "https://dashboard.render.com",
+    "stripe": "https://dashboard.stripe.com",
+}
+
 VOLUME_KEYS = {
     "mute": 0xAD,
     "down": 0xAE,
@@ -29,10 +56,22 @@ VOLUME_KEYS = {
 }
 
 
+def resolve_web_shortcut(value: str) -> str:
+    key = " ".join(value.strip().lower().split())
+    return WEB_SHORTCUTS.get(key, "")
+
+
+def web_shortcut_catalog() -> dict[str, str]:
+    return dict(WEB_SHORTCUTS)
+
+
 def normalize_url(url: str) -> str:
     clean = url.strip()
     if not clean:
         return ""
+    shortcut = resolve_web_shortcut(clean)
+    if shortcut:
+        return shortcut
     if not clean.startswith(("http://", "https://")):
         clean = "https://" + clean
     return clean

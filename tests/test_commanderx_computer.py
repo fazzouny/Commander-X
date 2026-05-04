@@ -10,13 +10,15 @@ from commanderx.browser import PageSummaryParser, format_inspection, BrowserInsp
 from commanderx.clickup_api import filter_tasks, format_tasks, settings_from_env
 from commanderx.cleanup import bytes_to_mb, format_cleanup_scan
 from commanderx import computer as computer_tools
-from commanderx.computer import app_catalog, normalize_url
+from commanderx.computer import app_catalog, normalize_url, resolve_web_shortcut
 
 
 class ComputerToolTests(unittest.TestCase):
     def test_normalize_url_adds_https(self) -> None:
         self.assertEqual(normalize_url("example.com"), "https://example.com")
         self.assertEqual(normalize_url("https://example.com"), "https://example.com")
+        self.assertEqual(resolve_web_shortcut("Gmail"), "https://mail.google.com")
+        self.assertEqual(normalize_url("gmail"), "https://mail.google.com")
 
     def test_app_catalog_merges_custom_apps(self) -> None:
         apps = app_catalog({"apps": {"chrome": ["chrome.exe"], "solo": "solo.exe"}})
@@ -112,6 +114,8 @@ class ComputerToolTests(unittest.TestCase):
 
     def test_natural_computer_command_routes_common_actions(self) -> None:
         self.assertEqual(commander.natural_computer_command("visit example.com"), "/open url example.com")
+        self.assertEqual(commander.natural_computer_command("Open Gmail"), "/open url gmail")
+        self.assertEqual(commander.natural_computer_command("pull up google calendar"), "/open url google calendar")
         self.assertEqual(commander.natural_computer_command("inspect website example.com"), "/browser inspect example.com")
         self.assertEqual(commander.natural_computer_command("check clickup campaigns"), "/clickup recent campaigns")
         self.assertEqual(commander.natural_computer_command("How many leads we have"), "/clickup count leads")
@@ -162,6 +166,18 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("Volume to the Max"), "/volume max")
         self.assertEqual(commander.natural_computer_command("take a screenshot"), "/computer screenshot")
         self.assertEqual(commander.natural_computer_command("check codex"), "/computer codex")
+
+    def test_open_command_routes_web_shortcuts_without_app_allowlist(self) -> None:
+        original_open_url = commander.computer_open_url
+        calls: list[str] = []
+        try:
+            commander.computer_open_url = lambda url: calls.append(url) or (True, f"Opened URL: {normalize_url(url)}")  # type: ignore[assignment]
+            rendered = commander.command_open(["gmail"])
+        finally:
+            commander.computer_open_url = original_open_url  # type: ignore[assignment]
+
+        self.assertEqual(calls, ["gmail"])
+        self.assertIn("https://mail.google.com", rendered)
 
     def test_single_project_start_response_starts_resolved_project(self) -> None:
         original_projects_config = commander.projects_config
