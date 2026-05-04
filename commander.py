@@ -577,7 +577,7 @@ def projects_config() -> dict[str, Any]:
 
 
 def computer_tools_config() -> dict[str, Any]:
-    return read_json(COMPUTER_TOOLS_FILE, {"apps": {}, "safe_roots": []})
+    return read_json(COMPUTER_TOOLS_FILE, {"apps": {}, "safe_roots": [], "web_shortcuts": {}})
 
 
 def env_readiness() -> dict[str, dict[str, str]]:

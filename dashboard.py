@@ -140,6 +140,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "heartbeat": {},
         "tools": {
             "apps": sorted(commander.app_catalog(commander.computer_tools_config())),
+            "web_shortcuts": dashboard_web_shortcuts_payload(),
             "mcp": "Dashboard snapshot is warming up.",
             "skills": commander.skill_catalog(limit=12),
             "plugins": commander.plugin_catalog(limit=12),
@@ -321,7 +322,8 @@ def safe_openclaw_dashboard_payload() -> dict[str, Any]:
 
 
 def capabilities_payload(openclaw_status: str | None = None) -> dict[str, Any]:
-    apps = sorted(commander.app_catalog(commander.computer_tools_config()))
+    computer_config = commander.computer_tools_config()
+    apps = sorted(commander.app_catalog(computer_config))
     skills = commander.skill_catalog(limit=12)
     plugins = commander.plugin_catalog(limit=12)
     clickup_configured = commander.clickup_settings_from_env().configured
@@ -364,6 +366,102 @@ def capabilities_payload(openclaw_status: str | None = None) -> dict[str, Any]:
         "openclaw": openclaw,
         "clickup_configured": clickup_configured,
     }
+
+
+def dashboard_safe_url_display(url: str) -> str:
+    parsed = urllib.parse.urlsplit(str(url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    display = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path[:120], "", ""))
+    return commander.safe_brief_text(display)
+
+
+def dashboard_web_shortcuts_payload(config: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    config = config or commander.computer_tools_config()
+    raw_custom = config.get("web_shortcuts") if isinstance(config, dict) else {}
+    custom_keys = {
+        " ".join(str(name).strip().lower().split())
+        for name in (raw_custom or {})
+        if str(name).strip()
+    }
+    rows: list[dict[str, str]] = []
+    for name, target in sorted(commander.web_shortcut_catalog(config).items()):
+        rows.append(
+            {
+                "name": name,
+                "url": dashboard_safe_url_display(target),
+                "source": "custom" if name in custom_keys else "default",
+                "command": f"/open {name}",
+            }
+        )
+    return rows
+
+
+def normalize_dashboard_shortcut_name(value: str) -> str:
+    name = " ".join(str(value or "").strip().lower().split())
+    if not re.fullmatch(r"[a-z0-9][a-z0-9 ._-]{1,48}", name):
+        raise ValueError("Shortcut name must be 2-49 characters using letters, numbers, spaces, dots, dashes, or underscores.")
+    return name
+
+
+def normalize_dashboard_shortcut_url(value: str) -> str:
+    clean = str(value or "").strip()
+    parsed = urllib.parse.urlsplit(clean)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Shortcut URL must start with http:// or https://.")
+    if parsed.username or parsed.password:
+        raise ValueError("Shortcut URL cannot include embedded credentials.")
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment))
+
+
+def dashboard_web_shortcut_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    action = str(payload.get("action") or "add").strip().lower()
+    try:
+        name = normalize_dashboard_shortcut_name(str(payload.get("name") or ""))
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}, 400
+    config = commander.computer_tools_config()
+    shortcuts = config.setdefault("web_shortcuts", {})
+    if not isinstance(shortcuts, dict):
+        shortcuts = {}
+        config["web_shortcuts"] = shortcuts
+
+    if action in {"add", "save", "upsert"}:
+        try:
+            target = normalize_dashboard_shortcut_url(str(payload.get("url") or ""))
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}, 400
+        shortcuts[name] = target
+        commander.write_json(commander.COMPUTER_TOOLS_FILE, config)
+        display = dashboard_safe_url_display(target)
+        commander.record_audit_event(
+            "commander",
+            {"type": "web_shortcut", "action": "saved", "name": name, "url": display},
+            "completed",
+        )
+        return {
+            "ok": True,
+            "text": f"Saved web shortcut: {name} -> {display}",
+            "shortcuts": dashboard_web_shortcuts_payload(config),
+        }, 200
+
+    if action in {"delete", "remove"}:
+        if name not in shortcuts:
+            return {"ok": False, "error": "Only custom shortcuts can be removed from the dashboard."}, 404
+        shortcuts.pop(name, None)
+        commander.write_json(commander.COMPUTER_TOOLS_FILE, config)
+        commander.record_audit_event(
+            "commander",
+            {"type": "web_shortcut", "action": "removed", "name": name},
+            "completed",
+        )
+        return {
+            "ok": True,
+            "text": f"Removed custom web shortcut: {name}",
+            "shortcuts": dashboard_web_shortcuts_payload(config),
+        }, 200
+
+    return {"ok": False, "error": "Unknown shortcut action."}, 400
 
 
 def sessions_payload() -> dict[str, Any]:
@@ -1593,6 +1691,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         },
         "tools": {
             "apps": sorted(commander.app_catalog(commander.computer_tools_config())),
+            "web_shortcuts": dashboard_web_shortcuts_payload(),
             "mcp": cached_mcp_summary(),
             "skills": commander.skill_catalog(limit=24),
             "plugins": commander.plugin_catalog(limit=24),
@@ -1943,6 +2042,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/service/restart":
             result, status = dashboard_service_restart_action(payload)
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/tools/web-shortcut":
+            result, status = dashboard_web_shortcut_action(payload)
+            invalidate_dashboard_cache()
             self.send_json(result, status=status)
             return
         if parsed.path == "/api/decision-memory":

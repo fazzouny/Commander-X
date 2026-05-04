@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import time
 import unittest
+from pathlib import Path
 
 import dashboard
 
@@ -1000,6 +1002,50 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertIn("/tools", payload["commands"])
         self.assertIn("OpenClaw status: startable", payload["highlights"])
         self.assertTrue(payload["clickup_configured"])
+
+    def test_dashboard_web_shortcut_action_manages_custom_shortcuts_safely(self) -> None:
+        original_file = dashboard.commander.COMPUTER_TOOLS_FILE
+        original_audit = dashboard.commander.record_audit_event
+        audit_events: list[tuple[str, str]] = []
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                dashboard.commander.COMPUTER_TOOLS_FILE = Path(temp) / "computer_tools.json"
+                dashboard.commander.record_audit_event = (  # type: ignore[assignment]
+                    lambda project, action, status, approval_id=None, result=None: audit_events.append((project, status)) or {}
+                )
+
+                saved, saved_status = dashboard.dashboard_web_shortcut_action(
+                    {"action": "add", "name": "Company CRM", "url": "https://crm.example.com/home?token=abc123"}
+                )
+                unsafe, unsafe_status = dashboard.dashboard_web_shortcut_action(
+                    {"action": "add", "name": "Bad", "url": "file:///C:/secret"}
+                )
+                removed, removed_status = dashboard.dashboard_web_shortcut_action(
+                    {"action": "delete", "name": "Company CRM"}
+                )
+        finally:
+            dashboard.commander.COMPUTER_TOOLS_FILE = original_file
+            dashboard.commander.record_audit_event = original_audit  # type: ignore[assignment]
+
+        self.assertEqual(saved_status, 200)
+        self.assertTrue(saved["ok"])
+        self.assertIn("company crm", saved["text"])
+        self.assertNotIn("token=abc123", saved["text"])
+        self.assertEqual(unsafe_status, 400)
+        self.assertFalse(unsafe["ok"])
+        self.assertEqual(removed_status, 200)
+        self.assertTrue(removed["ok"])
+        self.assertEqual(audit_events, [("commander", "completed"), ("commander", "completed")])
+
+    def test_dashboard_web_shortcuts_payload_marks_custom_entries(self) -> None:
+        rows = dashboard.dashboard_web_shortcuts_payload(
+            {"web_shortcuts": {"Company CRM": "https://crm.example.com/home?token=abc123"}}
+        )
+        custom = next(item for item in rows if item["name"] == "company crm")
+
+        self.assertEqual(custom["source"], "custom")
+        self.assertEqual(custom["url"], "https://crm.example.com/home")
+        self.assertEqual(custom["command"], "/open company crm")
 
 
 class DashboardApprovalTests(unittest.TestCase):

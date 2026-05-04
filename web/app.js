@@ -898,13 +898,46 @@ function renderLogs(data) {
 function renderTools(data) {
   const tools = data.tools || {};
   const apps = tools.apps || [];
+  const shortcuts = tools.web_shortcuts || [];
   const skills = tools.skills || [];
   const plugins = tools.plugins || [];
-  qs("#tool-count").textContent = `${apps.length} apps, ${skills.length} skills`;
+  const shortcutRows =
+    shortcuts
+      .slice(0, 24)
+      .map((item) => {
+        const isCustom = item.source === "custom";
+        return `
+          <div class="shortcut-row">
+            <div>
+              <strong>${escapeHtml(item.name || "-")}</strong>
+              <span>${escapeHtml(item.url || "-")} · ${escapeHtml(item.source || "default")}</span>
+            </div>
+            <div class="shortcut-actions">
+              <button data-command="${escapeHtml(item.command || `/open ${item.name || ""}`)}">Copy</button>
+              ${
+                isCustom
+                  ? `<button class="danger" data-shortcut-delete="${escapeHtml(item.name || "")}">Delete</button>`
+                  : ""
+              }
+            </div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No web shortcuts configured.</p>`;
+  qs("#tool-count").textContent = `${apps.length} apps, ${shortcuts.length} web shortcuts, ${skills.length} skills`;
   qs("#tools").innerHTML = `
     <div class="tool-block">
       <h3>Computer Broker</h3>
       <p>${apps.map((item) => escapeHtml(item)).join(", ") || "No allowlisted apps"}</p>
+    </div>
+    <div class="tool-block">
+      <h3>Web Shortcuts</h3>
+      <div class="shortcut-list">${shortcutRows}</div>
+      <div class="shortcut-form">
+        <input id="shortcut-name" type="text" placeholder="company crm" autocomplete="off" />
+        <input id="shortcut-url" type="url" placeholder="https://crm.example.com" autocomplete="off" />
+        <button data-shortcut-add="true">Save</button>
+      </div>
     </div>
     <div class="tool-block">
       <h3>Browser + ClickUp</h3>
@@ -1404,6 +1437,32 @@ async function handleDecisionSuggestionClick(event) {
   await refresh();
 }
 
+async function handleShortcutClick(event) {
+  const addButton = event.target.closest("[data-shortcut-add]");
+  const deleteButton = event.target.closest("[data-shortcut-delete]");
+  if (!addButton && !deleteButton) return;
+  const button = addButton || deleteButton;
+  button.disabled = true;
+  try {
+    const payload = deleteButton
+      ? { action: "delete", name: deleteButton.dataset.shortcutDelete || "" }
+      : {
+          action: "add",
+          name: qs("#shortcut-name").value.trim(),
+          url: qs("#shortcut-url").value.trim(),
+        };
+    qs("#action-output").textContent = deleteButton ? "Removing web shortcut..." : "Saving web shortcut...";
+    const result = await api("/api/tools/web-shortcut", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    qs("#action-output").textContent = result.text || result.error || JSON.stringify(result, null, 2);
+    await refresh();
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function showDiff() {
   const project = qs("#evidence-project").value;
   const result = await api(`/api/diff/${encodeURIComponent(project)}`);
@@ -1484,6 +1543,8 @@ qs("#action-center").addEventListener("click", handleServiceActionClick);
 qs("#service-health").addEventListener("click", handleServiceActionClick);
 qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionClick);
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
+qs("#tools").addEventListener("click", handleShortcutClick);
+qs("#tools").addEventListener("click", handleCapabilityClick);
 qs("#owner-reviews").addEventListener("click", handleReviewPreviewClick);
 qs("#owner-reviews").addEventListener("click", handleCapabilityClick);
 qs("#autopilot").addEventListener("click", handleCapabilityClick);
