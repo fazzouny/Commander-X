@@ -206,6 +206,7 @@ function renderAutopilot(data) {
               <div><span>Blocked criteria</span><strong>${escapeHtml(item.blocked_criteria || 0)}</strong></div>
               <div><span>Interval</span><strong>${escapeHtml(item.interval_minutes || 5)} min</strong></div>
               <div><span>Can start</span><strong>${item.can_start ? "yes" : "no"}</strong></div>
+              <div><span>Next action</span><strong>${escapeHtml(item.next_action || "-")}</strong></div>
               <div><span>Last start</span><strong>${escapeHtml(item.last_started_at || "-")}</strong></div>
             </div>
             <div class="work-actions">

@@ -247,6 +247,7 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(rows[0]["done_criteria"], 1)
         self.assertEqual(rows[0]["total_criteria"], 2)
         self.assertIn("Dashboard owner view works", rows[0]["next_criterion"])
+        self.assertIn("/autopilot run", rows[0]["next_action"])
         self.assertEqual(rows[0]["command"], "/autopilot run")
 
     def test_dashboard_action_center_combines_decisions_sessions_tasks_and_changes(self) -> None:

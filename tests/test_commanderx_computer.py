@@ -1169,6 +1169,42 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("Do not deploy", task)
         self.assertIn("claim V1 is done", task)
 
+    def test_autopilot_next_action_explains_owner_action(self) -> None:
+        text = commander.autopilot_next_action("health", "no open criteria")
+
+        self.assertIn("/done health", text)
+        self.assertIn("/objective add health", text)
+
+    def test_autopilot_pauses_for_blocked_criteria(self) -> None:
+        original_autopilot_profile = commander.autopilot_profile
+        original_refresh = commander.refresh_session_states
+        original_sessions = commander.sessions_data
+        original_completion = commander.project_completion_card
+        original_project_profile = commander.project_profile
+        try:
+            commander.autopilot_profile = lambda project_id: {"enabled": True, "interval_minutes": 1}  # type: ignore[assignment]
+            commander.refresh_session_states = lambda: None  # type: ignore[assignment]
+            commander.sessions_data = lambda: {"sessions": {}}  # type: ignore[assignment]
+            commander.project_completion_card = lambda project_id: {"verdict": "not done", "pending_approvals": []}  # type: ignore[assignment]
+            commander.project_profile = lambda project_id: {  # type: ignore[assignment]
+                "done_criteria": [
+                    {"id": "1", "text": "Owner decision needed", "status": "blocked", "evidence": ""},
+                    {"id": "2", "text": "Build next feature", "status": "open", "evidence": ""},
+                ]
+            }
+
+            ok, reason, criterion = commander.autopilot_can_start("health")
+        finally:
+            commander.autopilot_profile = original_autopilot_profile  # type: ignore[assignment]
+            commander.refresh_session_states = original_refresh  # type: ignore[assignment]
+            commander.sessions_data = original_sessions  # type: ignore[assignment]
+            commander.project_completion_card = original_completion  # type: ignore[assignment]
+            commander.project_profile = original_project_profile  # type: ignore[assignment]
+
+        self.assertFalse(ok)
+        self.assertEqual(reason, "blocked criteria need review")
+        self.assertIsNone(criterion)
+
     def test_autopilot_tick_starts_open_criterion(self) -> None:
         original_profiles_data = commander.profiles_data
         original_save_profiles = commander.save_profiles

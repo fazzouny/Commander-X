@@ -1119,15 +1119,16 @@ def dashboard_autopilot_status(sessions: dict[str, Any], limit: int = 10) -> lis
         elif pending:
             can_start = False
             reason = "pending approval exists"
-        elif not open_criteria:
-            can_start = False
-            reason = "no open criteria"
         elif blocked_criteria:
             can_start = False
             reason = "blocked criteria need review"
+        elif not open_criteria:
+            can_start = False
+            reason = "no open criteria"
         elif last_started and last_started + dt.timedelta(minutes=interval) > now:
             can_start = False
             reason = "cooldown active"
+        next_action = commander.autopilot_next_action(project_id, reason, can_start=can_start)
         next_criterion = open_criteria[0] if open_criteria else {}
         rows.append(
             {
@@ -1142,6 +1143,7 @@ def dashboard_autopilot_status(sessions: dict[str, Any], limit: int = 10) -> lis
                 "open_criteria": len(open_criteria),
                 "blocked_criteria": len(blocked_criteria),
                 "next_criterion": commander.safe_brief_text(next_criterion.get("text") or reason),
+                "next_action": commander.safe_brief_text(next_action),
                 "last_started_at": commander.safe_brief_text(autopilot.get("last_started_at") or "-"),
                 "command": f"/autopilot {'run' if can_start else 'status'}",
             }

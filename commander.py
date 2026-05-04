@@ -6103,10 +6103,34 @@ def autopilot_can_start(project_id: str, now: dt.datetime | None = None) -> tupl
         return False, "objective already complete", None
     if card.get("pending_approvals"):
         return False, "pending approval exists", None
+    criteria = normalize_done_criteria(project_profile(project_id).get("done_criteria") or [])
+    if any(criterion.get("status") == "blocked" for criterion in criteria):
+        return False, "blocked criteria need review", None
     criterion = autopilot_open_criterion(project_id)
     if not criterion:
         return False, "no open criteria", None
     return True, "ready", criterion
+
+
+def autopilot_next_action(project_id: str, reason: str, can_start: bool = False) -> str:
+    reason_l = (reason or "").lower()
+    if can_start or reason_l == "ready":
+        return "Run /autopilot run or wait for the next heartbeat tick."
+    if "off" in reason_l:
+        return f"Enable with /autopilot on {project_id} [minutes]."
+    if "running" in reason_l:
+        return f"Watch progress with /watch {project_id}."
+    if "pending approval" in reason_l:
+        return "Review decisions with /approvals."
+    if "cooldown" in reason_l:
+        return "Wait for the cooldown, then check /autopilot status again."
+    if "objective already complete" in reason_l or "100% done" in reason_l:
+        return f"Review completion with /done {project_id}. Add a new objective only if you want more scope."
+    if "blocked" in reason_l:
+        return f"Review blocked criteria with /objective {project_id}."
+    if "no open criteria" in reason_l:
+        return f"Review completion with /done {project_id}. If this milestone needs more work, add a new criterion with /objective add {project_id} \"criterion\"."
+    return f"Check /done {project_id} and /objective {project_id} before starting more autonomous work."
 
 
 def autopilot_tick_once(user_id: str = "autopilot") -> list[str]:
@@ -6156,6 +6180,7 @@ def command_autopilot(args: list[str], user_id: str) -> str:
         if criterion:
             line += f"\nNext criterion: {criterion.get('id')}. {criterion.get('text')}"
         line += f"\nStatus: {reason}."
+        line += f"\nNext action: {autopilot_next_action(project_id, reason, can_start=ok)}"
         return line
     if action in {"off", "disable", "stop"}:
         project_id, _rest = project_and_rest(args[1:], user_id=user_id)
@@ -6178,9 +6203,10 @@ def command_autopilot(args: list[str], user_id: str) -> str:
         found = True
         ok, reason, criterion = autopilot_can_start(project_id)
         next_text = f"{criterion.get('id')}. {criterion.get('text')}" if criterion else reason
+        next_action = autopilot_next_action(project_id, reason, can_start=ok)
         lines.append(
             f"- {project_label(project_id, include_id=False)}: {'on' if autopilot.get('enabled') else 'off'}; "
-            f"next: {next_text}; can start: {'yes' if ok else 'no'} ({reason})"
+            f"next: {next_text}; can start: {'yes' if ok else 'no'} ({reason}); next action: {next_action}"
         )
     if not found:
         lines.append("- No project autopilot configured.")
