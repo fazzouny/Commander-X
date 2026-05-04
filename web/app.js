@@ -89,6 +89,31 @@ function renderMetrics(data) {
   `;
 }
 
+function renderServiceHealth(data) {
+  const health = data.service_health || {};
+  const items = health.items || [];
+  const overall = health.overall || "checking";
+  const type = overall === "good" ? "good" : overall === "bad" ? "bad" : "warn";
+  qs("#service-health-status").innerHTML = pill(overall, type);
+  qs("#service-health-summary").textContent = health.summary || "Checking Commander services.";
+  qs("#service-health").innerHTML =
+    items
+      .map((item) => {
+        const itemType = item.status === "good" ? "good" : item.status === "bad" ? "bad" : "warn";
+        return `
+          <div class="row">
+            <div class="row-main">
+              <div class="row-title">${escapeHtml(item.label || "-")}</div>
+              <div class="row-meta">${escapeHtml(item.detail || "-")}</div>
+              <div class="row-meta">${escapeHtml(item.signal || "-")}</div>
+            </div>
+            <div>${pill(item.status || "checking", itemType)}</div>
+          </div>
+        `;
+      })
+      .join("") || `<p>Service health is warming up.</p>`;
+}
+
 function renderProjects(data) {
   const projects = Object.values(data.projects);
   qs("#project-count").textContent = `${projects.length} registered`;
@@ -1053,6 +1078,7 @@ async function refresh() {
   const data = await api("/api/dashboard");
   state.dashboard = data;
   renderMetrics(data);
+  renderServiceHealth(data);
   renderActionCenter(data);
   renderOwnerReviews(data);
   renderAutopilot(data);

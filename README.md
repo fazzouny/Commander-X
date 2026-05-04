@@ -504,6 +504,8 @@ The dashboard shows an Action Center, plain-English work feed, registered projec
 
 When a dashboard token is configured, paste it into the local dashboard token field once. The browser stores it locally and sends it as `X-Commander-Token` for dashboard actions.
 
+The Service Health card translates the Telegram poller, dashboard process, and recent service signals into owner-readable status. Temporary Telegram connection issues show as watch items, while stopped services or error logs show as attention items without exposing raw process command lines.
+
 Approval cards in the dashboard can approve or cancel pending Commander actions. These buttons call the same approval executor as `/approve` and remain protected by `COMMANDER_DASHBOARD_TOKEN`.
 
 Task queue cards can start queued tasks, mark review/failed/stopped tasks done, or cancel queued/review/failed tasks. These buttons call the same `/queue` commands as Telegram and remain protected by the dashboard token.

@@ -171,6 +171,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(payload["work_feed"], [])
         self.assertIn("action_center", payload)
         self.assertEqual(payload["action_center"], [])
+        self.assertIn("service_health", payload)
+        self.assertEqual(payload["service_health"]["overall"], "checking")
         self.assertIn("capabilities", payload)
         self.assertIn("setup_status", payload)
         self.assertTrue(payload["setup_status"])
@@ -387,6 +389,58 @@ class DashboardCapabilityTests(unittest.TestCase):
 
         self.assertIn("Autopilot for Health Companion AI", items[0])
         self.assertIn("/done health", items[0])
+
+    def test_dashboard_service_health_flags_transient_poller_issue(self) -> None:
+        original_process_lines = dashboard.commander.computer_process_lines
+        original_log_line = dashboard.commander.service_log_line
+        try:
+            dashboard.commander.computer_process_lines = lambda markers, timeout=4: [  # type: ignore[assignment]
+                "100 commander.py --poll",
+                "200 dashboard.py",
+            ]
+
+            def log_line(path, patterns=None) -> str:
+                if path.name == "commander-service.out.log":
+                    return "Polling error: handshake operation timed out"
+                if path.name == "dashboard.out.log":
+                    return '2026-05-04 dashboard 127.0.0.1 "GET /api/dashboard HTTP/1.1" 200 -'
+                return "empty"
+
+            dashboard.commander.service_log_line = log_line  # type: ignore[assignment]
+
+            health = dashboard.dashboard_service_health()
+        finally:
+            dashboard.commander.computer_process_lines = original_process_lines  # type: ignore[assignment]
+            dashboard.commander.service_log_line = original_log_line  # type: ignore[assignment]
+
+        self.assertEqual(health["overall"], "warn")
+        self.assertIn("running", health["summary"])
+        self.assertEqual(health["items"][0]["label"], "Telegram control")
+        self.assertEqual(health["items"][0]["status"], "warn")
+        self.assertIn("temporary connection issue", health["items"][0]["detail"])
+        self.assertNotIn("commander.py --poll", str(health))
+
+    def test_dashboard_recommendations_include_service_health_attention(self) -> None:
+        original_autopilot_recs = dashboard.commander.autopilot_recommendation_items
+        original_clickup = dashboard.commander.clickup_settings_from_env
+        try:
+            dashboard.commander.autopilot_recommendation_items = lambda limit=3: []  # type: ignore[assignment]
+            dashboard.commander.clickup_settings_from_env = lambda: type("Settings", (), {"configured": True})()  # type: ignore[assignment]
+
+            items = dashboard.dashboard_recommendations(
+                user_id="owner",
+                changes=[],
+                snapshot={"disk": []},
+                sessions={},
+                openclaw={"state": "unavailable"},
+                service_health={"overall": "warn", "summary": "Telegram had a temporary timeout."},
+            )
+        finally:
+            dashboard.commander.autopilot_recommendation_items = original_autopilot_recs  # type: ignore[assignment]
+            dashboard.commander.clickup_settings_from_env = original_clickup  # type: ignore[assignment]
+
+        self.assertIn("Commander service needs attention", items[0])
+        self.assertIn("Telegram had a temporary timeout", items[0])
 
     def test_dashboard_inbox_uses_owner_task_summaries(self) -> None:
         original_approvals = dashboard.commander.pending_approvals

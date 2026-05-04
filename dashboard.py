@@ -118,6 +118,11 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "session_replay": [],
         "operator_playback": [],
         "project_completion": [],
+        "service_health": {
+            "overall": "checking",
+            "summary": message,
+            "items": [],
+        },
         "owner_reviews": [],
         "autopilot": [],
         "session_briefs": [],
@@ -422,8 +427,11 @@ def dashboard_recommendations(
     snapshot: dict[str, Any],
     sessions: dict[str, Any],
     openclaw: dict[str, Any] | None = None,
+    service_health: dict[str, Any] | None = None,
 ) -> list[str]:
     items: list[str] = []
+    if service_health and service_health.get("overall") in {"warn", "bad"}:
+        items.append(f"Commander service needs attention: {commander.safe_brief_text(service_health.get('summary') or '-')}")
     for disk in snapshot.get("disk", []):
         used = float(disk.get("used_percent") or 0)
         if used >= 90:
@@ -452,6 +460,98 @@ def dashboard_recommendations(
     elif openclaw["state"] in {"startable", "launchable"}:
         items.append("OpenClaw has a launcher candidate. Use /openclaw start when you want to start it with approval.")
     return items[:8]
+
+
+def dashboard_service_health() -> dict[str, Any]:
+    process_warning = ""
+    try:
+        process_lines = commander.computer_process_lines(["commander.py --poll", "dashboard.py"], timeout=4)
+    except subprocess.TimeoutExpired:
+        process_lines = []
+        process_warning = "Process check timed out; logs are still available."
+    except Exception as exc:
+        process_lines = []
+        process_warning = f"Process check unavailable: {commander.sanitize_service_line(str(exc))}"
+
+    poller_state = commander.service_process_state(process_lines, "commander.py --poll")
+    dashboard_state = commander.service_process_state(process_lines, "dashboard.py")
+    poller_running = poller_state.startswith("running")
+    dashboard_running = dashboard_state.startswith("running")
+    poller_signal = commander.service_log_line(
+        commander.LOG_DIR / "commander-service.out.log",
+        ["started", "configured", "Polling error", "Heartbeat error"],
+    )
+    poller_error = commander.service_log_line(
+        commander.LOG_DIR / "commander-service.err.log",
+        ["Traceback", "Error", "Exception", "failed", "ConnectionReset"],
+    )
+    dashboard_signal = commander.service_log_line(
+        commander.LOG_DIR / "dashboard.out.log",
+        ["listening", "GET /api/dashboard", "error"],
+    )
+    dashboard_error = commander.service_log_line(
+        commander.LOG_DIR / "dashboard.err.log",
+        ["Traceback", "Error", "Exception", "failed"],
+    )
+
+    poller_status = "good" if poller_running else "bad"
+    poller_detail = "Telegram control is running."
+    if re.search(r"Polling error|Heartbeat error|timeout|ConnectionReset", poller_signal, flags=re.IGNORECASE):
+        poller_status = "warn" if poller_running else "bad"
+        poller_detail = "Telegram had a temporary connection issue; Commander usually recovers automatically."
+    if poller_error not in {"empty", "missing"}:
+        poller_status = "bad"
+        poller_detail = f"Telegram service error: {commander.safe_brief_text(poller_error)}"
+    elif not poller_running:
+        poller_detail = "Telegram control is not running. Restart Commander services."
+
+    dashboard_status = "good" if dashboard_running else "bad"
+    dashboard_detail = "Dashboard is running locally."
+    if dashboard_error not in {"empty", "missing"}:
+        dashboard_status = "bad"
+        dashboard_detail = f"Dashboard error: {commander.safe_brief_text(dashboard_error)}"
+    elif not dashboard_running:
+        dashboard_detail = "Dashboard is not running. Restart Commander services."
+
+    items = [
+        {
+            "label": "Telegram control",
+            "status": poller_status,
+            "detail": commander.safe_brief_text(poller_detail),
+            "signal": commander.safe_brief_text(poller_signal),
+        },
+        {
+            "label": "Dashboard",
+            "status": dashboard_status,
+            "detail": commander.safe_brief_text(dashboard_detail),
+            "signal": commander.safe_brief_text(dashboard_signal),
+        },
+    ]
+    if process_warning:
+        items.append(
+            {
+                "label": "Process check",
+                "status": "warn",
+                "detail": commander.safe_brief_text(process_warning),
+                "signal": "-",
+            }
+        )
+
+    statuses = {str(item["status"]) for item in items}
+    if "bad" in statuses:
+        overall = "bad"
+        summary = "Commander needs attention before relying on remote control."
+    elif "warn" in statuses:
+        overall = "warn"
+        summary = "Commander is running, but one service signal should be watched."
+    else:
+        overall = "good"
+        summary = "Commander remote control and dashboard are healthy."
+    return {
+        "overall": overall,
+        "summary": commander.safe_brief_text(summary),
+        "items": items,
+    }
 
 
 def dashboard_inbox(user_id: str, recommendations: list[str]) -> list[dict[str, str]]:
@@ -1302,7 +1402,8 @@ def build_dashboard_payload() -> dict[str, Any]:
     operator_playback = dashboard_operator_playback_cards(session_replay, approvals, user_id=user_id, limit=6)
     project_completion = dashboard_project_completion_cards(operator_playback, user_id=user_id)
     openclaw = safe_openclaw_dashboard_payload()
-    recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw)
+    service_health = dashboard_service_health()
+    recommendations = dashboard_recommendations(user_id, changes, snapshot, sessions, openclaw=openclaw, service_health=service_health)
     doctor = dashboard_doctor_checks(changes, snapshot, projects)
     conversation = dashboard_conversation()
     audit_trail = dashboard_audit_trail()
@@ -1322,6 +1423,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "session_replay": session_replay,
         "operator_playback": operator_playback,
         "project_completion": project_completion,
+        "service_health": service_health,
         "owner_reviews": dashboard_owner_review_packs(limit=8),
         "autopilot": dashboard_autopilot_status(sessions, limit=10),
         "session_briefs": session_briefs,
