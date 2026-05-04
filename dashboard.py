@@ -1015,69 +1015,45 @@ def dashboard_operator_playback_cards(
 
 def dashboard_project_completion_cards(operator_playback: list[dict[str, Any]], user_id: str | None = None) -> list[dict[str, Any]]:
     cards: list[dict[str, Any]] = []
+    seen_projects: set[str] = set()
     for playback in operator_playback:
         project_id = str(playback.get("project") or "")
-        if not project_id:
+        if not project_id or project_id in seen_projects:
             continue
+        seen_projects.add(project_id)
+        completion = commander.project_completion_card(project_id, user_id=user_id)
         project_name = commander.audit_clean(commander.project_label(project_id, include_id=False), limit=160)
-        profile = commander.project_profile(project_id)
-        criteria = commander.normalize_done_criteria(profile.get("done_criteria") or [])
-        objective = commander.audit_clean(profile.get("objective") or "", limit=500) if profile.get("objective") else ""
-        playback_checks = playback.get("checks") if isinstance(playback.get("checks"), list) else []
-        approvals = playback.get("pending_approvals") if isinstance(playback.get("pending_approvals"), list) else []
+        criteria = completion.get("criteria") if isinstance(completion.get("criteria"), list) else []
+        objective = commander.audit_clean(completion.get("objective") or "", limit=500) if completion.get("objective") else ""
+        checks = completion.get("checks") if isinstance(completion.get("checks"), list) else []
+        approvals = completion.get("pending_approvals") if isinstance(completion.get("pending_approvals"), list) else []
         open_criteria = [item for item in criteria if item.get("status") == "open"]
         blocked_criteria = [item for item in criteria if item.get("status") == "blocked"]
-        done_criteria = [item for item in criteria if item.get("status") in {"done", "waived"}]
-        checks = commander.merge_verification_signals(playback_checks, commander.done_criteria_evidence_signals(done_criteria))
-        confidence = str(playback.get("confidence") or "")
-        state = str(playback.get("state") or "")
-        changed_count = int(playback.get("changed_count") or 0)
-        no_hazards = not approvals and confidence != "blocked" and state != "running"
-        strict_done = bool(objective) and bool(criteria) and not open_criteria and not blocked_criteria and bool(checks) and no_hazards and changed_count == 0
-        if strict_done:
-            verdict = "100% done candidate"
-            next_step = "Do a final owner sign-off, then archive or start the next objective."
-        elif not objective:
-            verdict = "objective missing"
-            next_step = f"Set the intended objective with /objective set {project_id} \"objective\"."
-        elif not criteria:
-            verdict = "definition of done missing"
-            next_step = f"Add proof criteria with /objective add {project_id} \"criterion\"."
-        elif state == "running":
-            verdict = "in progress"
-            next_step = f"Watch the active run: /watch {project_id}"
-        elif confidence == "blocked" or blocked_criteria:
-            verdict = "blocked"
-            next_step = f"Inspect the blocker: /playback {project_id}"
-        elif approvals:
-            verdict = "waiting for approval"
-            next_step = "Review pending approval requests with /approvals."
-        elif open_criteria:
-            verdict = "not done"
-            next_step = f"Continue work on the open criteria or add proof with /objective done {project_id} <number> \"evidence\"."
-        elif not checks:
-            verdict = "needs verification"
-            next_step = f"Ask Commander to verify the project before calling it done: /done {project_id}"
-        elif changed_count:
-            verdict = "reviewable, not final"
-            next_step = f"Review what changed and approve the final checkpoint if it is right: /evidence {project_id}"
-        else:
-            verdict = "done candidate"
-            next_step = "Do a final owner review before calling this project complete."
-        percent = (20 if objective else 0) + int((len(done_criteria) / len(criteria)) * 50) if criteria else (20 if objective else 0)
-        if checks:
-            percent += 15
-        if no_hazards:
-            percent += 15
-        if not strict_done:
-            percent = min(percent, 99)
-        blocker = commander.audit_clean(playback.get("blocker") or "none reported", limit=260)
+        try:
+            done_count = int(completion.get("done_criteria") or 0)
+        except (TypeError, ValueError):
+            done_count = len([item for item in criteria if item.get("status") in {"done", "waived"}])
+        try:
+            total_count = int(completion.get("total_criteria") or len(criteria))
+        except (TypeError, ValueError):
+            total_count = len(criteria)
+        try:
+            changed_count = int(completion.get("changed_count") or 0)
+        except (TypeError, ValueError):
+            changed_count = 0
+        try:
+            percent = int(completion.get("completion_percent") or 0)
+        except (TypeError, ValueError):
+            percent = 0
+        verdict = str(completion.get("verdict") or "unknown")
+        next_step = str(completion.get("next_step") or f"Review completion with /done {project_id}.")
+        blocker = commander.audit_clean(completion.get("blocker") or "none reported", limit=260)
         scorecard = completion_owner_scorecard(
             verdict=verdict,
             percent=percent,
             objective=objective,
-            criteria_total=len(criteria),
-            criteria_done=len(done_criteria),
+            criteria_total=total_count,
+            criteria_done=done_count,
             open_count=len(open_criteria),
             blocked_count=len(blocked_criteria),
             checks_count=len(checks),
@@ -1085,28 +1061,32 @@ def dashboard_project_completion_cards(operator_playback: list[dict[str, Any]], 
             changed_count=changed_count,
             blocker=blocker,
             next_step=next_step,
-            strict_done=strict_done,
+            strict_done=verdict == "100% done candidate",
         )
-        cards.append(
+        card = dict(completion)
+        card.update(scorecard)
+        card.update(
             {
                 "project": commander.audit_clean(project_id, limit=120),
                 "project_id": commander.audit_clean(project_id, limit=120),
                 "project_name": project_name,
                 "objective": objective,
-                "verdict": verdict,
+                "verdict": commander.audit_clean(verdict, limit=120),
                 "completion_percent": percent,
-                "state": commander.audit_clean(state, limit=80),
-                "confidence": commander.audit_clean(confidence, limit=120),
+                "state": commander.audit_clean(completion.get("state") or "", limit=80),
+                "confidence": commander.audit_clean(completion.get("confidence") or "", limit=120),
                 "criteria": criteria,
-                "done_criteria": len(done_criteria),
-                "total_criteria": len(criteria),
+                "done_criteria": done_count,
+                "total_criteria": total_count,
                 "checks": [commander.audit_clean(item, limit=180) for item in checks[:5]],
                 "pending_approvals": approvals,
                 "changed_count": changed_count,
                 "blocker": blocker,
                 "next_step": commander.audit_clean(next_step, limit=300),
-                **scorecard,
             }
+        )
+        cards.append(
+            card
         )
     cards.sort(key=completion_card_sort_key)
     return cards

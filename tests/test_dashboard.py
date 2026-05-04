@@ -254,15 +254,27 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(rows[0]["command"], "/autopilot run")
 
     def test_dashboard_project_completion_cards_include_owner_scorecard(self) -> None:
-        original_profile = dashboard.commander.project_profile
+        original_completion = dashboard.commander.project_completion_card
         original_label = dashboard.commander.project_label
         try:
-            dashboard.commander.project_profile = lambda project_id: {  # type: ignore[assignment]
+            dashboard.commander.project_completion_card = lambda project_id, user_id=None: {  # type: ignore[assignment]
+                "project": project_id,
                 "objective": "Ship a local health assistant owner demo.",
-                "done_criteria": [
+                "verdict": "not done",
+                "completion_percent": 85,
+                "state": "completed",
+                "confidence": "reviewable",
+                "criteria": [
                     {"id": "1", "text": "Patient onboarding works", "status": "done", "evidence": "tests passed"},
                     {"id": "2", "text": "Clinician review works", "status": "open", "evidence": ""},
                 ],
+                "done_criteria": 1,
+                "total_criteria": 2,
+                "checks": ["python -m unittest"],
+                "pending_approvals": [],
+                "changed_count": 3,
+                "blocker": "none reported",
+                "next_step": "Continue work on the open criteria or add proof with /objective done health <number> \"evidence\".",
             }
             dashboard.commander.project_label = lambda project_id, project=None, include_id=True: "Health Companion AI"  # type: ignore[assignment]
 
@@ -281,7 +293,7 @@ class DashboardCapabilityTests(unittest.TestCase):
                 user_id="owner",
             )
         finally:
-            dashboard.commander.project_profile = original_profile  # type: ignore[assignment]
+            dashboard.commander.project_completion_card = original_completion  # type: ignore[assignment]
             dashboard.commander.project_label = original_label  # type: ignore[assignment]
 
         card = cards[0]
@@ -297,17 +309,44 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertFalse(card["owner_can_call_done"])
 
     def test_dashboard_project_completion_prioritizes_actionable_projects(self) -> None:
-        original_profile = dashboard.commander.project_profile
+        original_completion = dashboard.commander.project_completion_card
         original_label = dashboard.commander.project_label
-        profiles = {
-            "missing": {},
+        completions = {
+            "missing": {
+                "project": "missing",
+                "objective": "",
+                "verdict": "objective missing",
+                "completion_percent": 0,
+                "state": "completed",
+                "confidence": "reviewable",
+                "criteria": [],
+                "done_criteria": 0,
+                "total_criteria": 0,
+                "checks": [],
+                "pending_approvals": [],
+                "changed_count": 0,
+                "blocker": "none reported",
+                "next_step": "Set the intended objective.",
+            },
             "health": {
+                "project": "health",
                 "objective": "Ship the health companion.",
-                "done_criteria": [{"id": "1", "text": "Clinical safety works", "status": "done", "evidence": "tests passed"}],
+                "verdict": "reviewable, not final",
+                "completion_percent": 99,
+                "state": "completed",
+                "confidence": "reviewable",
+                "criteria": [{"id": "1", "text": "Clinical safety works", "status": "done", "evidence": "tests passed"}],
+                "done_criteria": 1,
+                "total_criteria": 1,
+                "checks": ["python -m unittest"],
+                "pending_approvals": [],
+                "changed_count": 2,
+                "blocker": "none reported",
+                "next_step": "Review what changed.",
             },
         }
         try:
-            dashboard.commander.project_profile = lambda project_id: profiles.get(project_id, {})  # type: ignore[assignment]
+            dashboard.commander.project_completion_card = lambda project_id, user_id=None: completions[project_id]  # type: ignore[assignment]
             dashboard.commander.project_label = lambda project_id, project=None, include_id=True: {"health": "Health Companion AI", "missing": "Unconfigured Project"}.get(project_id, project_id)  # type: ignore[assignment]
 
             cards = dashboard.dashboard_project_completion_cards(
@@ -318,12 +357,12 @@ class DashboardCapabilityTests(unittest.TestCase):
                 user_id="owner",
             )
         finally:
-            dashboard.commander.project_profile = original_profile  # type: ignore[assignment]
+            dashboard.commander.project_completion_card = original_completion  # type: ignore[assignment]
             dashboard.commander.project_label = original_label  # type: ignore[assignment]
 
         self.assertEqual(cards[0]["project_id"], "health")
         self.assertEqual(cards[0]["project_name"], "Health Companion AI")
-        self.assertEqual(cards[0]["verdict"], "blocked")
+        self.assertEqual(cards[0]["verdict"], "reviewable, not final")
         self.assertEqual(cards[1]["verdict"], "objective missing")
 
     def test_dashboard_recommendations_include_autopilot_actions(self) -> None:
