@@ -10,7 +10,7 @@ from commanderx.browser import PageSummaryParser, format_inspection, BrowserInsp
 from commanderx.clickup_api import filter_tasks, format_tasks, settings_from_env
 from commanderx.cleanup import bytes_to_mb, format_cleanup_scan
 from commanderx import computer as computer_tools
-from commanderx.computer import app_catalog, normalize_url, resolve_web_shortcut
+from commanderx.computer import app_catalog, normalize_url, resolve_web_shortcut, web_shortcut_catalog
 
 
 class ComputerToolTests(unittest.TestCase):
@@ -19,6 +19,21 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(normalize_url("https://example.com"), "https://example.com")
         self.assertEqual(resolve_web_shortcut("Gmail"), "https://mail.google.com")
         self.assertEqual(normalize_url("gmail"), "https://mail.google.com")
+
+    def test_web_shortcut_catalog_merges_safe_custom_shortcuts(self) -> None:
+        shortcuts = web_shortcut_catalog(
+            {
+                "web_shortcuts": {
+                    "Company CRM": "https://crm.example.com",
+                    "bad": "file:///C:/secret",
+                    "empty": "",
+                }
+            }
+        )
+
+        self.assertEqual(shortcuts["company crm"], "https://crm.example.com")
+        self.assertNotIn("bad", shortcuts)
+        self.assertEqual(normalize_url("company crm", {"web_shortcuts": {"Company CRM": "https://crm.example.com"}}), "https://crm.example.com")
 
     def test_app_catalog_merges_custom_apps(self) -> None:
         apps = app_catalog({"apps": {"chrome": ["chrome.exe"], "solo": "solo.exe"}})
@@ -171,13 +186,28 @@ class ComputerToolTests(unittest.TestCase):
         original_open_url = commander.computer_open_url
         calls: list[str] = []
         try:
-            commander.computer_open_url = lambda url: calls.append(url) or (True, f"Opened URL: {normalize_url(url)}")  # type: ignore[assignment]
+            commander.computer_open_url = lambda url, config=None: calls.append(url) or (True, f"Opened URL: {normalize_url(url, config)}")  # type: ignore[assignment]
             rendered = commander.command_open(["gmail"])
         finally:
             commander.computer_open_url = original_open_url  # type: ignore[assignment]
 
         self.assertEqual(calls, ["gmail"])
         self.assertIn("https://mail.google.com", rendered)
+
+    def test_open_command_uses_configured_web_shortcuts(self) -> None:
+        original_open_url = commander.computer_open_url
+        original_config = commander.computer_tools_config
+        calls: list[str] = []
+        try:
+            commander.computer_tools_config = lambda: {"web_shortcuts": {"company crm": "https://crm.example.com"}}  # type: ignore[assignment]
+            commander.computer_open_url = lambda url, config=None: calls.append(url) or (True, f"Opened URL: {normalize_url(url, config)}")  # type: ignore[assignment]
+            rendered = commander.command_open(["company", "crm"])
+        finally:
+            commander.computer_open_url = original_open_url  # type: ignore[assignment]
+            commander.computer_tools_config = original_config  # type: ignore[assignment]
+
+        self.assertEqual(calls, ["company crm"])
+        self.assertIn("https://crm.example.com", rendered)
 
     def test_single_project_start_response_starts_resolved_project(self) -> None:
         original_projects_config = commander.projects_config

@@ -6066,31 +6066,32 @@ def command_file(args: list[str], user_id: str) -> str:
 
 
 def command_open(args: list[str]) -> str:
+    config = computer_tools_config()
     if not args:
-        apps = ", ".join(sorted(app_catalog(computer_tools_config())))
-        shortcuts = ", ".join(sorted(web_shortcut_catalog())[:10])
+        apps = ", ".join(sorted(app_catalog(config)))
+        shortcuts = ", ".join(sorted(web_shortcut_catalog(config))[:10])
         return f"Usage: /open url <url>, /open <web app>, or /open app <name>\nWeb shortcuts include: {shortcuts}\nAllowlisted apps: {apps}"
     first = args[0].lower()
     if first in {"url", "site", "website", "web"}:
         if len(args) < 2:
             return "Usage: /open url <url>"
-        ok, message = computer_open_url(" ".join(args[1:]))
+        ok, message = computer_open_url(" ".join(args[1:]), config)
         return message
     if first in {"app", "application"}:
         if len(args) < 2:
             return "Usage: /open app <allowlisted_app>"
-        ok, message = computer_open_app(" ".join(args[1:]), computer_tools_config())
+        ok, message = computer_open_app(" ".join(args[1:]), config)
         return message
-    apps = app_catalog(computer_tools_config())
+    apps = app_catalog(config)
     joined = " ".join(args)
     if re.search(r"^(https?://|www\.)", joined, flags=re.IGNORECASE) or re.search(r"\.[A-Za-z]{2,}(/|$)", joined):
-        ok, message = computer_open_url(joined)
+        ok, message = computer_open_url(joined, config)
         return message
-    if resolve_web_shortcut(joined):
-        ok, message = computer_open_url(joined)
+    if resolve_web_shortcut(joined, config):
+        ok, message = computer_open_url(joined, config)
         return message
     if first in apps:
-        ok, message = computer_open_app(first, computer_tools_config())
+        ok, message = computer_open_app(first, config)
         return message
     return f"I could not tell whether that is a URL or app.\nUsage: /open url <url> or /open app <name>"
 
@@ -6140,12 +6141,13 @@ def command_volume(args: list[str]) -> str:
 def command_computer(args: list[str], user_id: str) -> str:
     action = args[0].lower() if args else "status"
     if action in {"status", "tools", "capabilities"}:
-        apps = ", ".join(sorted(app_catalog(computer_tools_config())))
+        config = computer_tools_config()
+        apps = ", ".join(sorted(app_catalog(config)))
         lines = [
             "Computer broker",
             f"Mode: {assistant_mode(user_id)}",
             f"Allowlisted apps: {apps}",
-            f"Web shortcuts: {', '.join(sorted(web_shortcut_catalog())[:12])}",
+            f"Web shortcuts: {', '.join(sorted(web_shortcut_catalog(config))[:12])}",
             "",
             "Commands:",
             "- /open url <url>",
@@ -8028,7 +8030,7 @@ def natural_computer_command(text: str) -> str | None:
     if re.search(r"\b(open|launch|start|visit|go to|browse|pull up)\b", lowered):
         target = re.sub(r"^\s*(open|launch|start|visit|go to|browse|pull up)\s+(the\s+)?", "", lowered).strip()
         target = re.sub(r"\s+(please|for me)$", "", target).strip()
-        if resolve_web_shortcut(target):
+        if resolve_web_shortcut(target, computer_tools_config()):
             return f"/open url {target}"
         apps = app_catalog(computer_tools_config())
         for name in sorted(apps, key=len, reverse=True):

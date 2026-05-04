@@ -361,7 +361,7 @@ Commander X intentionally does not expose a raw `/run` shell over Telegram. Devi
 
 Default allowlisted apps are `notepad`, `calculator`, `paint`, and `explorer`. To add more, copy `computer_tools.example.json` to `computer_tools.json` and add app commands there.
 
-`/open` also understands safe web shortcuts such as `gmail`, `google calendar`, `google drive`, `github`, `chatgpt`, `clickup`, `telegram`, `whatsapp`, `supabase`, `netlify`, `render`, and `stripe`, so natural requests like "open Gmail" do not require the URL.
+`/open` also understands safe web shortcuts such as `gmail`, `google calendar`, `google drive`, `github`, `chatgpt`, `clickup`, `telegram`, `whatsapp`, `supabase`, `netlify`, `render`, and `stripe`, so natural requests like "open Gmail" do not require the URL. Add personal shortcuts under `web_shortcuts` in `computer_tools.json`; only `http://` and `https://` targets are accepted.
 
 File reads stay inside registered project folders and block secret-like files such as `.env`, private keys, and credential files.
 

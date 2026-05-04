@@ -56,20 +56,30 @@ VOLUME_KEYS = {
 }
 
 
-def resolve_web_shortcut(value: str) -> str:
+def web_shortcut_catalog(config: dict[str, Any] | None = None) -> dict[str, str]:
+    shortcuts = dict(WEB_SHORTCUTS)
+    for name, target in (config or {}).get("web_shortcuts", {}).items():
+        if not isinstance(target, str):
+            continue
+        clean_target = target.strip()
+        if not clean_target.startswith(("http://", "https://")):
+            continue
+        key = " ".join(str(name).strip().lower().split())
+        if key:
+            shortcuts[key] = clean_target
+    return shortcuts
+
+
+def resolve_web_shortcut(value: str, config: dict[str, Any] | None = None) -> str:
     key = " ".join(value.strip().lower().split())
-    return WEB_SHORTCUTS.get(key, "")
+    return web_shortcut_catalog(config).get(key, "")
 
 
-def web_shortcut_catalog() -> dict[str, str]:
-    return dict(WEB_SHORTCUTS)
-
-
-def normalize_url(url: str) -> str:
+def normalize_url(url: str, config: dict[str, Any] | None = None) -> str:
     clean = url.strip()
     if not clean:
         return ""
-    shortcut = resolve_web_shortcut(clean)
+    shortcut = resolve_web_shortcut(clean, config)
     if shortcut:
         return shortcut
     if not clean.startswith(("http://", "https://")):
@@ -77,8 +87,8 @@ def normalize_url(url: str) -> str:
     return clean
 
 
-def open_url(url: str) -> tuple[bool, str]:
-    clean = normalize_url(url)
+def open_url(url: str, config: dict[str, Any] | None = None) -> tuple[bool, str]:
+    clean = normalize_url(url, config)
     if not clean:
         return False, "URL is required."
     opened = webbrowser.open(clean)

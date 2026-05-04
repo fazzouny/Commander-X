@@ -5,5 +5,11 @@
     "paint": ["mspaint.exe"],
     "explorer": ["explorer.exe"]
   },
+  "web_shortcuts": {
+    "gmail": "https://mail.google.com",
+    "calendar": "https://calendar.google.com",
+    "github": "https://github.com",
+    "chatgpt": "https://chatgpt.com"
+  },
   "safe_roots": []
 }
