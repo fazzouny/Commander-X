@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 import tempfile
 import subprocess
@@ -1700,6 +1701,86 @@ class BrowserAndClickUpTests(unittest.TestCase):
             self.assertEqual(path.parent, Path(temp))
             self.assertTrue(path.exists())
             self.assertIn("[REDACTED]", path.read_text(encoding="utf-8"))
+
+    def test_commander_backup_payload_excludes_secrets_paths_and_ids(self) -> None:
+        original_projects = commander.projects_config
+        original_profiles = commander.profiles_data
+        original_computer = commander.computer_tools_config
+        original_sessions = commander.sessions_data
+        original_tasks = commander.tasks_data
+        original_memory = commander.memory_data
+        original_audit = commander.audit_data
+        original_allowed = commander.allowed_user_ids
+        try:
+            commander.projects_config = lambda: {  # type: ignore[assignment]
+                "projects": {
+                    "health": {
+                        "name": "Health Companion",
+                        "path": "C:\\Users\\Name\\secret\\app",
+                        "allowed": True,
+                        "aliases": ["health assistant"],
+                    }
+                }
+            }
+            commander.profiles_data = lambda: {  # type: ignore[assignment]
+                "profiles": {
+                    "health": {
+                        "objective": "Ship the assistant api_key=secret123",
+                        "verification_commands": ["npm test"],
+                        "notes": ["Do not expose token=abc123"],
+                    }
+                }
+            }
+            commander.computer_tools_config = lambda: {  # type: ignore[assignment]
+                "apps": {"private app": ["C:\\Users\\Name\\secret.exe"]},
+                "web_shortcuts": {"crm": "https://crm.example.com/home?token=abc123"},
+                "safe_roots": ["C:\\Users\\Name"],
+            }
+            commander.sessions_data = lambda: {"sessions": {"health": {"state": "running", "pending_actions": {"a1": {}}}}}  # type: ignore[assignment]
+            commander.tasks_data = lambda: {"tasks": [{"id": "t1"}]}  # type: ignore[assignment]
+            commander.memory_data = lambda: {"memories": [{"id": "m1"}]}  # type: ignore[assignment]
+            commander.audit_data = lambda: {"events": [{"id": "e1"}]}  # type: ignore[assignment]
+            commander.allowed_user_ids = lambda: ["123456789"]  # type: ignore[assignment]
+
+            payload = commander.commander_backup_payload()
+        finally:
+            commander.projects_config = original_projects  # type: ignore[assignment]
+            commander.profiles_data = original_profiles  # type: ignore[assignment]
+            commander.computer_tools_config = original_computer  # type: ignore[assignment]
+            commander.sessions_data = original_sessions  # type: ignore[assignment]
+            commander.tasks_data = original_tasks  # type: ignore[assignment]
+            commander.memory_data = original_memory  # type: ignore[assignment]
+            commander.audit_data = original_audit  # type: ignore[assignment]
+            commander.allowed_user_ids = original_allowed  # type: ignore[assignment]
+
+        text = json.dumps(payload)
+        self.assertEqual(payload["setup"]["allowlist"]["allowed_user_count"], 1)
+        self.assertTrue(payload["projects"]["health"]["has_local_path"])
+        self.assertEqual(payload["computer_tools"]["safe_root_count"], 1)
+        self.assertEqual(payload["computer_tools"]["web_shortcuts"]["crm"], "https://crm.example.com/home")
+        self.assertNotIn("C:\\Users", text)
+        self.assertNotIn("123456789", text)
+        self.assertNotIn("token=abc123", text)
+        self.assertNotIn("api_key=secret123", text)
+
+    def test_command_backup_saves_sanitized_snapshot(self) -> None:
+        original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                commander.os.environ["COMMANDER_BACKUP_DIR"] = temp
+                text = commander.command_backup(["save"])
+                paths = list(Path(temp).glob("commander-x-safe-config-*.json"))
+                saved = paths[0].read_text(encoding="utf-8") if paths else ""
+            finally:
+                if original_backup_dir is None:
+                    commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+
+        self.assertEqual(len(paths), 1)
+        self.assertIn("Saved Commander safe config backup", text)
+        self.assertIn("commander-x-safe-config-backup", saved)
+        self.assertNotIn("sk-", saved)
 
     def test_service_helpers_hide_paths_and_detect_processes(self) -> None:
         self.assertEqual(

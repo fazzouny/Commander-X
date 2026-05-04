@@ -163,6 +163,7 @@ Remove it later with:
 /open gmail
 /open google calendar
 /shortcut add company-crm https://crm.example.com
+/backup
 /open app notepad
 /file example-app README.md 80
 /volume down 5
@@ -355,6 +356,7 @@ Commander X intentionally does not expose a raw `/run` shell over Telegram. Devi
 /shortcut
 /shortcut add <name> <https-url>
 /shortcut delete <name>
+/backup [preview|list]
 /open app <allowlisted_app>
 /file <project> <relative_path> [lines]
 /volume up|down|max|mute [steps]
@@ -368,6 +370,8 @@ Default allowlisted apps are `notepad`, `calculator`, `paint`, and `explorer`. T
 `/open` also understands safe web shortcuts such as `gmail`, `google calendar`, `google drive`, `github`, `chatgpt`, `clickup`, `telegram`, `whatsapp`, `supabase`, `netlify`, `render`, and `stripe`, so natural requests like "open Gmail" do not require the URL. Add personal shortcuts under `web_shortcuts` in `computer_tools.json`; only `http://` and `https://` targets are accepted.
 
 File reads stay inside registered project folders and block secret-like files such as `.env`, private keys, and credential files.
+
+`/backup` writes a sanitized Commander configuration snapshot under `backups/`. It excludes `.env` values, tokens, Telegram user IDs, full local paths, logs, and command output. Use `/backup preview` to inspect the summary first and `/backup list` to see saved snapshots.
 
 Device and readiness checks:
 

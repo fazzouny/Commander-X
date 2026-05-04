@@ -93,6 +93,7 @@ VOICE_DIR = LOG_DIR / "voice"
 IMAGE_DIR = LOG_DIR / "images"
 SCREENSHOT_DIR = LOG_DIR / "screenshots"
 DEFAULT_REPORT_DIR = BASE_DIR / "reports"
+DEFAULT_BACKUP_DIR = BASE_DIR / "backups"
 ENV_FILE = BASE_DIR / ".env"
 SESSION_LOCK = threading.Lock()
 PROCESSES: dict[str, subprocess.Popen[str]] = {}
@@ -164,6 +165,7 @@ NL_ALLOWED_COMMANDS = {
     "/cancel",
     "/audit",
     "/report",
+    "/backup",
     "/check",
     "/focus",
     "/context",
@@ -233,6 +235,7 @@ TELEGRAM_COMMANDS = [
     ("cancel", "Cancel a pending action"),
     ("audit", "Show approval audit history"),
     ("report", "Show operator report"),
+    ("backup", "Save sanitized config backup"),
     ("heartbeat", "Manage automatic status updates"),
     ("remember", "Save a Commander memory"),
     ("memory", "Show saved Commander memories"),
@@ -4523,6 +4526,14 @@ def report_dir() -> Path:
     return path if path.is_absolute() else BASE_DIR / path
 
 
+def backup_dir() -> Path:
+    configured = str(os.environ.get("COMMANDER_BACKUP_DIR") or "").strip()
+    if not configured:
+        return DEFAULT_BACKUP_DIR
+    path = Path(os.path.expandvars(os.path.expanduser(configured)))
+    return path if path.is_absolute() else BASE_DIR / path
+
+
 def report_limit() -> int:
     raw = str(os.environ.get("COMMANDER_REPORT_LIMIT") or "12").strip()
     if not raw.isdigit():
@@ -4853,6 +4864,163 @@ def save_operator_report(markdown: str) -> Path:
     path = directory / f"commander-x-report-{stamp}.md"
     path.write_text(redact(markdown), encoding="utf-8")
     return path
+
+
+def safe_backup_text(value: Any) -> str:
+    return safe_brief_text(redact(str(value or "")))
+
+
+def clean_list(values: Any, limit: int = 12) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [safe_backup_text(item) for item in values[:limit] if str(item or "").strip()]
+
+
+def safe_project_backup(project_id: str, project: dict[str, Any], profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    profile = profile or {}
+    criteria = normalize_done_criteria(profile.get("done_criteria") or project.get("done_criteria") or [])
+    return {
+        "id": safe_backup_text(project_id),
+        "name": safe_backup_text(project.get("name") or project_id),
+        "allowed": bool(project.get("allowed", False)),
+        "aliases": clean_list(project.get("aliases") or profile.get("aliases") or [], limit=12),
+        "default_branch": safe_backup_text(project.get("default_branch") or profile.get("default_branch") or ""),
+        "has_local_path": bool(project.get("path")),
+        "objective": safe_backup_text(profile.get("objective") or project.get("objective") or ""),
+        "done_criteria": [
+            {
+                "text": safe_backup_text(item.get("text") or item.get("title") or ""),
+                "done": bool(item.get("done")),
+                "evidence": safe_backup_text(item.get("evidence") or ""),
+            }
+            for item in criteria[:20]
+            if isinstance(item, dict)
+        ],
+        "verification_commands": clean_list(profile.get("verification_commands") or project.get("verification_commands") or [], limit=10),
+        "stack": clean_list(profile.get("stack") or project.get("stack") or [], limit=12),
+        "notes": clean_list(profile.get("notes") or project.get("notes") or [], limit=12),
+        "risk_rules": clean_list(profile.get("risk_rules") or project.get("risk_rules") or [], limit=12),
+    }
+
+
+def safe_web_shortcuts_backup(config: dict[str, Any]) -> dict[str, str]:
+    shortcuts: dict[str, str] = {}
+    for name, target in sorted(web_shortcut_catalog(config).items()):
+        display = safe_web_shortcut_display(target)
+        if display:
+            shortcuts[safe_backup_text(name)] = safe_backup_text(display)
+    return shortcuts
+
+
+def commander_backup_payload() -> dict[str, Any]:
+    projects = projects_config().get("projects", {})
+    profiles = profiles_data().get("profiles", {})
+    computer_config = computer_tools_config()
+    sessions = sessions_data().get("sessions", {})
+    tasks = tasks_data().get("tasks", [])
+    memories = memory_data().get("memories", [])
+    audit_events = audit_data().get("events", [])
+    return {
+        "kind": "commander-x-safe-config-backup",
+        "generated_at": utc_now(),
+        "schema_version": 1,
+        "warning": "Secrets, environment values, Telegram user IDs, full local paths, logs, and command output are intentionally excluded.",
+        "projects": {
+            str(project_id): safe_project_backup(str(project_id), project if isinstance(project, dict) else {}, profiles.get(project_id) if isinstance(profiles, dict) else {})
+            for project_id, project in sorted(projects.items())
+        },
+        "computer_tools": {
+            "app_names": sorted(app_catalog(computer_config)),
+            "web_shortcuts": safe_web_shortcuts_backup(computer_config),
+            "safe_root_count": len(computer_config.get("safe_roots") or []),
+        },
+        "setup": {
+            "env_readiness": env_readiness_summary(),
+            "allowlist": {"allowed_user_count": len(allowed_user_ids())},
+            "heartbeat_defaults": {
+                "minutes": int(os.environ.get("COMMANDER_HEARTBEAT_MINUTES") or DEFAULT_HEARTBEAT_MINUTES),
+                "quiet_start": os.environ.get("COMMANDER_HEARTBEAT_QUIET_START") or DEFAULT_QUIET_START,
+                "quiet_end": os.environ.get("COMMANDER_HEARTBEAT_QUIET_END") or DEFAULT_QUIET_END,
+            },
+        },
+        "state_summary": {
+            "sessions": {
+                str(project_id): {
+                    "state": safe_brief_text(session.get("state") if isinstance(session, dict) else "unknown"),
+                    "has_pending_actions": bool((session or {}).get("pending_actions")) if isinstance(session, dict) else False,
+                }
+                for project_id, session in sorted(sessions.items())
+            },
+            "task_count": len(tasks) if isinstance(tasks, list) else 0,
+            "memory_count": len(memories) if isinstance(memories, list) else 0,
+            "audit_event_count": len(audit_events) if isinstance(audit_events, list) else 0,
+        },
+    }
+
+
+def env_readiness_summary() -> dict[str, dict[str, int]]:
+    summary: dict[str, dict[str, int]] = {}
+    for group, keys in env_readiness().items():
+        configured = sum(1 for state in keys.values() if state == "configured")
+        missing = sum(1 for state in keys.values() if state != "configured")
+        summary[group] = {"configured": configured, "missing": missing, "total": len(keys)}
+    return summary
+
+
+def save_commander_backup(payload: dict[str, Any] | None = None) -> Path:
+    directory = backup_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    path = directory / f"commander-x-safe-config-{stamp}.json"
+    text = json.dumps(payload or commander_backup_payload(), ensure_ascii=False, indent=2, sort_keys=True)
+    path.write_text(redact(text) + "\n", encoding="utf-8")
+    return path
+
+
+def saved_commander_backups(limit: int = 8) -> list[Path]:
+    directory = backup_dir()
+    if not directory.exists():
+        return []
+    try:
+        return sorted(directory.glob("commander-x-safe-config-*.json"), key=lambda item: item.stat().st_mtime, reverse=True)[:limit]
+    except OSError:
+        return []
+
+
+def format_backup_summary(payload: dict[str, Any]) -> str:
+    projects = payload.get("projects") if isinstance(payload.get("projects"), dict) else {}
+    shortcuts = ((payload.get("computer_tools") or {}).get("web_shortcuts") or {}) if isinstance(payload.get("computer_tools"), dict) else {}
+    state = payload.get("state_summary") if isinstance(payload.get("state_summary"), dict) else {}
+    return "\n".join(
+        [
+            "Commander safe config backup",
+            f"Projects: {len(projects)}",
+            f"Web shortcuts: {len(shortcuts)}",
+            f"Sessions: {len(state.get('sessions') or {})}",
+            f"Tasks: {state.get('task_count', 0)}",
+            f"Memories: {state.get('memory_count', 0)}",
+            "Excluded: .env values, tokens, Telegram user IDs, full local paths, logs, and command output.",
+        ]
+    )
+
+
+def command_backup(args: list[str]) -> str:
+    action = args[0].lower() if args else "save"
+    if action in {"preview", "status", "show"}:
+        return format_backup_summary(commander_backup_payload())
+    if action in {"list", "history"}:
+        backups = saved_commander_backups()
+        if not backups:
+            return "No Commander safe config backups found yet.\nCreate one with /backup."
+        lines = ["Commander safe config backups:"]
+        for path in backups:
+            lines.append(f"- {path.name} ({human_report_size(path.stat().st_size)})")
+        return "\n".join(lines)
+    if action in {"save", "export", "write", "create"}:
+        payload = commander_backup_payload()
+        path = save_commander_backup(payload)
+        return f"Saved Commander safe config backup: {path.name}\n\n" + format_backup_summary(payload)
+    return "Usage: /backup, /backup preview, or /backup list"
 
 
 def command_report(args: list[str], user_id: str) -> str:
@@ -7426,6 +7594,7 @@ def command_help() -> str:
 /cancel <project> [approval_id]
 /audit
 /report [save]
+/backup [preview|list]
 /reviews [details]
 /heartbeat on [minutes]
 /heartbeat off
@@ -8025,6 +8194,8 @@ def natural_computer_command(text: str) -> str | None:
         return "/audit"
     if re.search(r"\b(operator report|commander report|status report|export report|report snapshot|briefing pack)\b", lowered):
         return "/report"
+    if re.search(r"\b(backup|back up|export|snapshot)\b", lowered) and re.search(r"\b(commander|config|configuration|settings|setup)\b", lowered):
+        return "/backup"
     if re.search(r"\b(approvals?|approve list|pending approvals?|decisions? to approve|approve or cancel)\b", lowered):
         return "/approvals"
     if re.search(r"\b(tell|notify|let me know|message|ping)\b", lowered) and re.search(
@@ -8240,6 +8411,7 @@ Allowed commands:
 /cancel <project> [approval_id]
 /audit
 /report [save]
+/backup [preview|list]
 /reviews [details]
 /mission [project]
 /replay [project]
@@ -8289,6 +8461,7 @@ Rules:
 - If the user asks for approvals, pending approvals, approve list, or decisions to approve/cancel, map to /approvals.
 - If the user asks for approval history, audit trail, what was approved, or what was cancelled, map to /audit.
 - If the user asks for an operator report, Commander report, exportable status report, report snapshot, or briefing pack, map to /report.
+- If the user asks to back up, export, or snapshot Commander configuration, map to /backup.
 - If the user asks for saved owner review packs, previous review packs, review history, or saved project reports, map to /reviews.
 - If the user asks for changed projects, dirty worktrees, local changes, or changes across projects, map to /changes.
 - If the user asks for a work feed, live feed, or all project/Codex progress, map to /feed.
@@ -8452,6 +8625,8 @@ def handle_text(
         return [command_audit()]
     if command == "/report":
         return [command_report(args, user_id=user_id)]
+    if command == "/backup":
+        return [command_backup(args)]
     if command == "/reviews":
         return [command_reviews(args)]
     if command == "/changes":

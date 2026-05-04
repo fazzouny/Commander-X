@@ -10,6 +10,8 @@ logs/*
 !logs/.gitkeep
 reports/*
 !reports/.gitkeep
+backups/*
+!backups/.gitkeep
 sessions.json
 commander_state.json
 *.tmp
