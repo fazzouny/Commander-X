@@ -982,12 +982,14 @@ class BrowserAndClickUpTests(unittest.TestCase):
             commander.project_label = original_label  # type: ignore[assignment]
             commander.report_dir = original_report_dir  # type: ignore[assignment]
 
-        self.assertIn("Saved locally in Commander reports as:", rendered)
+        self.assertIn("Saved locally in Commander reports.", rendered)
         self.assertIn("Owner review pack: Example Product", saved)
         self.assertNotIn("C:\\", saved)
         self.assertNotIn("app.py", saved)
         self.assertNotIn("secret123", saved)
         self.assertIn("[REDACTED]", saved)
+        self.assertNotIn("example-owner-review", rendered)
+        self.assertIn("Open it from dashboard Owner Reviews", rendered)
 
     def test_saved_owner_reviews_list_hides_filenames_by_default(self) -> None:
         original_report_dir = commander.report_dir
@@ -1012,6 +1014,35 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn("example-owner-review", rendered)
         self.assertNotIn("C:\\", rendered)
         self.assertIn("example-owner-review", detailed)
+
+    def test_saved_owner_review_pack_preview_hides_paths_and_filenames(self) -> None:
+        original_report_dir = commander.report_dir
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                report = root / "example-owner-review-20260504-010000.md"
+                report.write_text(
+                    "Owner review pack: Example Product\n"
+                    "- Proof: Local checks passed for C:\\AI-Company\\Example\\src\\app.py\n"
+                    "- Secret: api_key=secret123\n",
+                    encoding="utf-8",
+                )
+                commander.report_dir = lambda: root  # type: ignore[assignment]
+
+                preview = commander.saved_owner_review_pack_preview("Example Product")
+        finally:
+            commander.report_dir = original_report_dir  # type: ignore[assignment]
+
+        self.assertIsNotNone(preview)
+        assert preview is not None
+        text = preview["text"]
+        self.assertEqual(preview["project"], "Example Product")
+        self.assertIn("Owner review pack: Example Product", text)
+        self.assertNotIn("C:\\", text)
+        self.assertNotIn("app.py", text)
+        self.assertNotIn("secret123", text)
+        self.assertNotIn("example-owner-review", str(preview))
+        self.assertIn("[REDACTED]", text)
 
     def test_log_progress_signals_detect_blockers_without_paths(self) -> None:
         raw = """

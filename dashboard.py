@@ -1449,6 +1449,16 @@ def dashboard_review_save_action(payload: dict[str, Any]) -> tuple[dict[str, Any
     return {"ok": True, "project": project_id, "text": result}, 200
 
 
+def dashboard_review_preview_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    project = str(payload.get("project", "")).strip()
+    if not project:
+        return {"ok": False, "error": "project is required"}, 400
+    preview = commander.saved_owner_review_pack_preview(project)
+    if not preview:
+        return {"ok": False, "error": "No saved owner review pack found for this project."}, 404
+    return {"ok": True, **preview}, 200
+
+
 def dashboard_image_analyze_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     data_url = str(payload.get("data_url") or "").strip()
     caption = commander.compact(str(payload.get("caption") or ""), limit=1000)
@@ -1732,6 +1742,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/review/save":
             result, status = dashboard_review_save_action(payload)
             invalidate_dashboard_cache()
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/review/preview":
+            result, status = dashboard_review_preview_action(payload)
             self.send_json(result, status=status)
             return
         self.send_json({"ok": False, "error": "Unknown endpoint"}, status=404)

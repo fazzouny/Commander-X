@@ -175,6 +175,7 @@ function renderOwnerReviews(data) {
               <div class="row-meta">${escapeHtml(item.summary || "Saved owner review pack ready.")}</div>
               <div class="row-meta">Saved ${escapeHtml(item.saved_at || "-")} - ${escapeHtml(item.size || "-")}</div>
               <div class="action-center-actions">
+                <button data-review-preview-project="${escapeHtml(item.project || "")}">Open Review</button>
                 <button data-command="${escapeHtml(item.command || "/reviews")}">Copy Command</button>
               </div>
             </div>
@@ -1279,6 +1280,24 @@ async function handleReviewSaveClick(event) {
   await refresh();
 }
 
+async function handleReviewPreviewClick(event) {
+  const button = event.target.closest("[data-review-preview-project]");
+  if (!button) return;
+  const project = button.dataset.reviewPreviewProject;
+  if (!project) return;
+  button.disabled = true;
+  qs("#evidence").textContent = `Opening saved owner review pack for ${project}...`;
+  try {
+    const result = await api("/api/review/preview", {
+      method: "POST",
+      body: JSON.stringify({ project }),
+    });
+    qs("#evidence").textContent = result.text || result.error || JSON.stringify(result, null, 2);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function handleCapabilityClick(event) {
   const button = event.target.closest("[data-command]");
   if (!button) return;
@@ -1390,6 +1409,7 @@ qs("#action-center").addEventListener("click", handleQueueClick);
 qs("#action-center").addEventListener("click", handleWorkFeedClick);
 qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionClick);
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
+qs("#owner-reviews").addEventListener("click", handleReviewPreviewClick);
 qs("#owner-reviews").addEventListener("click", handleCapabilityClick);
 qs("#autopilot").addEventListener("click", handleCapabilityClick);
 qs("#mission-timeline").addEventListener("click", handleWorkFeedClick);

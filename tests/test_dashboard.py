@@ -950,6 +950,39 @@ class DashboardTaskTests(unittest.TestCase):
         self.assertEqual(saved["text"], "saved review")
         self.assertEqual(calls, [(["example", "save"], "dashboard")])
 
+    def test_dashboard_review_preview_action_opens_saved_pack_without_file_ids(self) -> None:
+        original_preview = dashboard.commander.saved_owner_review_pack_preview
+        calls: list[str] = []
+        try:
+            def preview(project: str) -> dict[str, str] | None:
+                calls.append(project)
+                if project != "Example Product":
+                    return None
+                return {
+                    "project": "Example Product",
+                    "saved_at": "2026-05-04 01:00",
+                    "size": "1.1 KB",
+                    "text": "Owner review pack: Example Product\n- Proof: local checks passed",
+                }
+
+            dashboard.commander.saved_owner_review_pack_preview = preview  # type: ignore[assignment]
+
+            missing_project, missing_status = dashboard.dashboard_review_preview_action({})
+            unknown_project, unknown_status = dashboard.dashboard_review_preview_action({"project": "missing"})
+            opened, opened_status = dashboard.dashboard_review_preview_action({"project": "Example Product"})
+        finally:
+            dashboard.commander.saved_owner_review_pack_preview = original_preview  # type: ignore[assignment]
+
+        self.assertEqual(missing_status, 400)
+        self.assertFalse(missing_project["ok"])
+        self.assertEqual(unknown_status, 404)
+        self.assertFalse(unknown_project["ok"])
+        self.assertEqual(opened_status, 200)
+        self.assertEqual(opened["project"], "Example Product")
+        self.assertIn("Owner review pack", opened["text"])
+        self.assertNotIn(".md", str(opened))
+        self.assertEqual(calls, ["missing", "Example Product"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2023,6 +2023,78 @@ def owner_review_label_from_file(path: Path, slug: str) -> str:
     return safe_brief_text(slug.replace("-", " ").title())
 
 
+def saved_owner_review_pack_preview(project: str, limit: int = 3600) -> dict[str, Any] | None:
+    requested = str(project or "").strip()
+    if not requested:
+        return None
+    directory = report_dir()
+    if not directory.exists():
+        return None
+    requested_terms = {requested.lower(), slugify(requested, limit=48)}
+    projects = projects_config().get("projects", {})
+    for project_id, project_config in projects.items():
+        label = project_label(project_id, project=project_config, include_id=False)
+        if requested.lower() in {project_id.lower(), label.lower()} or slugify(requested, limit=48) in {
+            slugify(project_id, limit=48),
+            slugify(label, limit=48),
+        }:
+            requested_terms.update(
+                {
+                    project_id.lower(),
+                    label.lower(),
+                    slugify(project_id, limit=48),
+                    slugify(label, limit=48),
+                }
+            )
+    try:
+        paths = list(directory.glob("*-owner-review-*.md"))
+    except OSError:
+        return None
+
+    def mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    for path in sorted(paths, key=mtime, reverse=True):
+        if not path.is_file():
+            continue
+        match = re.match(r"(?P<slug>.+)-owner-review-(?P<stamp>\d{8}-\d{6})\.md$", path.name)
+        if not match:
+            continue
+        slug = match.group("slug")
+        label = owner_review_label_from_file(path, slug)
+        pack_terms = {slug.lower(), label.lower(), slugify(label, limit=48)}
+        for project_id, project_config in projects.items():
+            project_display = project_label(project_id, project=project_config, include_id=False)
+            if slug in {slugify(project_id, limit=48), slugify(project_display, limit=48)}:
+                pack_terms.update(
+                    {
+                        project_id.lower(),
+                        project_display.lower(),
+                        slugify(project_id, limit=48),
+                        slugify(project_display, limit=48),
+                    }
+                )
+        if not requested_terms.intersection(pack_terms):
+            continue
+        try:
+            stat = path.stat()
+            raw_text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        safe_lines = [safe_brief_text(line) if line.strip() else "" for line in redact(raw_text).splitlines()]
+        text = compact("\n".join(safe_lines), limit=limit)
+        return {
+            "project": safe_brief_text(label),
+            "saved_at": dt.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            "size": human_report_size(stat.st_size),
+            "text": text,
+        }
+    return None
+
+
 def saved_owner_review_packs(limit: int = 8) -> list[dict[str, Any]]:
     directory = report_dir()
     if not directory.exists():
@@ -2133,7 +2205,7 @@ def command_review(args: list[str], user_id: str) -> str:
     content = compact("\n".join(lines), limit=3000)
     if save_requested:
         filename = save_owner_review_pack(project_id, content)
-        content += f"\n\nSaved locally in Commander reports as: {filename}"
+        content += "\n\nSaved locally in Commander reports. Open it from dashboard Owner Reviews, or use /reviews details if you need the technical filename."
     return content
 
 
