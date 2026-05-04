@@ -142,6 +142,7 @@ NL_ALLOWED_COMMANDS = {
     "/openclaw",
     "/system",
     "/env",
+    "/setup",
     "/clipboard",
     "/cleanup",
     "/open",
@@ -207,6 +208,7 @@ TELEGRAM_COMMANDS = [
     ("openclaw", "Show OpenClaw install/status"),
     ("system", "Show device/system status"),
     ("env", "Show setup readiness"),
+    ("setup", "Show capability setup checklist"),
     ("clipboard", "Use guarded clipboard tools"),
     ("cleanup", "Show safe disk cleanup plan"),
     ("open", "Open URL or allowlisted app"),
@@ -236,7 +238,7 @@ TELEGRAM_COMMANDS = [
 ]
 DEFAULT_BUTTON_ROWS = [
     [("Status", "cmd:/status"), ("Projects", "cmd:/projects")],
-    [("Service", "cmd:/service"), ("Doctor", "cmd:/doctor")],
+    [("Service", "cmd:/service"), ("Doctor", "cmd:/doctor"), ("Setup", "cmd:/setup")],
     [("Mode", "cmd:/mode"), ("Free Mode", "cmd:/free")],
     [("Mission", "cmd:/mission"), ("Briefs", "cmd:/briefs"), ("Feed", "cmd:/feed")],
     [("Playback", "cmd:/playback"), ("Evidence", "cmd:/evidence"), ("Replay", "cmd:/replay")],
@@ -7112,6 +7114,7 @@ def command_help() -> str:
 /mcp [help|request|find|add]
 /openclaw [details|recover|prepare|start|doctor]
 /env
+/setup
 /system
 /clipboard [show|set|clear]
 /cleanup
@@ -7775,8 +7778,8 @@ def natural_computer_command(text: str) -> str | None:
     if re.search(r"\b(watch|live view|what is .*doing|show progress|progress view)\b", lowered) and re.search(r"\b(project|codex|session|work|doing|progress)\b", lowered):
         projects = mentioned_projects(text)
         return f"/watch {projects[0]}" if projects else "/watch"
-    if re.search(r"\b(env|environment|setup|keys?|credentials?)\b", lowered) and re.search(r"\b(show|check|what|status|missing|needed|need)\b", lowered):
-        return "/env"
+    if re.search(r"\b(env|environment|setup|keys?|credentials?|configure|configuration)\b", lowered) and re.search(r"\b(show|check|what|status|missing|needed|need|ready|readiness|configure|configured)\b", lowered):
+        return "/setup"
     if re.search(r"\b(system|device|computer|disk|battery|memory)\b", lowered) and re.search(r"\b(status|check|show|how much|health)\b", lowered):
         return "/system"
     if re.search(r"\b(clipboard)\b", lowered) and re.search(r"\b(show|peek|status|what)\b", lowered):
@@ -7909,6 +7912,7 @@ Allowed commands:
 /mcp [help|request|find|add]
 /openclaw [details|recover|prepare|start|doctor]
 /env
+/setup
 /system
 /clipboard [show|set|clear]
 /cleanup
@@ -7987,7 +7991,7 @@ Rules:
 - If the user asks whether a project is done, 100% done, or fulfilled its objective, map to /done.
 - If the user asks to set an intended objective or add Definition-of-Done criteria, map to /objective set or /objective add.
 - If the user asks to watch progress, see the live view, or understand what Codex is doing, map to /watch.
-- If the user asks what keys/env setup is missing, map to /env.
+- If the user asks what keys/env setup is missing or what is needed to configure Commander, map to /setup.
 - If the user asks device, battery, disk, memory, or system status, map to /system.
 - If the user asks to peek at clipboard, map to /clipboard show. Do not set clipboard unless explicitly requested.
 - If the user asks about cleanup, storage, or freeing disk space, map to /cleanup. Do not delete files.
@@ -8197,7 +8201,7 @@ def handle_text(
         return [command_mcp(args)]
     if command == "/openclaw":
         return [command_openclaw(args)]
-    if command == "/env":
+    if command in {"/env", "/setup"}:
         return [command_env()]
     if command == "/system":
         return [command_system()]

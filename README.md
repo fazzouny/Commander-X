@@ -63,7 +63,7 @@ Commander works with Telegram plus local Codex first. Add these only when you wa
 - `GITHUB_TOKEN`: future GitHub PR and issue workflows beyond local git.
 - `WHATSAPP_ACCESS_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID`: later WhatsApp control channel.
 
-Use `/env` or ask "what keys are missing?" for a plain-English setup checklist. Secrets are never printed.
+Use `/setup`, `/env`, or ask "what keys are missing?" for a plain-English setup checklist. Secrets are never printed.
 
 ## Check
 
@@ -155,6 +155,7 @@ Remove it later with:
 /openclaw prepare https://github.com/owner/repo
 /openclaw start
 /env
+/setup
 /system
 /clipboard show
 /cleanup
@@ -207,6 +208,7 @@ Check ClickUp for campaign tasks.
 How many leads do we have?
 Show me the latest campaign updates.
 What keys are missing?
+What do I need to configure?
 Show system status.
 Run Commander doctor.
 What needs my attention?
@@ -361,6 +363,7 @@ Device and readiness checks:
 
 ```text
 /env
+/setup
 /system
 /clipboard show
 /clipboard set <text>

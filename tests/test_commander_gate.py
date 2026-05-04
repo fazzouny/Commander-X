@@ -40,6 +40,7 @@ class CommanderGateTests(unittest.TestCase):
         self.assertEqual(commander.validate_generated_command("/plugins"), "/plugins")
         self.assertEqual(commander.validate_generated_command("/mcp"), "/mcp")
         self.assertEqual(commander.validate_generated_command("/env"), "/env")
+        self.assertEqual(commander.validate_generated_command("/setup"), "/setup")
         self.assertEqual(commander.validate_generated_command("/system"), "/system")
         self.assertEqual(commander.validate_generated_command("/clipboard show"), "/clipboard show")
         self.assertEqual(commander.validate_generated_command("/cleanup"), "/cleanup")
