@@ -253,6 +253,43 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertIn("/autopilot run", rows[0]["next_action"])
         self.assertEqual(rows[0]["command"], "/autopilot run")
 
+    def test_dashboard_project_completion_cards_include_owner_scorecard(self) -> None:
+        original_profile = dashboard.commander.project_profile
+        try:
+            dashboard.commander.project_profile = lambda project_id: {  # type: ignore[assignment]
+                "objective": "Ship a local health assistant owner demo.",
+                "done_criteria": [
+                    {"id": "1", "text": "Patient onboarding works", "status": "done", "evidence": "tests passed"},
+                    {"id": "2", "text": "Clinician review works", "status": "open", "evidence": ""},
+                ],
+            }
+
+            cards = dashboard.dashboard_project_completion_cards(
+                [
+                    {
+                        "project": "health",
+                        "state": "completed",
+                        "confidence": "reviewable",
+                        "checks": ["python -m unittest"],
+                        "pending_approvals": [],
+                        "changed_count": 3,
+                        "blocker": "none reported",
+                    }
+                ],
+                user_id="owner",
+            )
+        finally:
+            dashboard.commander.project_profile = original_profile  # type: ignore[assignment]
+
+        card = cards[0]
+        self.assertEqual(card["owner_status"], "Still missing agreed outcomes")
+        self.assertEqual(card["owner_confidence"], "Medium")
+        self.assertIn("1/2 success criteria", card["owner_summary"])
+        self.assertIn("1 success criterion still open.", card["owner_attention"])
+        self.assertIn("3 changed work area", " ".join(card["owner_attention"]))
+        self.assertIn("/objective done health", card["owner_next_action"])
+        self.assertFalse(card["owner_can_call_done"])
+
     def test_dashboard_recommendations_include_autopilot_actions(self) -> None:
         original_autopilot_recs = dashboard.commander.autopilot_recommendation_items
         original_clickup = dashboard.commander.clickup_settings_from_env

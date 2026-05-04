@@ -1035,24 +1035,34 @@ def dashboard_project_completion_cards(operator_playback: list[dict[str, Any]], 
         strict_done = bool(objective) and bool(criteria) and not open_criteria and not blocked_criteria and bool(checks) and no_hazards and changed_count == 0
         if strict_done:
             verdict = "100% done candidate"
+            next_step = "Do a final owner sign-off, then archive or start the next objective."
         elif not objective:
             verdict = "objective missing"
+            next_step = f"Set the intended objective with /objective set {project_id} \"objective\"."
         elif not criteria:
             verdict = "definition of done missing"
+            next_step = f"Add proof criteria with /objective add {project_id} \"criterion\"."
         elif state == "running":
             verdict = "in progress"
+            next_step = f"Watch the active run: /watch {project_id}"
         elif confidence == "blocked" or blocked_criteria:
             verdict = "blocked"
+            next_step = f"Inspect the blocker: /playback {project_id}"
         elif approvals:
             verdict = "waiting for approval"
+            next_step = "Review pending approval requests with /approvals."
         elif open_criteria:
             verdict = "not done"
+            next_step = f"Continue work on the open criteria or add proof with /objective done {project_id} <number> \"evidence\"."
         elif not checks:
             verdict = "needs verification"
+            next_step = f"Ask Commander to verify the project before calling it done: /done {project_id}"
         elif changed_count:
             verdict = "reviewable, not final"
+            next_step = f"Review what changed and approve the final checkpoint if it is right: /evidence {project_id}"
         else:
             verdict = "done candidate"
+            next_step = "Do a final owner review before calling this project complete."
         percent = (20 if objective else 0) + int((len(done_criteria) / len(criteria)) * 50) if criteria else (20 if objective else 0)
         if checks:
             percent += 15
@@ -1060,6 +1070,22 @@ def dashboard_project_completion_cards(operator_playback: list[dict[str, Any]], 
             percent += 15
         if not strict_done:
             percent = min(percent, 99)
+        blocker = commander.audit_clean(playback.get("blocker") or "none reported", limit=260)
+        scorecard = completion_owner_scorecard(
+            verdict=verdict,
+            percent=percent,
+            objective=objective,
+            criteria_total=len(criteria),
+            criteria_done=len(done_criteria),
+            open_count=len(open_criteria),
+            blocked_count=len(blocked_criteria),
+            checks_count=len(checks),
+            approvals_count=len(approvals),
+            changed_count=changed_count,
+            blocker=blocker,
+            next_step=next_step,
+            strict_done=strict_done,
+        )
         cards.append(
             {
                 "project": commander.audit_clean(project_id, limit=120),
@@ -1074,10 +1100,94 @@ def dashboard_project_completion_cards(operator_playback: list[dict[str, Any]], 
                 "checks": [commander.audit_clean(item, limit=180) for item in checks[:5]],
                 "pending_approvals": approvals,
                 "changed_count": changed_count,
-                "blocker": commander.audit_clean(playback.get("blocker") or "none reported", limit=260),
+                "blocker": blocker,
+                "next_step": commander.audit_clean(next_step, limit=300),
+                **scorecard,
             }
         )
     return cards
+
+
+def completion_owner_scorecard(
+    *,
+    verdict: str,
+    percent: int,
+    objective: str,
+    criteria_total: int,
+    criteria_done: int,
+    open_count: int,
+    blocked_count: int,
+    checks_count: int,
+    approvals_count: int,
+    changed_count: int,
+    blocker: str,
+    next_step: str,
+    strict_done: bool,
+) -> dict[str, Any]:
+    if strict_done:
+        owner_status = "Ready for final owner sign-off"
+    elif verdict in {"done candidate", "100% done candidate"}:
+        owner_status = "Looks complete, needs final owner review"
+    elif verdict == "reviewable, not final":
+        owner_status = "Built, but not final yet"
+    elif verdict == "in progress":
+        owner_status = "Still being worked on"
+    elif verdict == "waiting for approval":
+        owner_status = "Waiting for your approval"
+    elif verdict == "blocked":
+        owner_status = "Blocked"
+    elif verdict == "needs verification":
+        owner_status = "Needs proof before completion"
+    elif verdict in {"objective missing", "definition of done missing"}:
+        owner_status = "Needs a clearer finish line"
+    else:
+        owner_status = "Still missing agreed outcomes"
+
+    if percent >= 95 and checks_count and not approvals_count and blocker.lower() in {"none", "none reported", "-"}:
+        owner_confidence = "High"
+    elif checks_count or criteria_done:
+        owner_confidence = "Medium"
+    else:
+        owner_confidence = "Low"
+
+    proof_word = "proof item" if checks_count == 1 else "proof items"
+    change_word = "changed area" if changed_count == 1 else "changed areas"
+    criteria_label = f"{criteria_done}/{criteria_total}" if criteria_total else "0/0"
+    owner_summary = (
+        f"{criteria_label} success criteria are complete, {checks_count} {proof_word} are recorded, "
+        f"and {changed_count} {change_word} still need owner review."
+    )
+
+    attention: list[str] = []
+    if not objective:
+        attention.append("Set the intended objective.")
+    if not criteria_total:
+        attention.append("Add Definition-of-Done criteria.")
+    if open_count:
+        criterion_word = "criterion" if open_count == 1 else "criteria"
+        attention.append(f"{open_count} success {criterion_word} still open.")
+    if blocked_count:
+        criterion_word = "criterion" if blocked_count == 1 else "criteria"
+        attention.append(f"{blocked_count} success {criterion_word} blocked.")
+    if not checks_count:
+        attention.append("Verification proof is missing.")
+    if approvals_count:
+        attention.append(f"{approvals_count} approval request(s) pending.")
+    if changed_count:
+        attention.append(f"{changed_count} changed work area(s) need review before final completion.")
+    if blocker and blocker.lower() not in {"none", "none reported", "-"}:
+        attention.append(f"Current blocker: {blocker}")
+    if not attention:
+        attention.append("No major blockers surfaced.")
+
+    return {
+        "owner_status": commander.audit_clean(owner_status, limit=160),
+        "owner_confidence": owner_confidence,
+        "owner_summary": commander.audit_clean(owner_summary, limit=260),
+        "owner_attention": [commander.audit_clean(item, limit=220) for item in attention[:6]],
+        "owner_next_action": commander.audit_clean(next_step, limit=260),
+        "owner_can_call_done": strict_done,
+    }
 
 
 def dashboard_owner_review_packs(limit: int = 8) -> list[dict[str, Any]]:

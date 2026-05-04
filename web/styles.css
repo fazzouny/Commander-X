@@ -243,6 +243,21 @@ span {
   line-height: 1.35;
 }
 
+.scorecard-summary {
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+  background: #10120c;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.scorecard-summary strong {
+  font-weight: 500;
+}
+
 .capability-summary {
   display: grid;
   gap: 8px;

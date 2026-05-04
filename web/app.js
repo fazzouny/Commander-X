@@ -406,23 +406,31 @@ function renderProjectCompletion(data) {
           .slice(0, 3)
           .map((line) => `<span>${escapeHtml(line)}</span>`)
           .join("");
+        const attention = (item.owner_attention || [])
+          .slice(0, 5)
+          .map((line) => `<span>${escapeHtml(line)}</span>`)
+          .join("");
         return `
           <div class="work-card">
             <div class="work-card-head">
               <div>
                 <div class="row-title">${escapeHtml(item.project || "-")}</div>
-                <div class="row-meta">${escapeHtml(item.objective || "Objective not set")}</div>
+                <div class="row-meta">${escapeHtml(item.owner_summary || item.objective || "Objective not set")}</div>
               </div>
               <div>${pill(`${item.completion_percent || 0}% ${item.verdict || "unknown"}`, type)}</div>
             </div>
             <div class="work-grid">
+              <div><span>Owner status</span><strong>${escapeHtml(item.owner_status || item.verdict || "unknown")}</strong></div>
+              <div><span>Confidence</span><strong>${escapeHtml(item.owner_confidence || item.confidence || "unknown")}</strong></div>
               <div><span>Criteria</span><strong>${escapeHtml(item.done_criteria || 0)} / ${escapeHtml(item.total_criteria || 0)} done</strong></div>
-              <div><span>State</span><strong>${escapeHtml(item.state || "unknown")}</strong></div>
+              <div><span>Proof</span><strong>${escapeHtml((item.checks || []).length)} item(s)</strong></div>
               <div><span>Blocker</span><strong>${escapeHtml(item.blocker || "none reported")}</strong></div>
-              <div><span>Changed count</span><strong>${escapeHtml(item.changed_count || 0)}</strong></div>
-              <div><span>Next</span><strong>${escapeHtml(item.next_step || "-")}</strong></div>
-              <div><span>Primary action</span><strong>${escapeHtml(item.primary_action || "-")}</strong></div>
+              <div><span>Review changes</span><strong>${escapeHtml(item.changed_count || 0)}</strong></div>
             </div>
+            <div class="scorecard-summary">
+              <strong>${escapeHtml(item.owner_next_action || item.next_step || "-")}</strong>
+            </div>
+            <div class="timeline-mini">${attention || "<span>No major blockers surfaced</span>"}</div>
             <div class="timeline-mini">${criteria || "<span>No Definition of Done configured</span>"}</div>
             <div class="timeline-mini">${checks || "<span>No verification proof recorded yet</span>"}</div>
             <div class="work-actions">

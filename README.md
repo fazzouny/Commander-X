@@ -510,6 +510,8 @@ Task queue cards can start queued tasks, mark review/failed/stopped tasks done, 
 
 The Action Center groups high-signal operator decisions: approvals, running sessions, failed/uncertain sessions, queued tasks, duplicate queue cleanup, and changed-project reviews. Its buttons reuse the same guarded approval, queue, work-feed, and stop endpoints as the rest of Commander. Queue cleanup shows a preview first; archiving duplicates requires clicking the explicit archive action.
 
+The Project Completion card is an owner scorecard for non-technical review. It translates `/done` evidence into owner status, confidence, success-criteria progress, proof count, changed areas to review, attention items, and the safest next action. Commander still must not call a project final unless the objective is set, all criteria have proof, verification exists, no blockers or approvals are pending, and local changes are settled.
+
 The Capabilities card gives a quick operator-readable snapshot of what Commander can currently do and exposes copyable command chips for common checks.
 
 The Work Feed card is the closest dashboard view to the Codex app experience. It shows each active project in plain English: task, current step, direction, human-readable work areas, blocker, last activity, and the next useful command. It intentionally hides filenames unless you explicitly open `/diff`.
