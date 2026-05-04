@@ -1519,6 +1519,8 @@ def dashboard_project_read_action(project_id: str, action: str) -> tuple[dict[st
         text = commander.operator_playback(project_id, user_id="dashboard")
     elif action == "done":
         text = commander.project_completion(project_id, user_id="dashboard")
+    elif action == "review":
+        text = commander.command_review([project_id], user_id="dashboard")
     elif action == "changes":
         rows = [
             row

@@ -437,6 +437,7 @@ function renderProjectCompletion(data) {
             <div class="timeline-mini">${checks || "<span>No verification proof recorded yet</span>"}</div>
             <div class="work-actions">
               <button data-work-action="done" data-project="${escapeHtml(projectId)}">Done?</button>
+              <button data-work-action="review" data-project="${escapeHtml(projectId)}">Review Pack</button>
               <button data-work-action="playback" data-project="${escapeHtml(projectId)}">Playback</button>
               <button data-work-action="watch" data-project="${escapeHtml(projectId)}">Watch</button>
             </div>
