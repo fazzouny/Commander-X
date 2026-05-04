@@ -434,6 +434,7 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(health["recovery"][0]["status"], "checked")
         self.assertIn("technical path", health["recovery"][0]["summary"])
         self.assertNotIn("C:\\Users", str(health))
+        self.assertIsNone(health["restart_cooldown"])
 
     def test_dashboard_service_recovery_history_filters_and_sanitizes_events(self) -> None:
         original_audit_data = dashboard.commander.audit_data
@@ -458,6 +459,30 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(history[0]["status"], "scheduled")
         self.assertIn("technical path", history[0]["summary"])
         self.assertNotIn("C:\\Users", str(history))
+
+    def test_recent_service_restart_schedule_detects_cooldown(self) -> None:
+        original_audit_data = dashboard.commander.audit_data
+        try:
+            dashboard.commander.audit_data = lambda: {  # type: ignore[assignment]
+                "events": [
+                    {
+                        "at": dashboard.dt.datetime.now(dashboard.dt.timezone.utc).isoformat(timespec="seconds"),
+                        "type": "service_restart",
+                        "status": "scheduled",
+                        "summary": "Restarted from C:\\Users\\Name\\repo\\.env",
+                    }
+                ]
+            }
+
+            cooldown = dashboard.recent_service_restart_schedule(cooldown_seconds=120)
+        finally:
+            dashboard.commander.audit_data = original_audit_data  # type: ignore[assignment]
+
+        self.assertIsNotNone(cooldown)
+        assert cooldown is not None
+        self.assertGreater(int(cooldown["remaining_seconds"]), 0)
+        self.assertIn("technical path", cooldown["summary"])
+        self.assertNotIn("C:\\Users", str(cooldown))
 
     def test_dashboard_recommendations_include_service_health_attention(self) -> None:
         original_autopilot_recs = dashboard.commander.autopilot_recommendation_items
@@ -486,6 +511,7 @@ class DashboardCapabilityTests(unittest.TestCase):
         original_schedule = dashboard.schedule_service_restart
         original_invalidate = dashboard.invalidate_dashboard_cache
         original_audit = dashboard.record_service_restart_audit
+        original_recent = dashboard.recent_service_restart_schedule
         scheduled: list[bool] = []
         invalidated: list[bool] = []
         audit_events: list[tuple[str, str]] = []
@@ -494,6 +520,7 @@ class DashboardCapabilityTests(unittest.TestCase):
             dashboard.schedule_service_restart = lambda: scheduled.append(True)  # type: ignore[assignment]
             dashboard.invalidate_dashboard_cache = lambda: invalidated.append(True)  # type: ignore[assignment]
             dashboard.record_service_restart_audit = lambda status, summary, result=None: audit_events.append((status, summary))  # type: ignore[assignment]
+            dashboard.recent_service_restart_schedule = lambda cooldown_seconds=None: None  # type: ignore[assignment]
 
             bad, bad_status = dashboard.dashboard_service_restart_action({"action": "shell"})
             dry, dry_status = dashboard.dashboard_service_restart_action({"action": "restart", "dry_run": True})
@@ -503,6 +530,7 @@ class DashboardCapabilityTests(unittest.TestCase):
             dashboard.schedule_service_restart = original_schedule  # type: ignore[assignment]
             dashboard.invalidate_dashboard_cache = original_invalidate  # type: ignore[assignment]
             dashboard.record_service_restart_audit = original_audit  # type: ignore[assignment]
+            dashboard.recent_service_restart_schedule = original_recent  # type: ignore[assignment]
 
         self.assertEqual(bad_status, 400)
         self.assertFalse(bad["ok"])
@@ -515,6 +543,33 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(invalidated, [True])
         self.assertEqual([item[0] for item in audit_events], ["rejected", "checked", "scheduled"])
         self.assertIn("dry run passed", audit_events[1][1])
+
+    def test_dashboard_service_restart_action_blocks_duplicate_schedule(self) -> None:
+        original_command = dashboard.service_restart_command
+        original_schedule = dashboard.schedule_service_restart
+        original_audit = dashboard.record_service_restart_audit
+        original_recent = dashboard.recent_service_restart_schedule
+        scheduled: list[bool] = []
+        audit_events: list[tuple[str, str]] = []
+        try:
+            dashboard.service_restart_command = lambda: ["powershell", "-File", "start-services.ps1", "-Restart"]  # type: ignore[assignment]
+            dashboard.schedule_service_restart = lambda: scheduled.append(True)  # type: ignore[assignment]
+            dashboard.record_service_restart_audit = lambda status, summary, result=None: audit_events.append((status, summary))  # type: ignore[assignment]
+            dashboard.recent_service_restart_schedule = lambda cooldown_seconds=None: {"remaining_seconds": 88, "summary": "already scheduled"}  # type: ignore[assignment]
+
+            result, status = dashboard.dashboard_service_restart_action({"action": "restart"})
+        finally:
+            dashboard.service_restart_command = original_command  # type: ignore[assignment]
+            dashboard.schedule_service_restart = original_schedule  # type: ignore[assignment]
+            dashboard.record_service_restart_audit = original_audit  # type: ignore[assignment]
+            dashboard.recent_service_restart_schedule = original_recent  # type: ignore[assignment]
+
+        self.assertEqual(status, 409)
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["scheduled"])
+        self.assertEqual(result["cooldown_seconds"], 88)
+        self.assertEqual(scheduled, [])
+        self.assertEqual(audit_events[0][0], "blocked")
 
     def test_dashboard_service_restart_action_reports_missing_script(self) -> None:
         original_command = dashboard.service_restart_command

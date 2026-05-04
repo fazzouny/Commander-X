@@ -93,13 +93,16 @@ function renderServiceHealth(data) {
   const health = data.service_health || {};
   const items = health.items || [];
   const recovery = health.recovery || [];
+  const cooldown = health.restart_cooldown || null;
   const overall = health.overall || "checking";
   const type = overall === "good" ? "good" : overall === "bad" ? "bad" : "warn";
   qs("#service-health-status").innerHTML = pill(overall, type);
   qs("#service-health-summary").textContent = health.summary || "Checking Commander services.";
   const restartButton =
     overall === "warn" || overall === "bad"
-      ? `<div class="action-center-actions"><button class="danger" data-service-action="restart">Restart Commander</button></div>`
+      ? `<div class="action-center-actions"><button class="danger" data-service-action="restart"${cooldown ? " disabled" : ""}>${
+          cooldown ? `Restart available in ${escapeHtml(cooldown.remaining_seconds || "-")}s` : "Restart Commander"
+        }</button></div>`
       : "";
   qs("#service-health").innerHTML =
     (items
@@ -1286,7 +1289,7 @@ async function handleQueueClick(event) {
 
 async function handleServiceActionClick(event) {
   const button = event.target.closest("[data-service-action]");
-  if (!button) return;
+  if (!button || button.disabled) return;
   const action = button.dataset.serviceAction || "restart";
   button.disabled = true;
   qs("#action-output").textContent = "Scheduling Commander service restart...";

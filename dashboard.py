@@ -37,6 +37,7 @@ DASHBOARD_REQUEST_REFRESH_SECONDS = int(
     )
 )
 DASHBOARD_WARM_CACHE_ON_START = commander.env_bool("COMMANDER_DASHBOARD_WARM_CACHE_ON_START", True)
+SERVICE_RESTART_COOLDOWN_SECONDS = int(os.environ.get("COMMANDER_SERVICE_RESTART_COOLDOWN_SECONDS", "120"))
 DASHBOARD_CACHE: dict[str, Any] = {
     "value": None,
     "at": 0.0,
@@ -481,6 +482,31 @@ def dashboard_service_recovery_history(limit: int = 4) -> list[dict[str, str]]:
     return history
 
 
+def recent_service_restart_schedule(cooldown_seconds: int | None = None) -> dict[str, Any] | None:
+    cooldown = cooldown_seconds if cooldown_seconds is not None else SERVICE_RESTART_COOLDOWN_SECONDS
+    if cooldown <= 0:
+        return None
+    now = dt.datetime.now(dt.timezone.utc)
+    for event in reversed(commander.audit_data().get("events", [])):
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("type") or "") != "service_restart" or str(event.get("status") or "") != "scheduled":
+            continue
+        at = commander.parse_iso_datetime(str(event.get("at") or ""))
+        if not at:
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=dt.timezone.utc)
+        remaining = int(round(cooldown - (now - at).total_seconds()))
+        if remaining > 0:
+            return {
+                "remaining_seconds": remaining,
+                "summary": commander.audit_clean(event.get("summary") or "Commander restart already scheduled.", limit=220),
+            }
+        return None
+    return None
+
+
 def dashboard_service_health() -> dict[str, Any]:
     process_warning = ""
     try:
@@ -571,6 +597,7 @@ def dashboard_service_health() -> dict[str, Any]:
         "summary": commander.safe_brief_text(summary),
         "items": items,
         "recovery": dashboard_service_recovery_history(),
+        "restart_cooldown": recent_service_restart_schedule(),
     }
 
 
@@ -629,6 +656,16 @@ def dashboard_service_restart_action(payload: dict[str, Any]) -> tuple[dict[str,
             "scheduled": False,
             "text": "Service restart dry run passed. Commander can restart the Telegram poller and dashboard from the protected dashboard action.",
         }, 200
+    cooldown = recent_service_restart_schedule()
+    if cooldown:
+        seconds = int(cooldown.get("remaining_seconds") or SERVICE_RESTART_COOLDOWN_SECONDS)
+        record_service_restart_audit("blocked", "Duplicate Commander service restart blocked by cooldown.")
+        return {
+            "ok": False,
+            "scheduled": False,
+            "cooldown_seconds": seconds,
+            "text": f"Commander service restart was already scheduled recently. Try again in about {seconds} second(s).",
+        }, 409
     schedule_service_restart()
     invalidate_dashboard_cache()
     record_service_restart_audit("scheduled", "Commander service restart was scheduled from the protected dashboard action.")
