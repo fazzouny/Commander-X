@@ -153,6 +153,7 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("what do I need to configure"), "/setup")
         self.assertEqual(commander.natural_computer_command("show system status"), "/system")
         self.assertEqual(commander.natural_computer_command("show clipboard"), "/clipboard show")
+        self.assertEqual(commander.natural_computer_command("clean duplicate queue items"), "/queue cleanup")
         self.assertEqual(commander.natural_computer_command("show me a cleanup plan"), "/cleanup")
         self.assertEqual(commander.natural_computer_command("give me my morning brief"), "/morning")
         self.assertEqual(commander.natural_computer_command("what should I do next"), "/next")
@@ -1763,6 +1764,49 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("1 similar queue item hidden", text)
         self.assertNotIn("Definition-of-Done", text)
         self.assertNotIn("review1", text)
+
+    def test_queue_cleanup_preview_and_apply_archive_duplicates(self) -> None:
+        original_tasks = commander.tasks_data
+        original_save = commander.save_tasks
+        original_audit = commander.record_audit_event
+        original_get_project = commander.get_project
+        original_label = commander.project_label
+        data = {
+            "tasks": [
+                {"id": "queued1", "project": "health", "status": "queued", "title": "Build Health Companion AI"},
+                {"id": "failed1", "project": "health", "status": "failed", "title": "Build Health Companion AI"},
+                {"id": "other1", "project": "health", "status": "queued", "title": "Write a different test"},
+            ]
+        }
+        saved: list[dict[str, object]] = []
+        audit: list[tuple[str, str]] = []
+        try:
+            commander.tasks_data = lambda: data  # type: ignore[assignment]
+            commander.save_tasks = lambda payload: saved.append(payload)  # type: ignore[assignment]
+            commander.record_audit_event = lambda project, action, status, approval_id=None, result=None: audit.append((project, status)) or {}  # type: ignore[assignment]
+            commander.get_project = lambda project_id: {"name": "Health Companion AI"} if project_id == "health" else None  # type: ignore[assignment]
+            commander.project_label = lambda project_id, project=None, include_id=True: "Health Companion AI"  # type: ignore[assignment]
+
+            preview = commander.command_queue(["cleanup"], user_id="owner")
+            applied = commander.command_queue(["cleanup", "apply"], user_id="owner")
+        finally:
+            commander.tasks_data = original_tasks  # type: ignore[assignment]
+            commander.save_tasks = original_save  # type: ignore[assignment]
+            commander.record_audit_event = original_audit  # type: ignore[assignment]
+            commander.get_project = original_get_project  # type: ignore[assignment]
+            commander.project_label = original_label  # type: ignore[assignment]
+
+        self.assertIn("Queue cleanup preview", preview)
+        self.assertIn("Nothing changed", preview)
+        self.assertEqual(data["tasks"][0]["status"], "archived")
+        self.assertEqual(data["tasks"][0]["previous_status"], "queued")
+        self.assertEqual(data["tasks"][0]["archived_keep_id"], "failed1")
+        self.assertEqual(data["tasks"][1]["status"], "failed")
+        self.assertEqual(data["tasks"][2]["status"], "queued")
+        self.assertTrue(saved)
+        self.assertEqual(audit, [("commander", "completed")])
+        self.assertIn("Queue cleanup applied", applied)
+        self.assertIn("Archived duplicates are hidden", applied)
 
 
 if __name__ == "__main__":

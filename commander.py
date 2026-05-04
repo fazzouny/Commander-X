@@ -1218,6 +1218,93 @@ def tasks_summary(limit: int = 12) -> str:
     return compact("\n".join(lines))
 
 
+def duplicate_task_groups(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for index, task in enumerate(tasks):
+        if not task_inbox_item(task):
+            continue
+        key = task_inbox_dedupe_key(task)
+        if key not in grouped:
+            grouped[key] = {"key": key, "items": [], "keep_index": index}
+            order.append(key)
+        group = grouped[key]
+        group["items"].append(index)
+        keep_index = int(group["keep_index"])
+        if task_inbox_status_rank(task) <= task_inbox_status_rank(tasks[keep_index]):
+            group["keep_index"] = index
+    return [grouped[key] for key in order if len(grouped[key]["items"]) > 1]
+
+
+def format_queue_cleanup(groups: list[dict[str, Any]], tasks: list[dict[str, Any]], applied: bool = False) -> str:
+    if not groups:
+        return "Queue cleanup found no duplicate active items."
+    duplicate_total = sum(len(group["items"]) - 1 for group in groups)
+    title = "Queue cleanup applied" if applied else "Queue cleanup preview"
+    lines = [title, f"Duplicate active items: {duplicate_total} across {len(groups)} group(s).", ""]
+    for group in groups[:8]:
+        keep_index = int(group["keep_index"])
+        keep = tasks[keep_index]
+        duplicate_ids = [
+            safe_brief_text(tasks[index].get("id") or "-")
+            for index in group["items"]
+            if index != keep_index
+        ]
+        project_id = str(keep.get("project") or "-")
+        project_name = project_label(project_id, include_id=False) if get_project(project_id) else project_id
+        status = friendly_session_state(keep.get("status"))
+        summary = summarize_task_for_human(keep.get("title") or "-")
+        lines.append(f"- {safe_brief_text(project_name)}: {len(duplicate_ids)} duplicate(s)")
+        lines.append(f"  Keep: [{safe_brief_text(keep.get('id') or '-')}] {status}: {summary}")
+        lines.append(f"  Archive: {', '.join(duplicate_ids[:8])}" + ("..." if len(duplicate_ids) > 8 else ""))
+    if len(groups) > 8:
+        lines.append(f"- {len(groups) - 8} more duplicate group(s) hidden.")
+    if applied:
+        lines.append("")
+        lines.append("Archived duplicates are hidden from /queue, /inbox, and the dashboard, but remain in tasks.json for audit history.")
+    else:
+        lines.append("")
+        lines.append("Nothing changed. Run /queue cleanup apply to archive duplicate queue records.")
+    return compact("\n".join(lines), limit=3600)
+
+
+def command_queue_cleanup(args: list[str], user_id: str) -> str:
+    apply_cleanup = bool(args and args[0].lower() in {"apply", "archive", "confirm"})
+    data = tasks_data()
+    tasks = data.get("tasks", [])
+    if not isinstance(tasks, list):
+        return "Queue cleanup could not read tasks safely."
+    groups = duplicate_task_groups(tasks)
+    if not apply_cleanup:
+        return format_queue_cleanup(groups, tasks, applied=False)
+    if not groups:
+        return format_queue_cleanup(groups, tasks, applied=True)
+    now = utc_now()
+    archived = 0
+    for group in groups:
+        keep_index = int(group["keep_index"])
+        keep_id = str(tasks[keep_index].get("id") or "")
+        for index in group["items"]:
+            if index == keep_index:
+                continue
+            task = tasks[index]
+            task["previous_status"] = task.get("status", "queued")
+            task["status"] = "archived"
+            task["archived_at"] = now
+            task["archived_by"] = str(user_id)
+            task["archived_reason"] = "duplicate_queue_cleanup"
+            task["archived_keep_id"] = keep_id
+            task["updated_at"] = now
+            archived += 1
+    save_tasks(data)
+    record_audit_event(
+        "commander",
+        {"type": "queue_cleanup", "message": f"Archived {archived} duplicate queue item(s)."},
+        "completed",
+    )
+    return format_queue_cleanup(groups, tasks, applied=True)
+
+
 def verification_evidence_from_text(text: str, limit: int = 8) -> list[str]:
     checks: list[str] = []
     patterns = [
@@ -6181,6 +6268,8 @@ def command_queue(args: list[str], user_id: str) -> str:
     action = args[0].lower() if args else "list"
     if action in {"list", "status"}:
         return tasks_summary()
+    if action == "cleanup":
+        return command_queue_cleanup(args[1:], user_id=user_id)
     if action == "add":
         project_id, rest = project_and_rest(args[1:], user_id=user_id)
         if not project_id or not rest:
@@ -6204,7 +6293,7 @@ def command_queue(args: list[str], user_id: str) -> str:
             return "Usage: /queue cancel <task_id>"
         task = update_task(args[1], {"status": "cancelled", "cancelled_at": utc_now()})
         return f"Cancelled task {args[1]}." if task else f"No task found with ID {args[1]}."
-    return "Usage: /queue, /queue add <project> <task>, /queue start <task_id>, /queue done <task_id>, /queue cancel <task_id>"
+    return "Usage: /queue, /queue add <project> <task>, /queue start <task_id>, /queue done <task_id>, /queue cancel <task_id>, /queue cleanup [apply]"
 
 
 def update_project_autopilot(project_id: str, enabled: bool, user_id: str, interval_minutes: int | None = None) -> dict[str, Any]:
@@ -7184,6 +7273,7 @@ def command_help() -> str:
 /queue
 /queue add <project> "<task>"
 /queue start <task_id>
+/queue cleanup
 /autopilot status
 /autopilot on <project> [minutes]
 /autopilot off <project>
@@ -7822,6 +7912,8 @@ def natural_computer_command(text: str) -> str | None:
         return "/system"
     if re.search(r"\b(clipboard)\b", lowered) and re.search(r"\b(show|peek|status|what)\b", lowered):
         return "/clipboard show"
+    if re.search(r"\b(queue|backlog|tasks?)\b", lowered) and re.search(r"\b(duplicate|duplicates|dedupe|clean up|cleanup|archive old|hide duplicate)\b", lowered):
+        return "/queue cleanup"
     if re.search(r"\b(cleanup|clean up|free disk|free space|disk space|storage)\b", lowered) and re.search(r"\b(plan|scan|check|show|what|free|cleanup|clean)\b", lowered):
         return "/cleanup"
     if re.search(r"\b(work plan|before work|project plan|codex plan|approach|how will you)\b", lowered) and re.search(r"\b(show|create|make|what|tell|plan|approach|before)\b", lowered):
@@ -7989,6 +8081,7 @@ Allowed commands:
 /queue
 /queue add <project> "<task>"
 /queue start <task_id>
+/queue cleanup
 
 Rules:
 - Return JSON only.
@@ -8047,6 +8140,7 @@ Rules:
 - If the user says to remember or learn a preference/fact, map to /remember.
 - If the user asks what Commander knows/remembers, map to /memory.
 - If the user asks about project setup/stack/checks, map to /profile.
+- If the user asks to clean duplicate queue/backlog items, map to /queue cleanup.
 - If the user asks about pending tasks, queued work, or the work backlog, map to /queue.
 - Commit and push are safe to prepare because Commander still requires /approve.
 

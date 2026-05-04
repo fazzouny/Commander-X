@@ -187,6 +187,7 @@ Remove it later with:
 /queue
 /queue add example-app "Audit production readiness"
 /queue start <task_id>
+/queue cleanup
 /check
 ```
 
@@ -478,9 +479,11 @@ Task queue commands let Commander track work separately from running processes:
 /queue start <task_id>
 /queue done <task_id>
 /queue cancel <task_id>
+/queue cleanup
+/queue cleanup apply
 ```
 
-Every `/start` creates a task record and links it to the Codex session.
+Every `/start` creates a task record and links it to the Codex session. `/queue cleanup` previews duplicate active queue records without changing anything; `/queue cleanup apply` archives duplicate records while preserving them in `tasks.json` for audit history.
 
 ## Dashboard
 
