@@ -927,6 +927,29 @@ class DashboardTaskTests(unittest.TestCase):
         self.assertFalse(bad["ok"])
         self.assertEqual(calls, [(["cleanup"], "dashboard"), (["cleanup", "apply"], "dashboard")])
 
+    def test_dashboard_review_save_action_is_project_scoped(self) -> None:
+        original_get_project = dashboard.commander.get_project
+        original_review = dashboard.commander.command_review
+        calls: list[tuple[list[str], str]] = []
+        try:
+            dashboard.commander.get_project = lambda project: {"allowed": True} if project == "example" else None  # type: ignore[assignment]
+            dashboard.commander.command_review = lambda args, user_id: calls.append((args, user_id)) or "saved review"  # type: ignore[assignment]
+
+            missing_project, missing_status = dashboard.dashboard_review_save_action({})
+            unknown_project, unknown_status = dashboard.dashboard_review_save_action({"project": "missing"})
+            saved, saved_status = dashboard.dashboard_review_save_action({"project": "example"})
+        finally:
+            dashboard.commander.get_project = original_get_project  # type: ignore[assignment]
+            dashboard.commander.command_review = original_review  # type: ignore[assignment]
+
+        self.assertEqual(missing_status, 400)
+        self.assertFalse(missing_project["ok"])
+        self.assertEqual(unknown_status, 404)
+        self.assertFalse(unknown_project["ok"])
+        self.assertEqual(saved_status, 200)
+        self.assertEqual(saved["text"], "saved review")
+        self.assertEqual(calls, [(["example", "save"], "dashboard")])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -438,6 +438,7 @@ function renderProjectCompletion(data) {
             <div class="work-actions">
               <button data-work-action="done" data-project="${escapeHtml(projectId)}">Done?</button>
               <button data-work-action="review" data-project="${escapeHtml(projectId)}">Review Pack</button>
+              <button data-review-save-project="${escapeHtml(projectId)}">Save Pack</button>
               <button data-work-action="playback" data-project="${escapeHtml(projectId)}">Playback</button>
               <button data-work-action="watch" data-project="${escapeHtml(projectId)}">Watch</button>
             </div>
@@ -1259,6 +1260,25 @@ async function handleWorkFeedClick(event) {
   if (action === "stop") await refresh();
 }
 
+async function handleReviewSaveClick(event) {
+  const button = event.target.closest("[data-review-save-project]");
+  if (!button) return;
+  const project = button.dataset.reviewSaveProject;
+  if (!project) return;
+  button.disabled = true;
+  qs("#evidence").textContent = `Saving owner review pack for ${project}...`;
+  try {
+    const result = await api("/api/review/save", {
+      method: "POST",
+      body: JSON.stringify({ project }),
+    });
+    qs("#evidence").textContent = result.text || result.error || JSON.stringify(result, null, 2);
+  } finally {
+    button.disabled = false;
+  }
+  await refresh();
+}
+
 async function handleCapabilityClick(event) {
   const button = event.target.closest("[data-command]");
   if (!button) return;
@@ -1375,6 +1395,7 @@ qs("#autopilot").addEventListener("click", handleCapabilityClick);
 qs("#mission-timeline").addEventListener("click", handleWorkFeedClick);
 qs("#operator-playback").addEventListener("click", handleWorkFeedClick);
 qs("#project-completion").addEventListener("click", handleWorkFeedClick);
+qs("#project-completion").addEventListener("click", handleReviewSaveClick);
 qs("#session-evidence").addEventListener("click", handleWorkFeedClick);
 qs("#session-replay").addEventListener("click", handleWorkFeedClick);
 qs("#session-briefs").addEventListener("click", handleWorkFeedClick);
