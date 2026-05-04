@@ -669,6 +669,37 @@ class DashboardCapabilityTests(unittest.TestCase):
             {"label": "Archive duplicates", "type": "queue", "action": "cleanup-apply", "style": "danger"},
         )
 
+    def test_dashboard_action_center_surfaces_service_health_restart(self) -> None:
+        service_health = {
+            "overall": "warn",
+            "summary": "Commander is running, but one service signal should be watched.",
+            "restart_cooldown": None,
+        }
+
+        items = dashboard.dashboard_action_center([], {}, [], [], service_health=service_health)
+
+        service = items[0]
+        self.assertEqual(service["kind"], "service")
+        self.assertEqual(service["project"], "commander")
+        self.assertEqual(service["actions"][0]["type"], "service")
+        self.assertEqual(service["actions"][0]["action"], "restart")
+        self.assertNotIn("disabled", service["actions"][0])
+
+    def test_dashboard_action_center_disables_service_restart_during_cooldown(self) -> None:
+        service_health = {
+            "overall": "bad",
+            "summary": "Commander needs attention before relying on remote control.",
+            "restart_cooldown": {"remaining_seconds": 87, "summary": "already scheduled"},
+        }
+
+        items = dashboard.dashboard_action_center([], {}, [], [], service_health=service_health)
+
+        action = items[0]["actions"][0]
+        self.assertEqual(items[0]["priority"], "high")
+        self.assertEqual(action["type"], "service")
+        self.assertTrue(action["disabled"])
+        self.assertIn("87s", action["label"])
+
     def test_dashboard_conversation_parses_and_sanitizes_events(self) -> None:
         items = dashboard.dashboard_conversation_items_from_lines(
             [

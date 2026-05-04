@@ -732,10 +732,27 @@ def dashboard_action_center(
     sessions: dict[str, Any],
     tasks: list[dict[str, Any]],
     changes: list[dict[str, Any]],
+    service_health: dict[str, Any] | None = None,
     limit: int = 12,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     seen_projects: set[str] = set()
+    if service_health and service_health.get("overall") in {"warn", "bad"}:
+        cooldown = service_health.get("restart_cooldown") if isinstance(service_health.get("restart_cooldown"), dict) else None
+        action: dict[str, Any] = {"label": "Restart Commander", "type": "service", "action": "restart", "style": "danger"}
+        if cooldown:
+            action["label"] = f"Restart in {int(cooldown.get('remaining_seconds') or SERVICE_RESTART_COOLDOWN_SECONDS)}s"
+            action["disabled"] = True
+        items.append(
+            {
+                "kind": "service",
+                "priority": "high" if service_health.get("overall") == "bad" else "medium",
+                "project": "commander",
+                "title": "Commander service needs attention",
+                "detail": commander.safe_brief_text(service_health.get("summary") or "Check Service Health."),
+                "actions": [action],
+            }
+        )
     for approval in approvals:
         project = str(approval.get("project") or "-")
         items.append(
@@ -1554,7 +1571,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "tasks": tasks[-60:],
         "memory_count": len(memories),
         "approvals": approvals,
-        "action_center": dashboard_action_center(approvals, sessions, tasks, changes),
+        "action_center": dashboard_action_center(approvals, sessions, tasks, changes, service_health=service_health),
         "inbox": dashboard_inbox(user_id=user_id, recommendations=recommendations),
         "changes": changes,
         "recommendations": recommendations,

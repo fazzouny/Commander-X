@@ -169,18 +169,22 @@ function renderProjects(data) {
 
 function actionButton(item, action) {
   const cls = action.style === "danger" ? " class=\"danger\"" : "";
+  const disabled = action.disabled ? " disabled" : "";
   const label = escapeHtml(action.label || action.action || "Action");
   if (action.type === "approval") {
-    return `<button${cls} data-approval-action="${escapeHtml(action.action)}" data-project="${escapeHtml(item.project || "")}" data-id="${escapeHtml(item.approval_id || "")}">${label}</button>`;
+    return `<button${cls}${disabled} data-approval-action="${escapeHtml(action.action)}" data-project="${escapeHtml(item.project || "")}" data-id="${escapeHtml(item.approval_id || "")}">${label}</button>`;
   }
   if (action.type === "task") {
-    return `<button${cls} data-task-action="${escapeHtml(action.action)}" data-id="${escapeHtml(item.task_id || "")}">${label}</button>`;
+    return `<button${cls}${disabled} data-task-action="${escapeHtml(action.action)}" data-id="${escapeHtml(item.task_id || "")}">${label}</button>`;
   }
   if (action.type === "queue") {
-    return `<button${cls} data-queue-action="${escapeHtml(action.action)}">${label}</button>`;
+    return `<button${cls}${disabled} data-queue-action="${escapeHtml(action.action)}">${label}</button>`;
   }
   if (action.type === "work") {
-    return `<button${cls} data-work-action="${escapeHtml(action.action)}" data-project="${escapeHtml(item.project || "")}">${label}</button>`;
+    return `<button${cls}${disabled} data-work-action="${escapeHtml(action.action)}" data-project="${escapeHtml(item.project || "")}">${label}</button>`;
+  }
+  if (action.type === "service") {
+    return `<button${cls}${disabled} data-service-action="${escapeHtml(action.action)}">${label}</button>`;
   }
   return "";
 }
@@ -1476,6 +1480,7 @@ qs("#action-center").addEventListener("click", handleApprovalClick);
 qs("#action-center").addEventListener("click", handleTaskClick);
 qs("#action-center").addEventListener("click", handleQueueClick);
 qs("#action-center").addEventListener("click", handleWorkFeedClick);
+qs("#action-center").addEventListener("click", handleServiceActionClick);
 qs("#service-health").addEventListener("click", handleServiceActionClick);
 qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionClick);
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
