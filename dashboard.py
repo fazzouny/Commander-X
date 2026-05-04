@@ -585,13 +585,25 @@ def schedule_service_restart(delay_seconds: float = 1.5) -> None:
     threading.Thread(target=runner, name="commander-service-restart", daemon=True).start()
 
 
+def record_service_restart_audit(status: str, summary: str, result: str | None = None) -> None:
+    commander.record_audit_event(
+        "commander",
+        {"type": "service_restart", "message": summary},
+        status,
+        result=result,
+    )
+
+
 def dashboard_service_restart_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     action = str(payload.get("action") or "restart").strip().lower()
     if action not in {"restart", "recover"}:
+        record_service_restart_audit("rejected", "Unsupported service recovery action requested.")
         return {"ok": False, "error": "unsupported service action"}, 400
     if not service_restart_command():
+        record_service_restart_audit("failed", "Commander service restart was requested but the local restart script was unavailable.")
         return {"ok": False, "error": "Commander restart script is not available."}, 500
     if bool(payload.get("dry_run")):
+        record_service_restart_audit("checked", "Commander service restart dry run passed.")
         return {
             "ok": True,
             "scheduled": False,
@@ -599,6 +611,7 @@ def dashboard_service_restart_action(payload: dict[str, Any]) -> tuple[dict[str,
         }, 200
     schedule_service_restart()
     invalidate_dashboard_cache()
+    record_service_restart_audit("scheduled", "Commander service restart was scheduled from the protected dashboard action.")
     return {
         "ok": True,
         "scheduled": True,
