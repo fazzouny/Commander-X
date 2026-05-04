@@ -4630,17 +4630,13 @@ def inbox_items(user_id: str | None = None, limit: int = 12) -> list[dict[str, s
                 }
             )
     for task in visible_task_records(tasks_data().get("tasks", []), limit=8):
-        status = str(task.get("status", "queued"))
-        if status in {"queued", "review", "failed"}:
-            project = str(task.get("project", "-"))
-            items.append(
-                {
-                    "kind": "task",
-                    "priority": "medium" if status != "failed" else "high",
-                    "title": f"{status}: {project}",
-                    "detail": str(task.get("title", "-")),
-                }
-            )
+        item = task_inbox_item(task)
+        if item:
+            key = task_inbox_dedupe_key(task)
+            if any(existing.get("dedupe_key") == key for existing in items):
+                continue
+            item["dedupe_key"] = key
+            items.append(item)
     for recommendation in recommendation_items(user_id=user_id, limit=6):
         items.append(
             {
@@ -4652,7 +4648,38 @@ def inbox_items(user_id: str | None = None, limit: int = 12) -> list[dict[str, s
         )
     order = {"high": 0, "medium": 1, "low": 2}
     items.sort(key=lambda item: order.get(item["priority"], 9))
+    for item in items:
+        item.pop("dedupe_key", None)
     return items[:limit]
+
+
+def task_inbox_dedupe_key(task: dict[str, Any]) -> str:
+    project = str(task.get("project") or "-")
+    status = str(task.get("status") or "queued")
+    summary = summarize_task_for_human(task.get("title") or "")
+    return f"{project}:{status}:{summary.lower()}"
+
+
+def task_inbox_item(task: dict[str, Any]) -> dict[str, str] | None:
+    status = str(task.get("status", "queued"))
+    if status not in {"queued", "review", "failed"}:
+        return None
+    project_id = str(task.get("project") or "-")
+    task_id = str(task.get("id") or "")
+    project_name = project_label(project_id, include_id=False) if get_project(project_id) else project_id
+    summary = summarize_task_for_human(task.get("title") or "-")
+    if status == "queued":
+        next_action = f"Start it with /queue start {task_id}." if task_id else f"Start it with /queue start <task_id>."
+    elif status == "review":
+        next_action = f"Review it, then mark it done with /queue done {task_id} or cancel it with /queue cancel {task_id}." if task_id else "Review it, then mark it done or cancel it from the dashboard."
+    else:
+        next_action = f"Review what happened with /playback {project_id}, then mark it done with /queue done {task_id} or cancel it with /queue cancel {task_id}." if task_id else f"Review what happened with /playback {project_id}."
+    return {
+        "kind": "task",
+        "priority": "medium" if status != "failed" else "high",
+        "title": f"{friendly_session_state(status)}: {safe_brief_text(project_name)}",
+        "detail": short_human_text(f"{summary} {next_action}", limit=360),
+    }
 
 
 def command_inbox(user_id: str) -> str:
@@ -4796,6 +4823,7 @@ def recommendation_items(user_id: str | None = None, limit: int = 8) -> list[str
         if used >= 90:
             items.append(f"Run /cleanup and free disk space on {disk.get('root')}: {used}% used, {disk.get('free_gb')} GB free.")
             break
+    items.extend(autopilot_recommendation_items(limit=3))
     settings = clickup_settings_from_env()
     if not settings.configured:
         items.append("Add CLICKUP_API_TOKEN and CLICKUP_WORKSPACE_ID so Commander can answer campaign/task questions from Telegram.")
@@ -4820,6 +4848,28 @@ def recommendation_items(user_id: str | None = None, limit: int = 8) -> list[str
     if not get_project(str(state.get("active_project") or "")) and assistant_mode(user_id) == "focused":
         items.append("Set a focused project with /focus <project>, or switch to /free for general computer work.")
     return items[:limit]
+
+
+def autopilot_recommendation_items(limit: int = 4) -> list[str]:
+    items: list[str] = []
+    profiles = profiles_data().get("profiles", {})
+    for project_id, profile in sorted(profiles.items()):
+        if not isinstance(profile, dict):
+            continue
+        autopilot = profile.get("autopilot")
+        if not isinstance(autopilot, dict) or not autopilot.get("enabled"):
+            continue
+        ok, reason, criterion = autopilot_can_start(project_id)
+        if ok:
+            criterion_text = criterion.get("text") if isinstance(criterion, dict) else "next open criterion"
+            detail = f"Autopilot for {project_label(project_id, include_id=False)} is ready: {safe_brief_text(criterion_text)}. {autopilot_next_action(project_id, reason, can_start=True)}"
+            items.append(safe_brief_text(detail))
+        elif reason in {"no open criteria", "blocked criteria need review", "objective already complete"}:
+            detail = f"Autopilot for {project_label(project_id, include_id=False)} is waiting: {reason}. {autopilot_next_action(project_id, reason, can_start=False)}"
+            items.append(safe_brief_text(detail))
+        if len(items) >= limit:
+            break
+    return items
 
 
 def command_next(user_id: str) -> str:

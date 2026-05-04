@@ -1175,6 +1175,28 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("/done health", text)
         self.assertIn("/objective add health", text)
 
+    def test_autopilot_recommendations_surface_owner_action(self) -> None:
+        original_profiles_data = commander.profiles_data
+        original_can_start = commander.autopilot_can_start
+        original_label = commander.project_label
+        try:
+            commander.profiles_data = lambda: {  # type: ignore[assignment]
+                "profiles": {"health": {"autopilot": {"enabled": True, "interval_minutes": 5}}}
+            }
+            commander.autopilot_can_start = lambda project_id: (False, "no open criteria", None)  # type: ignore[assignment]
+            commander.project_label = lambda project_id, project=None, include_id=True: "Health Companion AI"  # type: ignore[assignment]
+
+            items = commander.autopilot_recommendation_items()
+        finally:
+            commander.profiles_data = original_profiles_data  # type: ignore[assignment]
+            commander.autopilot_can_start = original_can_start  # type: ignore[assignment]
+            commander.project_label = original_label  # type: ignore[assignment]
+
+        self.assertEqual(len(items), 1)
+        self.assertIn("Health Companion AI", items[0])
+        self.assertIn("/done health", items[0])
+        self.assertIn("/objective add health", items[0])
+
     def test_autopilot_pauses_for_blocked_criteria(self) -> None:
         original_autopilot_profile = commander.autopilot_profile
         original_refresh = commander.refresh_session_states
@@ -1609,6 +1631,47 @@ class BrowserAndClickUpTests(unittest.TestCase):
             commander.refresh_session_states = original_refresh  # type: ignore[assignment]
             commander.tasks_data = original_tasks  # type: ignore[assignment]
             commander.recommendation_items = original_recs  # type: ignore[assignment]
+
+    def test_inbox_items_summarize_and_dedupe_failed_autopilot_tasks(self) -> None:
+        original_sessions = commander.sessions_data
+        original_tasks = commander.tasks_data
+        original_recs = commander.recommendation_items
+        original_pending = commander.pending_approvals
+        original_get_project = commander.get_project
+        original_label = commander.project_label
+        long_task = (
+            "Autonomous continuation for Health Companion AI. Continue from the completed and verified local checkpoints. "
+            "Focus only on Definition-of-Done criterion 5: Patient web experience supports Arabic-first onboarding. "
+            "Build the local product capability, update or add tests, run the relevant verification commands, and leave clear evidence."
+        )
+        try:
+            commander.pending_approvals = lambda: []  # type: ignore[assignment]
+            commander.sessions_data = lambda: {"sessions": {}}  # type: ignore[assignment]
+            commander.tasks_data = lambda: {  # type: ignore[assignment]
+                "tasks": [
+                    {"id": "a1", "project": "health", "status": "failed", "title": long_task},
+                    {"id": "a2", "project": "health", "status": "failed", "title": long_task},
+                ]
+            }
+            commander.recommendation_items = lambda user_id=None, limit=8: []  # type: ignore[assignment]
+            commander.get_project = lambda project_id: {"name": "Health Companion AI"} if project_id == "health" else None  # type: ignore[assignment]
+            commander.project_label = lambda project_id, project=None, include_id=True: "Health Companion AI"  # type: ignore[assignment]
+
+            inbox = commander.inbox_items(user_id="1")
+        finally:
+            commander.sessions_data = original_sessions  # type: ignore[assignment]
+            commander.tasks_data = original_tasks  # type: ignore[assignment]
+            commander.recommendation_items = original_recs  # type: ignore[assignment]
+            commander.pending_approvals = original_pending  # type: ignore[assignment]
+            commander.get_project = original_get_project  # type: ignore[assignment]
+            commander.project_label = original_label  # type: ignore[assignment]
+
+        task_items = [item for item in inbox if item["kind"] == "task"]
+        self.assertEqual(len(task_items), 1)
+        self.assertIn("Health Companion AI", task_items[0]["title"])
+        self.assertIn("Build Health Companion AI", task_items[0]["detail"])
+        self.assertNotIn("Definition-of-Done", task_items[0]["detail"])
+        self.assertLess(len(task_items[0]["detail"]), 360)
 
 
 if __name__ == "__main__":

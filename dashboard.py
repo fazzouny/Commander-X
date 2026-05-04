@@ -428,6 +428,7 @@ def dashboard_recommendations(
         if used >= 90:
             items.append(f"Run /cleanup and free disk space on {disk.get('root')}: {used}% used, {disk.get('free_gb')} GB free.")
             break
+    items.extend(commander.autopilot_recommendation_items(limit=3))
     if not commander.clickup_settings_from_env().configured:
         items.append("Add CLICKUP_API_TOKEN and CLICKUP_WORKSPACE_ID so Commander can answer campaign/task questions from Telegram.")
     if not os.environ.get("GITHUB_TOKEN"):
@@ -487,18 +488,16 @@ def dashboard_inbox(user_id: str, recommendations: list[str]) -> list[dict[str, 
                     "detail": f"State: {state}; use /watch {project_id}",
                 }
             )
+    seen_tasks: set[str] = set()
     for task in commander.visible_task_records(commander.tasks_data().get("tasks", []), limit=8):
-        status = str(task.get("status", "queued"))
-        if status in {"queued", "review", "failed"}:
-            project = str(task.get("project", "-"))
-            items.append(
-                {
-                    "kind": "task",
-                    "priority": "medium" if status != "failed" else "high",
-                    "title": f"{status}: {project}",
-                    "detail": str(task.get("title", "-")),
-                }
-            )
+        item = commander.task_inbox_item(task)
+        if not item:
+            continue
+        key = commander.task_inbox_dedupe_key(task)
+        if key in seen_tasks:
+            continue
+        seen_tasks.add(key)
+        items.append(item)
     for recommendation in recommendations[:6]:
         items.append(
             {
@@ -574,6 +573,7 @@ def dashboard_action_center(
                 }
             )
             seen_projects.add(project_id)
+    seen_task_keys: set[str] = set()
     for task in commander.visible_task_records(tasks, limit=10):
         if not isinstance(task, dict):
             continue
@@ -582,13 +582,18 @@ def dashboard_action_center(
             continue
         task_id = str(task.get("id") or "")
         project = str(task.get("project") or "-")
+        task_item = commander.task_inbox_item(task) or {}
+        key = commander.task_inbox_dedupe_key(task)
+        if key in seen_task_keys:
+            continue
+        seen_task_keys.add(key)
         items.append(
             {
                 "kind": "task",
                 "priority": "medium" if status == "queued" else "high",
                 "project": project,
-                "title": f"{status}: {project}",
-                "detail": str(task.get("title") or "-"),
+                "title": task_item.get("title") or f"{status}: {project}",
+                "detail": task_item.get("detail") or commander.safe_brief_text(task.get("title") or "-"),
                 "task_id": task_id,
                 "actions": [
                     {"label": "Start", "type": "task", "action": "start"} if status == "queued" else {"label": "Done", "type": "task", "action": "done"},

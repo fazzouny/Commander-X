@@ -250,6 +250,61 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertIn("/autopilot run", rows[0]["next_action"])
         self.assertEqual(rows[0]["command"], "/autopilot run")
 
+    def test_dashboard_recommendations_include_autopilot_actions(self) -> None:
+        original_autopilot_recs = dashboard.commander.autopilot_recommendation_items
+        original_clickup = dashboard.commander.clickup_settings_from_env
+        try:
+            dashboard.commander.autopilot_recommendation_items = lambda limit=3: [  # type: ignore[assignment]
+                "Autopilot for Health Companion AI is waiting: no open criteria. Review completion with /done health."
+            ]
+            dashboard.commander.clickup_settings_from_env = lambda: type("Settings", (), {"configured": True})()  # type: ignore[assignment]
+
+            items = dashboard.dashboard_recommendations(
+                user_id="owner",
+                changes=[],
+                snapshot={"disk": []},
+                sessions={},
+                openclaw={"state": "unavailable"},
+            )
+        finally:
+            dashboard.commander.autopilot_recommendation_items = original_autopilot_recs  # type: ignore[assignment]
+            dashboard.commander.clickup_settings_from_env = original_clickup  # type: ignore[assignment]
+
+        self.assertIn("Autopilot for Health Companion AI", items[0])
+        self.assertIn("/done health", items[0])
+
+    def test_dashboard_inbox_uses_owner_task_summaries(self) -> None:
+        original_approvals = dashboard.commander.pending_approvals
+        original_tasks = dashboard.commander.tasks_data
+        original_visible = dashboard.commander.visible_task_records
+        original_task_item = dashboard.commander.task_inbox_item
+        original_task_key = dashboard.commander.task_inbox_dedupe_key
+        try:
+            task = {"id": "a1", "project": "health", "status": "failed", "title": "long internal prompt"}
+            dashboard.commander.pending_approvals = lambda: []  # type: ignore[assignment]
+            dashboard.commander.tasks_data = lambda: {"tasks": [task, dict(task, id="a2")]}  # type: ignore[assignment]
+            dashboard.commander.visible_task_records = lambda tasks, limit=8: tasks  # type: ignore[assignment]
+            dashboard.commander.task_inbox_item = lambda item: {  # type: ignore[assignment]
+                "kind": "task",
+                "priority": "high",
+                "title": "blocked: Health Companion AI",
+                "detail": "Build Health Companion AI from the real PRD. Review with /playback health.",
+            }
+            dashboard.commander.task_inbox_dedupe_key = lambda item: "health:failed:summary"  # type: ignore[assignment]
+
+            items = dashboard.dashboard_inbox(user_id="owner", recommendations=[])
+        finally:
+            dashboard.commander.pending_approvals = original_approvals  # type: ignore[assignment]
+            dashboard.commander.tasks_data = original_tasks  # type: ignore[assignment]
+            dashboard.commander.visible_task_records = original_visible  # type: ignore[assignment]
+            dashboard.commander.task_inbox_item = original_task_item  # type: ignore[assignment]
+            dashboard.commander.task_inbox_dedupe_key = original_task_key  # type: ignore[assignment]
+
+        task_items = [item for item in items if item["kind"] == "task"]
+        self.assertEqual(len(task_items), 1)
+        self.assertIn("Health Companion AI", task_items[0]["title"])
+        self.assertIn("/playback health", task_items[0]["detail"])
+
     def test_dashboard_action_center_combines_decisions_sessions_tasks_and_changes(self) -> None:
         approvals = [
             {
