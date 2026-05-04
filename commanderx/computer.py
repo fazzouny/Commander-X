@@ -6,7 +6,9 @@ import datetime as dt
 import io
 import json
 import os
+import re
 import subprocess
+import urllib.parse
 import webbrowser
 from pathlib import Path
 from typing import Any
@@ -68,6 +70,30 @@ def web_shortcut_catalog(config: dict[str, Any] | None = None) -> dict[str, str]
         if key:
             shortcuts[key] = clean_target
     return shortcuts
+
+
+def normalize_web_shortcut_name(value: str) -> str:
+    name = " ".join(str(value or "").strip().lower().split())
+    if not re.fullmatch(r"[a-z0-9][a-z0-9 ._-]{1,48}", name):
+        raise ValueError("Shortcut name must be 2-49 characters using letters, numbers, spaces, dots, dashes, or underscores.")
+    return name
+
+
+def normalize_web_shortcut_url(value: str) -> str:
+    clean = str(value or "").strip()
+    parsed = urllib.parse.urlsplit(clean)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Shortcut URL must start with http:// or https://.")
+    if parsed.username or parsed.password:
+        raise ValueError("Shortcut URL cannot include embedded credentials.")
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment))
+
+
+def safe_web_shortcut_display(url: str) -> str:
+    parsed = urllib.parse.urlsplit(str(url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path[:120], "", ""))
 
 
 def resolve_web_shortcut(value: str, config: dict[str, Any] | None = None) -> str:

@@ -48,7 +48,10 @@ from commanderx.computer import open_app as computer_open_app
 from commanderx.computer import open_url as computer_open_url
 from commanderx.computer import press_volume_key
 from commanderx.computer import process_lines as computer_process_lines
+from commanderx.computer import normalize_web_shortcut_name
+from commanderx.computer import normalize_web_shortcut_url
 from commanderx.computer import resolve_web_shortcut
+from commanderx.computer import safe_web_shortcut_display
 from commanderx.computer import web_shortcut_catalog
 from commanderx.gitops import changed_files as git_changed_files
 from commanderx.gitops import current_branch as git_current_branch
@@ -148,6 +151,7 @@ NL_ALLOWED_COMMANDS = {
     "/clipboard",
     "/cleanup",
     "/open",
+    "/shortcut",
     "/file",
     "/volume",
     "/start",
@@ -214,6 +218,7 @@ TELEGRAM_COMMANDS = [
     ("clipboard", "Use guarded clipboard tools"),
     ("cleanup", "Show safe disk cleanup plan"),
     ("open", "Open URL or allowlisted app"),
+    ("shortcut", "Manage web app shortcuts"),
     ("file", "Read project file"),
     ("volume", "Control system volume"),
     ("focus", "Set the active project"),
@@ -2990,8 +2995,12 @@ def command_tools() -> str:
     )
     lines.append("")
     lines.append("Computer tool apps:")
-    apps = app_catalog(computer_tools_config())
+    computer_config = computer_tools_config()
+    apps = app_catalog(computer_config)
     lines.append(", ".join(sorted(apps)) or "none")
+    shortcuts = web_shortcut_catalog(computer_config)
+    lines.append(f"Web shortcuts: {len(shortcuts)} configured")
+    lines.append(", ".join(sorted(shortcuts)[:12]) or "none")
     lines.append("")
     lines.append("Codex CLI MCPs:")
     lines.append(codex_mcp_summary())
@@ -6096,6 +6105,77 @@ def command_open(args: list[str]) -> str:
     return f"I could not tell whether that is a URL or app.\nUsage: /open url <url> or /open app <name>"
 
 
+def command_shortcut(args: list[str]) -> str:
+    config = computer_tools_config()
+    action = args[0].lower() if args else "list"
+    shortcuts = config.setdefault("web_shortcuts", {})
+    if not isinstance(shortcuts, dict):
+        shortcuts = {}
+        config["web_shortcuts"] = shortcuts
+
+    if action in {"list", "show", "status", "shortcuts"}:
+        merged = web_shortcut_catalog(config)
+        custom_keys = {
+            " ".join(str(name).strip().lower().split())
+            for name in shortcuts
+            if str(name).strip()
+        }
+        lines = [
+            "Web shortcuts",
+            "Use /open <name> to open one.",
+            "Add: /shortcut add <name> <https-url>",
+            "Remove custom: /shortcut delete <name>",
+            "",
+        ]
+        for name, target in sorted(merged.items())[:30]:
+            source = "custom" if name in custom_keys else "default"
+            display = safe_brief_text(safe_web_shortcut_display(target))
+            lines.append(f"- {name} ({source}) -> {display}")
+        if len(merged) > 30:
+            lines.append(f"...and {len(merged) - 30} more.")
+        return compact("\n".join(lines), limit=3600)
+
+    if action in {"add", "save", "set", "upsert"}:
+        if len(args) < 3:
+            return "Usage: /shortcut add <name> <https-url>\nExample: /shortcut add company crm https://crm.example.com"
+        name_text = " ".join(args[1:-1])
+        url_text = args[-1]
+        try:
+            name = normalize_web_shortcut_name(name_text)
+            target = normalize_web_shortcut_url(url_text)
+        except ValueError as exc:
+            return str(exc)
+        shortcuts[name] = target
+        write_json(COMPUTER_TOOLS_FILE, config)
+        display = safe_brief_text(safe_web_shortcut_display(target))
+        record_audit_event(
+            "commander",
+            {"type": "web_shortcut", "action": "saved", "name": name, "url": display},
+            "completed",
+        )
+        return f"Saved web shortcut: {name}\nOpen it with /open {name}\nTarget: {display}"
+
+    if action in {"delete", "remove", "forget"}:
+        if len(args) < 2:
+            return "Usage: /shortcut delete <name>"
+        try:
+            name = normalize_web_shortcut_name(" ".join(args[1:]))
+        except ValueError as exc:
+            return str(exc)
+        if name not in shortcuts:
+            return "Only custom shortcuts can be removed. Default shortcuts stay available."
+        shortcuts.pop(name, None)
+        write_json(COMPUTER_TOOLS_FILE, config)
+        record_audit_event(
+            "commander",
+            {"type": "web_shortcut", "action": "removed", "name": name},
+            "completed",
+        )
+        return f"Removed custom web shortcut: {name}"
+
+    return "Usage: /shortcut, /shortcut add <name> <https-url>, or /shortcut delete <name>"
+
+
 def parse_volume_command(args: list[str]) -> tuple[str, int] | None:
     text = " ".join(args).strip().lower()
     if not text:
@@ -7328,6 +7408,9 @@ def command_help() -> str:
 /clipboard [show|set|clear]
 /cleanup
 /open url <url>
+/shortcut
+/shortcut add <name> <https-url>
+/shortcut delete <name>
 /open app <name>
 /file <project> <relative_path> [lines]
 /volume up|down|max|mute [steps]
@@ -8019,6 +8102,14 @@ def natural_computer_command(text: str) -> str | None:
         terms = re.sub(r"\b(latest|recent|updates?|status|what|is|are|happening|progress|about|for|the|my|our|running|active|current)\b", " ", lowered)
         query = " ".join(terms.split()) or "campaigns"
         return f"/clickup recent {query}".strip()
+    if re.search(r"\b(shortcuts?|web shortcuts?)\b", lowered) and re.search(r"\b(show|list|what|available|have)\b", lowered):
+        return "/shortcut"
+    if url_match and re.search(r"\b(shortcuts?|web shortcuts?)\b", lowered) and re.search(r"\b(add|create|save|set)\b", lowered):
+        target = url_match.group(1).rstrip(".,)")
+        name_text = re.sub(re.escape(target), " ", text, flags=re.IGNORECASE)
+        name_text = re.sub(r"\b(add|create|save|set|a|new|web|shortcut|shortcuts?|called|named|for|to|that|opens?)\b", " ", name_text, flags=re.IGNORECASE)
+        name = " ".join(name_text.split())
+        return f"/shortcut add {name} {target}".strip() if name else f"/shortcut add {target}"
     if url_match and re.search(r"\b(open|visit|go to|browse|launch|pull up)\b", lowered):
         return f"/open url {url_match.group(1).rstrip('.,)')}"
     if re.search(r"\b(screenshot|screen shot|capture my screen|capture the screen)\b", lowered):
@@ -8133,6 +8224,7 @@ Allowed commands:
 /clipboard [show|set|clear]
 /cleanup
 /open url <url>
+/shortcut [add|delete]
 /open app <allowlisted_app>
 /file <project> <relative_path> [lines]
 /volume up|down|max|mute [steps]
@@ -8213,6 +8305,7 @@ Rules:
 - If the user asks to peek at clipboard, map to /clipboard show. Do not set clipboard unless explicitly requested.
 - If the user asks about cleanup, storage, or freeing disk space, map to /cleanup. Do not delete files.
 - If the user asks to open or visit a website, map to /open url <url>.
+- If the user asks to list, add, or remove web shortcuts, map to /shortcut.
 - If the user asks to inspect, check, or summarize a website, map to /browser inspect <url>.
 - If the user asks to check ClickUp, map to /clickup recent with query terms if present.
 - If the user asks how many leads, prospects, deals, opportunities, or campaigns exist, map to /clickup count <query>.
@@ -8429,6 +8522,8 @@ def handle_text(
         return [command_cleanup(args)]
     if command == "/open":
         return [command_open(args)]
+    if command == "/shortcut":
+        return [command_shortcut(args)]
     if command == "/file":
         return [command_file(args, user_id=user_id)]
     if command == "/volume":

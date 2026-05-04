@@ -162,6 +162,7 @@ Remove it later with:
 /open url https://example.com
 /open gmail
 /open google calendar
+/shortcut add company-crm https://crm.example.com
 /open app notepad
 /file example-app README.md 80
 /volume down 5
@@ -351,6 +352,9 @@ Commander X intentionally does not expose a raw `/run` shell over Telegram. Devi
 ```text
 /open url <url>
 /open <web_app_shortcut>
+/shortcut
+/shortcut add <name> <https-url>
+/shortcut delete <name>
 /open app <allowlisted_app>
 /file <project> <relative_path> [lines]
 /volume up|down|max|mute [steps]

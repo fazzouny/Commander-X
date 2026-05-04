@@ -131,6 +131,11 @@ class ComputerToolTests(unittest.TestCase):
         self.assertEqual(commander.natural_computer_command("visit example.com"), "/open url example.com")
         self.assertEqual(commander.natural_computer_command("Open Gmail"), "/open url gmail")
         self.assertEqual(commander.natural_computer_command("pull up google calendar"), "/open url google calendar")
+        self.assertEqual(commander.natural_computer_command("show web shortcuts"), "/shortcut")
+        self.assertEqual(
+            commander.natural_computer_command("add shortcut company crm https://crm.example.com"),
+            "/shortcut add company crm https://crm.example.com",
+        )
         self.assertEqual(commander.natural_computer_command("inspect website example.com"), "/browser inspect example.com")
         self.assertEqual(commander.natural_computer_command("check clickup campaigns"), "/clickup recent campaigns")
         self.assertEqual(commander.natural_computer_command("How many leads we have"), "/clickup count leads")
@@ -208,6 +213,34 @@ class ComputerToolTests(unittest.TestCase):
 
         self.assertEqual(calls, ["company crm"])
         self.assertIn("https://crm.example.com", rendered)
+
+    def test_shortcut_command_manages_custom_shortcuts_safely(self) -> None:
+        original_file = commander.COMPUTER_TOOLS_FILE
+        original_audit = commander.record_audit_event
+        audit_events: list[tuple[str, str]] = []
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                commander.COMPUTER_TOOLS_FILE = Path(temp) / "computer_tools.json"
+                commander.record_audit_event = (  # type: ignore[assignment]
+                    lambda project, action, status, approval_id=None, result=None: audit_events.append((project, status)) or {}
+                )
+
+                saved = commander.command_shortcut(["add", "company", "crm", "https://crm.example.com/home?token=abc123"])
+                listing = commander.command_shortcut([])
+                unsafe = commander.command_shortcut(["add", "bad", "file:///C:/secret"])
+                removed = commander.command_shortcut(["delete", "company", "crm"])
+        finally:
+            commander.COMPUTER_TOOLS_FILE = original_file
+            commander.record_audit_event = original_audit  # type: ignore[assignment]
+
+        self.assertIn("Saved web shortcut: company crm", saved)
+        self.assertNotIn("token=abc123", saved)
+        self.assertIn("company crm (custom)", listing)
+        self.assertIn("https://crm.example.com/home", listing)
+        self.assertNotIn("token=abc123", listing)
+        self.assertIn("must start with http:// or https://", unsafe)
+        self.assertIn("Removed custom web shortcut: company crm", removed)
+        self.assertEqual(audit_events, [("commander", "completed"), ("commander", "completed")])
 
     def test_single_project_start_response_starts_resolved_project(self) -> None:
         original_projects_config = commander.projects_config
