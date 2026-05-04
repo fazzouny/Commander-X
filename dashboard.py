@@ -554,6 +554,58 @@ def dashboard_service_health() -> dict[str, Any]:
     }
 
 
+def service_restart_command() -> list[str] | None:
+    script = commander.BASE_DIR / "scripts" / "start-services.ps1"
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    if not powershell or not script.exists():
+        return None
+    command = [powershell, "-NoProfile"]
+    if Path(powershell).name.lower() == "powershell.exe":
+        command.extend(["-ExecutionPolicy", "Bypass"])
+    command.extend(["-File", str(script), "-Restart"])
+    return command
+
+
+def schedule_service_restart(delay_seconds: float = 1.5) -> None:
+    command = service_restart_command()
+    if not command:
+        raise RuntimeError("Commander restart script is not available.")
+
+    def runner() -> None:
+        time.sleep(max(0.2, delay_seconds))
+        subprocess.Popen(
+            command,
+            cwd=str(commander.BASE_DIR),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+    threading.Thread(target=runner, name="commander-service-restart", daemon=True).start()
+
+
+def dashboard_service_restart_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    action = str(payload.get("action") or "restart").strip().lower()
+    if action not in {"restart", "recover"}:
+        return {"ok": False, "error": "unsupported service action"}, 400
+    if not service_restart_command():
+        return {"ok": False, "error": "Commander restart script is not available."}, 500
+    if bool(payload.get("dry_run")):
+        return {
+            "ok": True,
+            "scheduled": False,
+            "text": "Service restart dry run passed. Commander can restart the Telegram poller and dashboard from the protected dashboard action.",
+        }, 200
+    schedule_service_restart()
+    invalidate_dashboard_cache()
+    return {
+        "ok": True,
+        "scheduled": True,
+        "text": "Commander service restart scheduled. The dashboard may pause briefly, then refresh.",
+    }, 202
+
+
 def dashboard_inbox(user_id: str, recommendations: list[str]) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for approval in commander.pending_approvals():
@@ -1800,6 +1852,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/image/analyze":
             result, status = dashboard_image_analyze_action(payload)
             invalidate_dashboard_cache()
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/service/restart":
+            result, status = dashboard_service_restart_action(payload)
             self.send_json(result, status=status)
             return
         if parsed.path == "/api/decision-memory":

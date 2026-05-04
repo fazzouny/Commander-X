@@ -442,6 +442,47 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertIn("Commander service needs attention", items[0])
         self.assertIn("Telegram had a temporary timeout", items[0])
 
+    def test_dashboard_service_restart_action_is_guarded_and_supports_dry_run(self) -> None:
+        original_command = dashboard.service_restart_command
+        original_schedule = dashboard.schedule_service_restart
+        original_invalidate = dashboard.invalidate_dashboard_cache
+        scheduled: list[bool] = []
+        invalidated: list[bool] = []
+        try:
+            dashboard.service_restart_command = lambda: ["powershell", "-File", "start-services.ps1", "-Restart"]  # type: ignore[assignment]
+            dashboard.schedule_service_restart = lambda: scheduled.append(True)  # type: ignore[assignment]
+            dashboard.invalidate_dashboard_cache = lambda: invalidated.append(True)  # type: ignore[assignment]
+
+            bad, bad_status = dashboard.dashboard_service_restart_action({"action": "shell"})
+            dry, dry_status = dashboard.dashboard_service_restart_action({"action": "restart", "dry_run": True})
+            scheduled_result, scheduled_status = dashboard.dashboard_service_restart_action({"action": "restart"})
+        finally:
+            dashboard.service_restart_command = original_command  # type: ignore[assignment]
+            dashboard.schedule_service_restart = original_schedule  # type: ignore[assignment]
+            dashboard.invalidate_dashboard_cache = original_invalidate  # type: ignore[assignment]
+
+        self.assertEqual(bad_status, 400)
+        self.assertFalse(bad["ok"])
+        self.assertEqual(dry_status, 200)
+        self.assertFalse(dry["scheduled"])
+        self.assertIn("dry run passed", dry["text"])
+        self.assertEqual(scheduled_status, 202)
+        self.assertTrue(scheduled_result["scheduled"])
+        self.assertEqual(scheduled, [True])
+        self.assertEqual(invalidated, [True])
+
+    def test_dashboard_service_restart_action_reports_missing_script(self) -> None:
+        original_command = dashboard.service_restart_command
+        try:
+            dashboard.service_restart_command = lambda: None  # type: ignore[assignment]
+            result, status = dashboard.dashboard_service_restart_action({"action": "restart"})
+        finally:
+            dashboard.service_restart_command = original_command  # type: ignore[assignment]
+
+        self.assertEqual(status, 500)
+        self.assertFalse(result["ok"])
+        self.assertIn("not available", result["error"])
+
     def test_dashboard_inbox_uses_owner_task_summaries(self) -> None:
         original_approvals = dashboard.commander.pending_approvals
         original_tasks = dashboard.commander.tasks_data

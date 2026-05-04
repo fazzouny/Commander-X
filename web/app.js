@@ -96,8 +96,12 @@ function renderServiceHealth(data) {
   const type = overall === "good" ? "good" : overall === "bad" ? "bad" : "warn";
   qs("#service-health-status").innerHTML = pill(overall, type);
   qs("#service-health-summary").textContent = health.summary || "Checking Commander services.";
+  const restartButton =
+    overall === "warn" || overall === "bad"
+      ? `<div class="action-center-actions"><button class="danger" data-service-action="restart">Restart Commander</button></div>`
+      : "";
   qs("#service-health").innerHTML =
-    items
+    (items
       .map((item) => {
         const itemType = item.status === "good" ? "good" : item.status === "bad" ? "bad" : "warn";
         return `
@@ -111,7 +115,7 @@ function renderServiceHealth(data) {
           </div>
         `;
       })
-      .join("") || `<p>Service health is warming up.</p>`;
+      .join("") || `<p>Service health is warming up.</p>`) + restartButton;
 }
 
 function renderProjects(data) {
@@ -1264,6 +1268,26 @@ async function handleQueueClick(event) {
   await refresh();
 }
 
+async function handleServiceActionClick(event) {
+  const button = event.target.closest("[data-service-action]");
+  if (!button) return;
+  const action = button.dataset.serviceAction || "restart";
+  button.disabled = true;
+  qs("#action-output").textContent = "Scheduling Commander service restart...";
+  try {
+    const result = await api("/api/service/restart", {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    });
+    qs("#action-output").textContent = result.text || result.error || JSON.stringify(result, null, 2);
+    window.setTimeout(() => refresh().catch(() => {}), 8000);
+  } catch (error) {
+    qs("#action-output").textContent = `Service restart may be in progress. ${error.message || error}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function handleWorkFeedClick(event) {
   const button = event.target.closest("[data-work-action]");
   if (!button) return;
@@ -1433,6 +1457,7 @@ qs("#action-center").addEventListener("click", handleApprovalClick);
 qs("#action-center").addEventListener("click", handleTaskClick);
 qs("#action-center").addEventListener("click", handleQueueClick);
 qs("#action-center").addEventListener("click", handleWorkFeedClick);
+qs("#service-health").addEventListener("click", handleServiceActionClick);
 qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionClick);
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
 qs("#owner-reviews").addEventListener("click", handleReviewPreviewClick);
