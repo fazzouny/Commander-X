@@ -38,6 +38,36 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertTrue(payload["dashboard_cache"]["stale"])
         self.assertEqual(calls, [True])
 
+    def test_dashboard_payload_marks_recent_cached_snapshot_fresh(self) -> None:
+        original_cache = dashboard.DASHBOARD_CACHE.copy()
+        original_refresh = dashboard.refresh_dashboard_cache_async
+        calls: list[bool] = []
+        try:
+            with dashboard.DASHBOARD_CACHE_LOCK:
+                dashboard.DASHBOARD_CACHE.clear()
+                dashboard.DASHBOARD_CACHE.update(
+                    {
+                        "value": {"status": "recent cached snapshot"},
+                        "at": time.monotonic() - dashboard.DASHBOARD_CACHE_SECONDS - 1,
+                        "generated_at": "2026-04-30T00:00:00+00:00",
+                        "refreshing": False,
+                        "last_error": "",
+                        "last_error_at": "",
+                    }
+                )
+            dashboard.refresh_dashboard_cache_async = lambda force=False: calls.append(force) or True  # type: ignore[assignment]
+
+            payload = dashboard.dashboard_payload()
+        finally:
+            dashboard.refresh_dashboard_cache_async = original_refresh  # type: ignore[assignment]
+            with dashboard.DASHBOARD_CACHE_LOCK:
+                dashboard.DASHBOARD_CACHE.clear()
+                dashboard.DASHBOARD_CACHE.update(original_cache)
+
+        self.assertEqual(payload["status"], "recent cached snapshot")
+        self.assertFalse(payload["dashboard_cache"]["stale"])
+        self.assertEqual(calls, [])
+
     def test_dashboard_payload_falls_back_while_first_snapshot_warms(self) -> None:
         original_cache = dashboard.DASHBOARD_CACHE.copy()
         original_refresh = dashboard.refresh_dashboard_cache_async

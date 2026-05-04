@@ -83,7 +83,7 @@ def dashboard_cache_metadata(now: float | None = None, stale: bool | None = None
         last_error = str(DASHBOARD_CACHE.get("last_error") or "")
         last_error_at = str(DASHBOARD_CACHE.get("last_error_at") or "")
     age = max(0.0, current - at) if at else 0.0
-    is_stale = bool(stale) if stale is not None else bool(at and age >= DASHBOARD_CACHE_SECONDS)
+    is_stale = bool(stale) if stale is not None else bool(at and age >= DASHBOARD_REQUEST_REFRESH_SECONDS)
     return {
         "generated_at": generated_at,
         "age_seconds": round(age, 1),
@@ -1185,10 +1185,10 @@ def dashboard_payload() -> dict[str, Any]:
         payload = DASHBOARD_CACHE.get("value")
         at = float(DASHBOARD_CACHE.get("at") or 0.0)
     if isinstance(payload, dict) and at:
-        stale = now - at >= DASHBOARD_CACHE_SECONDS
-        if stale and now - at >= DASHBOARD_REQUEST_REFRESH_SECONDS:
+        needs_refresh = now - at >= DASHBOARD_REQUEST_REFRESH_SECONDS
+        if needs_refresh:
             refresh_dashboard_cache_async(force=True)
-        return attach_dashboard_cache_metadata(payload, now=now, stale=stale)
+        return attach_dashboard_cache_metadata(payload, now=now, stale=needs_refresh)
     refresh_dashboard_cache_async(force=True)
     return attach_dashboard_cache_metadata(
         fallback_dashboard_payload("Dashboard snapshot is warming up. Refresh again in a few seconds."),
