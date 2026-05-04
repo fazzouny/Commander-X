@@ -462,6 +462,25 @@ def dashboard_recommendations(
     return items[:8]
 
 
+def dashboard_service_recovery_history(limit: int = 4) -> list[dict[str, str]]:
+    history: list[dict[str, str]] = []
+    for event in reversed(commander.audit_data().get("events", [])):
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("type") or "") != "service_restart":
+            continue
+        history.append(
+            {
+                "at": str(event.get("at") or ""),
+                "status": commander.audit_clean(event.get("status") or "recorded", limit=80),
+                "summary": commander.audit_clean(event.get("summary") or "-", limit=280),
+            }
+        )
+        if len(history) >= limit:
+            break
+    return history
+
+
 def dashboard_service_health() -> dict[str, Any]:
     process_warning = ""
     try:
@@ -551,6 +570,7 @@ def dashboard_service_health() -> dict[str, Any]:
         "overall": overall,
         "summary": commander.safe_brief_text(summary),
         "items": items,
+        "recovery": dashboard_service_recovery_history(),
     }
 
 

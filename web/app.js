@@ -92,6 +92,7 @@ function renderMetrics(data) {
 function renderServiceHealth(data) {
   const health = data.service_health || {};
   const items = health.items || [];
+  const recovery = health.recovery || [];
   const overall = health.overall || "checking";
   const type = overall === "good" ? "good" : overall === "bad" ? "bad" : "warn";
   qs("#service-health-status").innerHTML = pill(overall, type);
@@ -115,7 +116,22 @@ function renderServiceHealth(data) {
           </div>
         `;
       })
-      .join("") || `<p>Service health is warming up.</p>`) + restartButton;
+      .join("") || `<p>Service health is warming up.</p>`) +
+    (recovery.length
+      ? `
+        <div class="row">
+          <div class="row-main">
+            <div class="row-title">Recent recovery actions</div>
+            ${recovery
+              .slice(0, 4)
+              .map((item) => `<div class="row-meta">${escapeHtml(item.status || "recorded")} - ${escapeHtml(item.summary || "-")}</div>`)
+              .join("")}
+          </div>
+          <div>${pill(`${recovery.length}`, "good")}</div>
+        </div>
+      `
+      : "") +
+    restartButton;
 }
 
 function renderProjects(data) {

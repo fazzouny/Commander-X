@@ -393,11 +393,22 @@ class DashboardCapabilityTests(unittest.TestCase):
     def test_dashboard_service_health_flags_transient_poller_issue(self) -> None:
         original_process_lines = dashboard.commander.computer_process_lines
         original_log_line = dashboard.commander.service_log_line
+        original_audit_data = dashboard.commander.audit_data
         try:
             dashboard.commander.computer_process_lines = lambda markers, timeout=4: [  # type: ignore[assignment]
                 "100 commander.py --poll",
                 "200 dashboard.py",
             ]
+            dashboard.commander.audit_data = lambda: {  # type: ignore[assignment]
+                "events": [
+                    {
+                        "at": "2026-05-04T16:49:00+00:00",
+                        "type": "service_restart",
+                        "status": "checked",
+                        "summary": "Dry run from C:\\Users\\Name\\repo\\.env",
+                    }
+                ]
+            }
 
             def log_line(path, patterns=None) -> str:
                 if path.name == "commander-service.out.log":
@@ -412,6 +423,7 @@ class DashboardCapabilityTests(unittest.TestCase):
         finally:
             dashboard.commander.computer_process_lines = original_process_lines  # type: ignore[assignment]
             dashboard.commander.service_log_line = original_log_line  # type: ignore[assignment]
+            dashboard.commander.audit_data = original_audit_data  # type: ignore[assignment]
 
         self.assertEqual(health["overall"], "warn")
         self.assertIn("running", health["summary"])
@@ -419,6 +431,33 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(health["items"][0]["status"], "warn")
         self.assertIn("temporary connection issue", health["items"][0]["detail"])
         self.assertNotIn("commander.py --poll", str(health))
+        self.assertEqual(health["recovery"][0]["status"], "checked")
+        self.assertIn("technical path", health["recovery"][0]["summary"])
+        self.assertNotIn("C:\\Users", str(health))
+
+    def test_dashboard_service_recovery_history_filters_and_sanitizes_events(self) -> None:
+        original_audit_data = dashboard.commander.audit_data
+        try:
+            dashboard.commander.audit_data = lambda: {  # type: ignore[assignment]
+                "events": [
+                    {"type": "commit", "status": "approved", "summary": "Commit ok"},
+                    {
+                        "at": "2026-05-04T16:49:00+00:00",
+                        "type": "service_restart",
+                        "status": "scheduled",
+                        "summary": "Restarted from C:\\Users\\Name\\repo\\.env",
+                    },
+                ]
+            }
+
+            history = dashboard.dashboard_service_recovery_history()
+        finally:
+            dashboard.commander.audit_data = original_audit_data  # type: ignore[assignment]
+
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["status"], "scheduled")
+        self.assertIn("technical path", history[0]["summary"])
+        self.assertNotIn("C:\\Users", str(history))
 
     def test_dashboard_recommendations_include_service_health_attention(self) -> None:
         original_autopilot_recs = dashboard.commander.autopilot_recommendation_items
