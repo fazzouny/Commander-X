@@ -153,6 +153,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
             "web_research": os.environ.get("COMMANDER_OPENCLAW_WEB_RESEARCH", "true"),
         },
         "env": commander.env_readiness(),
+        "setup_status": commander.setup_status_items(),
         "system": fast_system_snapshot([commander.BASE_DIR]),
         "logs": [],
     }
@@ -1236,6 +1237,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "capabilities": capabilities_payload(str(openclaw.get("state") or "")),
         "openclaw": openclaw,
         "env": commander.env_readiness(),
+        "setup_status": commander.setup_status_items(),
         "system": snapshot,
         "logs": [
             {

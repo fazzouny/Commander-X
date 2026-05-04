@@ -172,6 +172,9 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertIn("action_center", payload)
         self.assertEqual(payload["action_center"], [])
         self.assertIn("capabilities", payload)
+        self.assertIn("setup_status", payload)
+        self.assertTrue(payload["setup_status"])
+        self.assertIn("title", payload["setup_status"][0])
 
     def test_lightweight_dashboard_session_cards_do_not_need_log_scans(self) -> None:
         sessions = {

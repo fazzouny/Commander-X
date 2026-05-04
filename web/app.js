@@ -926,6 +926,7 @@ function renderOpenClaw(data) {
 
 function renderEnv(data) {
   const env = data.env || {};
+  const setup = data.setup_status || [];
   const groups = Object.entries(env);
   const totals = groups.reduce(
     (acc, [, keys]) => {
@@ -936,11 +937,38 @@ function renderEnv(data) {
     },
     { configured: 0, total: 0 },
   );
-  qs("#env-count").textContent = `${totals.configured}/${totals.total} configured`;
-  qs("#env").innerHTML = groups
+  const readySetup = setup.filter((item) => item.state === "ready").length;
+  qs("#env-count").textContent = setup.length
+    ? `${readySetup}/${setup.length} capabilities ready`
+    : `${totals.configured}/${totals.total} configured`;
+  const setupHtml = setup
+    .map((item) => {
+      const state = item.state || "missing";
+      const type = state === "ready" ? "good" : state === "partial" ? "warn" : item.required ? "bad" : "warn";
+      const missing = (item.missing_keys || []).join(", ") || "none";
+      return `
+        <div class="work-card">
+          <div class="work-card-head">
+            <div>
+              <div class="row-title">${escapeHtml(item.title || "-")}</div>
+              <div class="row-meta">${escapeHtml(item.purpose || "-")}</div>
+            </div>
+            <div>${pill(state, type)}</div>
+          </div>
+          <div class="work-grid">
+            <div><span>Setup type</span><strong>${item.required ? "required" : "optional"}</strong></div>
+            <div><span>Configured</span><strong>${escapeHtml(item.configured || 0)} / ${escapeHtml(item.total || 0)}</strong></div>
+            <div><span>Missing keys</span><strong>${escapeHtml(missing)}</strong></div>
+            <div><span>Next</span><strong>${escapeHtml(item.next_step || "-")}</strong></div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+  const groupHtml = groups
     .map(([group, keys]) => {
       const values = Object.entries(keys || {});
-      const configured = values.filter(([, status]) => status === "configured").length;
+      const configured = values.filter(([, status]) => String(status).startsWith("configured")).length;
       return `
         <div class="row">
           <div class="row-main">
@@ -952,6 +980,7 @@ function renderEnv(data) {
       `;
     })
     .join("");
+  qs("#env").innerHTML = setupHtml || groupHtml || `<p>No environment readiness data.</p>`;
 }
 
 function renderSystem(data) {
