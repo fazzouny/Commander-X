@@ -1690,6 +1690,80 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn("Definition-of-Done", task_items[0]["detail"])
         self.assertLess(len(task_items[0]["detail"]), 360)
 
+    def test_inbox_task_dedupe_keeps_most_urgent_status(self) -> None:
+        original_sessions = commander.sessions_data
+        original_tasks = commander.tasks_data
+        original_recs = commander.recommendation_items
+        original_pending = commander.pending_approvals
+        original_get_project = commander.get_project
+        original_label = commander.project_label
+        title = "Build Health Companion AI from the real PRD with Arabic-first flows."
+        try:
+            commander.pending_approvals = lambda: []  # type: ignore[assignment]
+            commander.sessions_data = lambda: {"sessions": {}}  # type: ignore[assignment]
+            commander.tasks_data = lambda: {  # type: ignore[assignment]
+                "tasks": [
+                    {"id": "review1", "project": "health", "status": "review", "title": title},
+                    {"id": "failed1", "project": "health", "status": "failed", "title": title},
+                ]
+            }
+            commander.recommendation_items = lambda user_id=None, limit=8: []  # type: ignore[assignment]
+            commander.get_project = lambda project_id: {"name": "Health Companion AI"} if project_id == "health" else None  # type: ignore[assignment]
+            commander.project_label = lambda project_id, project=None, include_id=True: "Health Companion AI"  # type: ignore[assignment]
+
+            inbox = commander.inbox_items(user_id="1")
+        finally:
+            commander.sessions_data = original_sessions  # type: ignore[assignment]
+            commander.tasks_data = original_tasks  # type: ignore[assignment]
+            commander.recommendation_items = original_recs  # type: ignore[assignment]
+            commander.pending_approvals = original_pending  # type: ignore[assignment]
+            commander.get_project = original_get_project  # type: ignore[assignment]
+            commander.project_label = original_label  # type: ignore[assignment]
+
+        task_items = [item for item in inbox if item["kind"] == "task"]
+        self.assertEqual(len(task_items), 1)
+        self.assertIn("blocked: Health Companion AI", task_items[0]["title"])
+        self.assertIn("/queue done failed1", task_items[0]["detail"])
+        self.assertIn("1 similar queue item hidden", task_items[0]["detail"])
+        self.assertNotIn("review1", task_items[0]["detail"])
+
+    def test_tasks_summary_is_owner_readable_and_deduped(self) -> None:
+        original_refresh = commander.refresh_session_states
+        original_sync = commander.sync_tasks_with_sessions
+        original_tasks = commander.tasks_data
+        original_get_project = commander.get_project
+        original_label = commander.project_label
+        raw_prompt = (
+            "Autonomous continuation for Health Companion AI. Continue from the completed and verified local checkpoints. "
+            "Focus only on Definition-of-Done criterion 5: Patient web experience supports Arabic-first onboarding. "
+            "Build the local product capability, update or add tests, run the relevant verification commands, and leave clear evidence."
+        )
+        try:
+            commander.refresh_session_states = lambda: None  # type: ignore[assignment]
+            commander.sync_tasks_with_sessions = lambda: None  # type: ignore[assignment]
+            commander.tasks_data = lambda: {  # type: ignore[assignment]
+                "tasks": [
+                    {"id": "review1", "project": "health", "status": "review", "title": raw_prompt},
+                    {"id": "failed1", "project": "health", "status": "failed", "title": raw_prompt},
+                ]
+            }
+            commander.get_project = lambda project_id: {"name": "Health Companion AI"} if project_id == "health" else None  # type: ignore[assignment]
+            commander.project_label = lambda project_id, project=None, include_id=True: "Health Companion AI"  # type: ignore[assignment]
+
+            text = commander.tasks_summary()
+        finally:
+            commander.refresh_session_states = original_refresh  # type: ignore[assignment]
+            commander.sync_tasks_with_sessions = original_sync  # type: ignore[assignment]
+            commander.tasks_data = original_tasks  # type: ignore[assignment]
+            commander.get_project = original_get_project  # type: ignore[assignment]
+            commander.project_label = original_label  # type: ignore[assignment]
+
+        self.assertIn("[failed1] blocked: Health Companion AI", text)
+        self.assertIn("Build Health Companion AI from the real PRD", text)
+        self.assertIn("1 similar queue item hidden", text)
+        self.assertNotIn("Definition-of-Done", text)
+        self.assertNotIn("review1", text)
+
 
 if __name__ == "__main__":
     unittest.main()

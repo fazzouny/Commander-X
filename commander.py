@@ -1204,10 +1204,17 @@ def tasks_summary(limit: int = 12) -> str:
     tasks = tasks_data().get("tasks", [])
     if not tasks:
         return "Task queue is empty."
-    visible = visible_task_records(tasks, limit=limit)
+    visible = deduped_task_records_for_inbox(visible_task_records(tasks, limit=max(limit * 4, 50)))[:limit]
     lines = ["Commander task queue:"]
     for task in visible:
-        lines.append(f"- [{task.get('id')}] {task.get('project')} - {task.get('status')}: {task.get('title')}")
+        item = task_inbox_item(task)
+        if not item:
+            continue
+        task_id = safe_brief_text(task.get("id") or "-")
+        lines.append(f"- [{task_id}] {item['title']}")
+        lines.append(f"  {item['detail']}")
+    if len(lines) == 1:
+        return "Task queue has no active items."
     return compact("\n".join(lines))
 
 
@@ -4731,13 +4738,9 @@ def inbox_items(user_id: str | None = None, limit: int = 12) -> list[dict[str, s
                     "detail": f"State: {state}; use /log {project_id} and /diff {project_id}",
                 }
             )
-    for task in visible_task_records(tasks_data().get("tasks", []), limit=8):
+    for task in deduped_task_records_for_inbox(visible_task_records(tasks_data().get("tasks", []), limit=50)):
         item = task_inbox_item(task)
         if item:
-            key = task_inbox_dedupe_key(task)
-            if any(existing.get("dedupe_key") == key for existing in items):
-                continue
-            item["dedupe_key"] = key
             items.append(item)
     for recommendation in recommendation_items(user_id=user_id, limit=6):
         items.append(
@@ -4757,9 +4760,39 @@ def inbox_items(user_id: str | None = None, limit: int = 12) -> list[dict[str, s
 
 def task_inbox_dedupe_key(task: dict[str, Any]) -> str:
     project = str(task.get("project") or "-")
-    status = str(task.get("status") or "queued")
     summary = summarize_task_for_human(task.get("title") or "")
-    return f"{project}:{status}:{summary.lower()}"
+    return f"{project}:{summary.lower()}"
+
+
+def task_inbox_status_rank(task: dict[str, Any]) -> int:
+    status = str(task.get("status") or "queued")
+    return {"failed": 0, "review": 1, "queued": 2, "stopped": 3}.get(status, 9)
+
+
+def deduped_task_records_for_inbox(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for task in tasks:
+        if not task_inbox_item(task):
+            continue
+        key = task_inbox_dedupe_key(task)
+        if key not in grouped:
+            grouped[key] = {"task": dict(task), "count": 1}
+            order.append(key)
+            continue
+        grouped[key]["count"] += 1
+        if task_inbox_status_rank(task) <= task_inbox_status_rank(grouped[key]["task"]):
+            grouped[key]["task"] = dict(task)
+
+    result: list[dict[str, Any]] = []
+    for key in order:
+        group = grouped[key]
+        task = dict(group["task"])
+        duplicate_count = int(group["count"]) - 1
+        if duplicate_count > 0:
+            task["_inbox_duplicate_count"] = duplicate_count
+        result.append(task)
+    return result
 
 
 def task_inbox_item(task: dict[str, Any]) -> dict[str, str] | None:
@@ -4776,11 +4809,16 @@ def task_inbox_item(task: dict[str, Any]) -> dict[str, str] | None:
         next_action = f"Review it, then mark it done with /queue done {task_id} or cancel it with /queue cancel {task_id}." if task_id else "Review it, then mark it done or cancel it from the dashboard."
     else:
         next_action = f"Review what happened with /playback {project_id}, then mark it done with /queue done {task_id} or cancel it with /queue cancel {task_id}." if task_id else f"Review what happened with /playback {project_id}."
+    detail = short_human_text(f"{summary} {next_action}", limit=320)
+    duplicate_count = int(task.get("_inbox_duplicate_count") or 0)
+    if duplicate_count > 0:
+        noun = "item" if duplicate_count == 1 else "items"
+        detail = short_human_text(f"{detail} {duplicate_count} similar queue {noun} hidden.", limit=360)
     return {
         "kind": "task",
         "priority": "medium" if status != "failed" else "high",
         "title": f"{friendly_session_state(status)}: {safe_brief_text(project_name)}",
-        "detail": short_human_text(f"{summary} {next_action}", limit=360),
+        "detail": detail,
     }
 
 

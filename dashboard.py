@@ -485,15 +485,12 @@ def dashboard_inbox(user_id: str, recommendations: list[str]) -> list[dict[str, 
                     "detail": f"State: {state}; use /watch {project_id}",
                 }
             )
-    seen_tasks: set[str] = set()
-    for task in commander.visible_task_records(commander.tasks_data().get("tasks", []), limit=8):
+    for task in commander.deduped_task_records_for_inbox(
+        commander.visible_task_records(commander.tasks_data().get("tasks", []), limit=50)
+    ):
         item = commander.task_inbox_item(task)
         if not item:
             continue
-        key = commander.task_inbox_dedupe_key(task)
-        if key in seen_tasks:
-            continue
-        seen_tasks.add(key)
         items.append(item)
     for recommendation in recommendations[:6]:
         items.append(
@@ -570,8 +567,7 @@ def dashboard_action_center(
                 }
             )
             seen_projects.add(project_id)
-    seen_task_keys: set[str] = set()
-    for task in commander.visible_task_records(tasks, limit=10):
+    for task in commander.deduped_task_records_for_inbox(commander.visible_task_records(tasks, limit=50)):
         if not isinstance(task, dict):
             continue
         status = str(task.get("status") or "queued")
@@ -580,10 +576,6 @@ def dashboard_action_center(
         task_id = str(task.get("id") or "")
         project = str(task.get("project") or "-")
         task_item = commander.task_inbox_item(task) or {}
-        key = commander.task_inbox_dedupe_key(task)
-        if key in seen_task_keys:
-            continue
-        seen_task_keys.add(key)
         items.append(
             {
                 "kind": "task",
