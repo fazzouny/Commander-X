@@ -251,6 +251,49 @@ DEFAULT_BUTTON_ROWS = [
     [("Heartbeat Now", "cmd:/heartbeat now"), ("Heartbeat Off", "cmd:/heartbeat off")],
 ]
 
+SETUP_CAPABILITIES = [
+    {
+        "id": "telegram",
+        "title": "Telegram control channel",
+        "keys": ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS"],
+        "purpose": "Lets Commander receive private Telegram messages and reject everyone else.",
+        "next_step": "Create a BotFather token, run /whoami, then add your user ID to TELEGRAM_ALLOWED_USER_IDS.",
+        "required": True,
+    },
+    {
+        "id": "openai",
+        "title": "Voice, image, and natural-language intelligence",
+        "keys": ["OPENAI_API_KEY"],
+        "purpose": "Enables voice-note transcription, image understanding, and smarter natural-language routing.",
+        "next_step": "Add OPENAI_API_KEY to .env, then restart Commander.",
+        "required": False,
+    },
+    {
+        "id": "clickup",
+        "title": "ClickUp task and campaign bridge",
+        "keys": ["CLICKUP_API_TOKEN", "CLICKUP_WORKSPACE_ID"],
+        "purpose": "Lets Commander answer campaign and task questions from ClickUp.",
+        "next_step": "Add CLICKUP_API_TOKEN and CLICKUP_WORKSPACE_ID when you want ClickUp connected.",
+        "required": False,
+    },
+    {
+        "id": "github",
+        "title": "GitHub PR and issue workflows",
+        "keys": ["GITHUB_TOKEN"],
+        "purpose": "Lets Commander prepare GitHub PR and issue workflows later.",
+        "next_step": "Add GITHUB_TOKEN if you want Commander to work with GitHub beyond local git.",
+        "required": False,
+    },
+    {
+        "id": "whatsapp",
+        "title": "WhatsApp control channel",
+        "keys": ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"],
+        "purpose": "Unlocks the later WhatsApp bot channel after Telegram.",
+        "next_step": "Add WhatsApp Cloud API keys when you are ready to test WhatsApp control.",
+        "required": False,
+    },
+]
+
 SENSITIVE_FILE_PATTERNS = (
     ".env",
     ".env.local",
@@ -558,6 +601,53 @@ def env_readiness() -> dict[str, dict[str, str]]:
     if readiness.get("models", {}).get("OPENAI_IMAGE_MODEL") == "missing" and os.environ.get("OPENAI_COMMAND_MODEL"):
         readiness["models"]["OPENAI_IMAGE_MODEL"] = "configured via OPENAI_COMMAND_MODEL fallback"
     return readiness
+
+
+def setup_status_items(env: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    env = os.environ if env is None else env
+    rows: list[dict[str, Any]] = []
+    for capability in SETUP_CAPABILITIES:
+        keys = list(capability["keys"])
+        missing = [key for key in keys if not str(env.get(key, "")).strip()]
+        configured = len(keys) - len(missing)
+        if not missing:
+            state = "ready"
+        elif configured:
+            state = "partial"
+        else:
+            state = "missing"
+        rows.append(
+            {
+                "id": capability["id"],
+                "title": capability["title"],
+                "purpose": capability["purpose"],
+                "next_step": capability["next_step"],
+                "required": bool(capability.get("required")),
+                "keys": keys,
+                "missing_keys": missing,
+                "configured": configured,
+                "total": len(keys),
+                "state": state,
+            }
+        )
+    return rows
+
+
+def setup_recommendation_items(limit: int = 4, env: dict[str, str] | None = None) -> list[str]:
+    items: list[str] = []
+    for item in setup_status_items(env=env):
+        if item["state"] == "ready":
+            continue
+        prefix = "Required setup" if item["required"] else "Optional setup"
+        missing = ", ".join(item["missing_keys"])
+        state_text = "is partially configured" if item["state"] == "partial" else "needs setup"
+        items.append(
+            f"{prefix}: {item['title']} {state_text}. {item['purpose']} "
+            f"Next: {item['next_step']} Missing: {missing}."
+        )
+        if len(items) >= limit:
+            break
+    return items
 
 
 def openai_config() -> dict[str, str]:
@@ -3992,7 +4082,17 @@ def command_skills(args: list[str]) -> str:
 
 def command_env() -> str:
     readiness = env_readiness()
-    lines = ["Commander environment readiness"]
+    lines = ["Commander setup readiness", "", "Capability summary:"]
+    status_label = {"ready": "OK", "partial": "PARTIAL", "missing": "MISSING"}
+    for item in setup_status_items():
+        label = status_label.get(str(item["state"]), str(item["state"]).upper())
+        lines.append(
+            f"- {label}: {item['title']} ({item['configured']}/{item['total']} configured) - {item['purpose']}"
+        )
+        if item["state"] != "ready":
+            lines.append(f"  Next: {item['next_step']}")
+    lines.append("")
+    lines.append("Detailed .env checklist:")
     for group, keys in readiness.items():
         configured = sum(1 for status in keys.values() if str(status).startswith("configured"))
         lines.append("")
@@ -4825,12 +4925,8 @@ def recommendation_items(user_id: str | None = None, limit: int = 8) -> list[str
             break
     items.extend(autopilot_recommendation_items(limit=3))
     settings = clickup_settings_from_env()
-    if not settings.configured:
-        items.append("Add CLICKUP_API_TOKEN and CLICKUP_WORKSPACE_ID so Commander can answer campaign/task questions from Telegram.")
-    if not os.environ.get("GITHUB_TOKEN"):
-        items.append("Add GITHUB_TOKEN so Commander can prepare PR and issue workflows later.")
-    if not os.environ.get("WHATSAPP_ACCESS_TOKEN"):
-        items.append("Add WhatsApp Cloud API keys when you want WhatsApp control after Telegram.")
+    if not settings.configured or not os.environ.get("GITHUB_TOKEN") or not os.environ.get("WHATSAPP_ACCESS_TOKEN"):
+        items.extend(setup_recommendation_items(limit=3))
     sessions = sessions_data().get("sessions", {})
     running = [project_id for project_id, session in sessions.items() if session.get("state") == "running"]
     if running:

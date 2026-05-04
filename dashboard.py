@@ -429,12 +429,8 @@ def dashboard_recommendations(
             items.append(f"Run /cleanup and free disk space on {disk.get('root')}: {used}% used, {disk.get('free_gb')} GB free.")
             break
     items.extend(commander.autopilot_recommendation_items(limit=3))
-    if not commander.clickup_settings_from_env().configured:
-        items.append("Add CLICKUP_API_TOKEN and CLICKUP_WORKSPACE_ID so Commander can answer campaign/task questions from Telegram.")
-    if not os.environ.get("GITHUB_TOKEN"):
-        items.append("Add GITHUB_TOKEN so Commander can prepare PR and issue workflows later.")
-    if not os.environ.get("WHATSAPP_ACCESS_TOKEN"):
-        items.append("Add WhatsApp Cloud API keys when you want WhatsApp control after Telegram.")
+    if not commander.clickup_settings_from_env().configured or not os.environ.get("GITHUB_TOKEN") or not os.environ.get("WHATSAPP_ACCESS_TOKEN"):
+        items.extend(commander.setup_recommendation_items(limit=3))
     running = [project_id for project_id, session in sessions.items() if session.get("state") == "running"]
     if running:
         items.append("Check running Codex sessions: " + ", ".join(sorted(running)) + ".")

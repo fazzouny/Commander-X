@@ -1197,6 +1197,22 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("/done health", items[0])
         self.assertIn("/objective add health", items[0])
 
+    def test_setup_recommendations_explain_capability_before_keys(self) -> None:
+        env = {
+            "TELEGRAM_BOT_TOKEN": "configured",
+            "TELEGRAM_ALLOWED_USER_IDS": "123",
+            "OPENAI_API_KEY": "configured",
+        }
+
+        items = commander.setup_recommendation_items(limit=2, env=env)
+
+        self.assertEqual(len(items), 2)
+        self.assertIn("ClickUp task and campaign bridge", items[0])
+        self.assertIn("campaign and task questions", items[0])
+        self.assertIn("CLICKUP_API_TOKEN", items[0])
+        self.assertIn("GitHub PR and issue workflows", items[1])
+        self.assertIn("Optional setup", items[1])
+
     def test_autopilot_pauses_for_blocked_criteria(self) -> None:
         original_autopilot_profile = commander.autopilot_profile
         original_refresh = commander.refresh_session_states

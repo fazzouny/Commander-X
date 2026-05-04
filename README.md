@@ -54,6 +54,17 @@ Or start both the Telegram poller and dashboard as background services while arc
 7. Add the returned Telegram user ID to `allowlist.json` or `TELEGRAM_ALLOWED_USER_IDS` in `.env`.
 8. Restart Commander.
 
+## Optional Bridges
+
+Commander works with Telegram plus local Codex first. Add these only when you want the extra capability:
+
+- `OPENAI_API_KEY`: voice notes, image understanding, and smarter natural-language routing.
+- `CLICKUP_API_TOKEN` and `CLICKUP_WORKSPACE_ID`: ClickUp campaign and task questions.
+- `GITHUB_TOKEN`: future GitHub PR and issue workflows beyond local git.
+- `WHATSAPP_ACCESS_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID`: later WhatsApp control channel.
+
+Use `/env` or ask "what keys are missing?" for a plain-English setup checklist. Secrets are never printed.
+
 ## Check
 
 ```powershell
