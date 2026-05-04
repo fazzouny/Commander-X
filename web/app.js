@@ -398,6 +398,8 @@ function renderProjectCompletion(data) {
       .map((item) => {
         const verdict = String(item.verdict || "").toLowerCase();
         const type = verdict.includes("100") || verdict === "done candidate" ? "good" : verdict.includes("blocked") || verdict.includes("missing") ? "bad" : "warn";
+        const projectId = item.project_id || item.project || "";
+        const projectName = item.project_name || item.project || "-";
         const criteria = (item.criteria || [])
           .slice(0, 5)
           .map((criterion, index) => `<span>${index + 1}. [${escapeHtml(criterion.status || "open")}] ${escapeHtml(criterion.text || "-")}</span>`)
@@ -414,7 +416,7 @@ function renderProjectCompletion(data) {
           <div class="work-card">
             <div class="work-card-head">
               <div>
-                <div class="row-title">${escapeHtml(item.project || "-")}</div>
+                <div class="row-title">${escapeHtml(projectName)}</div>
                 <div class="row-meta">${escapeHtml(item.owner_summary || item.objective || "Objective not set")}</div>
               </div>
               <div>${pill(`${item.completion_percent || 0}% ${item.verdict || "unknown"}`, type)}</div>
@@ -434,9 +436,9 @@ function renderProjectCompletion(data) {
             <div class="timeline-mini">${criteria || "<span>No Definition of Done configured</span>"}</div>
             <div class="timeline-mini">${checks || "<span>No verification proof recorded yet</span>"}</div>
             <div class="work-actions">
-              <button data-work-action="done" data-project="${escapeHtml(item.project || "")}">Done?</button>
-              <button data-work-action="playback" data-project="${escapeHtml(item.project || "")}">Playback</button>
-              <button data-work-action="watch" data-project="${escapeHtml(item.project || "")}">Watch</button>
+              <button data-work-action="done" data-project="${escapeHtml(projectId)}">Done?</button>
+              <button data-work-action="playback" data-project="${escapeHtml(projectId)}">Playback</button>
+              <button data-work-action="watch" data-project="${escapeHtml(projectId)}">Watch</button>
             </div>
           </div>
         `;

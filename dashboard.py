@@ -1019,6 +1019,7 @@ def dashboard_project_completion_cards(operator_playback: list[dict[str, Any]], 
         project_id = str(playback.get("project") or "")
         if not project_id:
             continue
+        project_name = commander.audit_clean(commander.project_label(project_id, include_id=False), limit=160)
         profile = commander.project_profile(project_id)
         criteria = commander.normalize_done_criteria(profile.get("done_criteria") or [])
         objective = commander.audit_clean(profile.get("objective") or "", limit=500) if profile.get("objective") else ""
@@ -1089,6 +1090,8 @@ def dashboard_project_completion_cards(operator_playback: list[dict[str, Any]], 
         cards.append(
             {
                 "project": commander.audit_clean(project_id, limit=120),
+                "project_id": commander.audit_clean(project_id, limit=120),
+                "project_name": project_name,
                 "objective": objective,
                 "verdict": verdict,
                 "completion_percent": percent,
@@ -1105,7 +1108,29 @@ def dashboard_project_completion_cards(operator_playback: list[dict[str, Any]], 
                 **scorecard,
             }
         )
+    cards.sort(key=completion_card_sort_key)
     return cards
+
+
+def completion_card_sort_key(card: dict[str, Any]) -> tuple[int, int, str]:
+    verdict = str(card.get("verdict") or "")
+    order = {
+        "blocked": 0,
+        "waiting for approval": 1,
+        "in progress": 2,
+        "reviewable, not final": 3,
+        "not done": 4,
+        "needs verification": 5,
+        "done candidate": 6,
+        "100% done candidate": 7,
+        "definition of done missing": 8,
+        "objective missing": 9,
+    }
+    try:
+        percent = int(card.get("completion_percent") or 0)
+    except (TypeError, ValueError):
+        percent = 0
+    return (order.get(verdict, 10), -percent, str(card.get("project_name") or card.get("project") or ""))
 
 
 def completion_owner_scorecard(
