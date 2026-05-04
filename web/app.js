@@ -128,6 +128,9 @@ function actionButton(item, action) {
   if (action.type === "task") {
     return `<button${cls} data-task-action="${escapeHtml(action.action)}" data-id="${escapeHtml(item.task_id || "")}">${label}</button>`;
   }
+  if (action.type === "queue") {
+    return `<button${cls} data-queue-action="${escapeHtml(action.action)}">${label}</button>`;
+  }
   if (action.type === "work") {
     return `<button${cls} data-work-action="${escapeHtml(action.action)}" data-project="${escapeHtml(item.project || "")}">${label}</button>`;
   }
@@ -1203,6 +1206,25 @@ async function handleTaskClick(event) {
   await refresh();
 }
 
+async function handleQueueClick(event) {
+  const button = event.target.closest("[data-queue-action]");
+  if (!button) return;
+  const action = button.dataset.queueAction;
+  if (!action) return;
+  button.disabled = true;
+  qs("#action-output").textContent = action === "cleanup-apply" ? "Archiving duplicate queue records..." : "Preparing queue cleanup preview...";
+  try {
+    const result = await api("/api/queue/cleanup", {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    });
+    qs("#action-output").textContent = result.text || result.error || JSON.stringify(result, null, 2);
+  } finally {
+    button.disabled = false;
+  }
+  await refresh();
+}
+
 async function handleWorkFeedClick(event) {
   const button = event.target.closest("[data-work-action]");
   if (!button) return;
@@ -1333,6 +1355,7 @@ qs("#approvals").addEventListener("click", handleApprovalClick);
 qs("#tasks").addEventListener("click", handleTaskClick);
 qs("#action-center").addEventListener("click", handleApprovalClick);
 qs("#action-center").addEventListener("click", handleTaskClick);
+qs("#action-center").addEventListener("click", handleQueueClick);
 qs("#action-center").addEventListener("click", handleWorkFeedClick);
 qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionClick);
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);

@@ -508,7 +508,7 @@ Approval cards in the dashboard can approve or cancel pending Commander actions.
 
 Task queue cards can start queued tasks, mark review/failed/stopped tasks done, or cancel queued/review/failed tasks. These buttons call the same `/queue` commands as Telegram and remain protected by the dashboard token.
 
-The Action Center groups high-signal operator decisions: approvals, running sessions, failed/uncertain sessions, queued tasks, and changed-project reviews. Its buttons reuse the same guarded approval, queue, work-feed, and stop endpoints as the rest of Commander.
+The Action Center groups high-signal operator decisions: approvals, running sessions, failed/uncertain sessions, queued tasks, duplicate queue cleanup, and changed-project reviews. Its buttons reuse the same guarded approval, queue, work-feed, and stop endpoints as the rest of Commander. Queue cleanup shows a preview first; archiving duplicates requires clicking the explicit archive action.
 
 The Capabilities card gives a quick operator-readable snapshot of what Commander can currently do and exposes copyable command chips for common checks.
 

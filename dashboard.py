@@ -591,6 +591,22 @@ def dashboard_action_center(
             }
         )
         seen_projects.add(project)
+    duplicate_groups = commander.duplicate_task_groups(tasks)
+    if duplicate_groups:
+        duplicate_total = sum(len(group.get("items", [])) - 1 for group in duplicate_groups)
+        items.append(
+            {
+                "kind": "queue",
+                "priority": "medium",
+                "project": "commander",
+                "title": "Queue has duplicate active tasks",
+                "detail": f"{duplicate_total} duplicate active task record(s) are hidden from owner views. Preview before archiving.",
+                "actions": [
+                    {"label": "Preview", "type": "queue", "action": "cleanup-preview"},
+                    {"label": "Archive duplicates", "type": "queue", "action": "cleanup-apply", "style": "danger"},
+                ],
+            }
+        )
     for change in changes:
         project = str(change.get("project") or "")
         if not project or project in seen_projects:
@@ -1296,6 +1312,18 @@ def dashboard_task_action(payload: dict[str, Any], action: str) -> tuple[dict[st
     return {"ok": True, "text": result}, 200
 
 
+def dashboard_queue_cleanup_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    action = str(payload.get("action") or "preview").strip().lower()
+    if action in {"preview", "cleanup-preview"}:
+        args = ["cleanup"]
+    elif action in {"apply", "archive", "cleanup-apply"}:
+        args = ["cleanup", "apply"]
+    else:
+        return {"ok": False, "error": "Unknown queue cleanup action"}, 400
+    result = commander.command_queue(args, user_id="dashboard")
+    return {"ok": True, "text": result}, 200
+
+
 def dashboard_image_analyze_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     data_url = str(payload.get("data_url") or "").strip()
     caption = commander.compact(str(payload.get("caption") or ""), limit=1000)
@@ -1566,6 +1594,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/task/cancel":
             result, status = dashboard_task_action(payload, "cancel")
+            invalidate_dashboard_cache()
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/queue/cleanup":
+            result, status = dashboard_queue_cleanup_action(payload)
             invalidate_dashboard_cache()
             self.send_json(result, status=status)
             return

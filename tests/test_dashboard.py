@@ -339,6 +339,23 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertIn("app/user interface", changed["detail"])
         self.assertNotIn("src/", changed["detail"])
 
+    def test_dashboard_action_center_surfaces_queue_cleanup_actions(self) -> None:
+        tasks = [
+            {"id": "queued1", "project": "health", "status": "queued", "title": "Build Health Companion AI"},
+            {"id": "failed1", "project": "health", "status": "failed", "title": "Build Health Companion AI"},
+        ]
+
+        items = dashboard.dashboard_action_center([], {}, tasks, [])
+
+        cleanup = next(item for item in items if item["kind"] == "queue")
+        self.assertEqual(cleanup["project"], "commander")
+        self.assertIn("1 duplicate", cleanup["detail"])
+        self.assertEqual(cleanup["actions"][0], {"label": "Preview", "type": "queue", "action": "cleanup-preview"})
+        self.assertEqual(
+            cleanup["actions"][1],
+            {"label": "Archive duplicates", "type": "queue", "action": "cleanup-apply", "style": "danger"},
+        )
+
     def test_dashboard_conversation_parses_and_sanitizes_events(self) -> None:
         items = dashboard.dashboard_conversation_items_from_lines(
             [
@@ -772,6 +789,25 @@ class DashboardTaskTests(unittest.TestCase):
                 (["cancel", "task123"], "dashboard"),
             ],
         )
+
+    def test_dashboard_queue_cleanup_action_dispatches_preview_and_apply(self) -> None:
+        original_queue = dashboard.commander.command_queue
+        calls: list[tuple[list[str], str]] = []
+        try:
+            dashboard.commander.command_queue = lambda args, user_id: calls.append((args, user_id)) or "ok"  # type: ignore[assignment]
+            preview, preview_status = dashboard.dashboard_queue_cleanup_action({"action": "cleanup-preview"})
+            applied, applied_status = dashboard.dashboard_queue_cleanup_action({"action": "cleanup-apply"})
+            bad, bad_status = dashboard.dashboard_queue_cleanup_action({"action": "delete"})
+        finally:
+            dashboard.commander.command_queue = original_queue  # type: ignore[assignment]
+
+        self.assertEqual(preview_status, 200)
+        self.assertEqual(applied_status, 200)
+        self.assertEqual(bad_status, 400)
+        self.assertEqual(preview["text"], "ok")
+        self.assertEqual(applied["text"], "ok")
+        self.assertFalse(bad["ok"])
+        self.assertEqual(calls, [(["cleanup"], "dashboard"), (["cleanup", "apply"], "dashboard")])
 
 
 if __name__ == "__main__":
