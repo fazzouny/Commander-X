@@ -70,6 +70,7 @@ function renderMetrics(data) {
   const changed = projects.reduce((sum, project) => sum + project.changed_count, 0);
   const running = sessions.filter((session) => session.state === "running").length;
   const heartbeat = Object.values(data.heartbeat)[0] || {};
+  const autopilot = data.autopilot || [];
   const mode = heartbeat.assistant_mode || "free";
   const doctorScore = data.doctor ? data.doctor.score : "-";
   const cache = data.dashboard_cache || {};
@@ -82,6 +83,7 @@ function renderMetrics(data) {
     <div class="metric"><strong>${data.memory_count || 0}</strong><span>Memories</span></div>
     <div class="metric"><strong>${escapeHtml(doctorScore)}</strong><span>Doctor score</span></div>
     <div class="metric"><strong>${escapeHtml(mode)}</strong><span>Assistant mode</span></div>
+    <div class="metric"><strong>${autopilot.filter((item) => item.enabled).length}</strong><span>Autopilot projects</span></div>
     <div class="metric"><strong>${heartbeat.enabled ? "On" : "Off"}</strong><span>Heartbeat</span></div>
     <div class="metric"><strong>${escapeHtml(cacheStatus)}</strong><span>Dashboard cache ${cache.age_seconds || 0}s old</span></div>
   `;
@@ -178,6 +180,42 @@ function renderOwnerReviews(data) {
         `;
       })
       .join("") || `<p>No saved owner review packs yet. Use /review &lt;project&gt; save after a milestone is ready.</p>`;
+}
+
+function renderAutopilot(data) {
+  const items = data.autopilot || [];
+  qs("#autopilot-count").textContent = `${items.length} configured`;
+  qs("#autopilot").innerHTML =
+    items
+      .slice(0, 10)
+      .map((item) => {
+        const type = item.enabled && item.can_start ? "good" : item.enabled ? "warn" : "bad";
+        const status = item.enabled ? (item.can_start ? "ready" : item.reason || "waiting") : "off";
+        return `
+          <div class="work-card">
+            <div class="work-card-head">
+              <div>
+                <div class="row-title">${escapeHtml(item.project || "-")}</div>
+                <div class="row-meta">${escapeHtml(item.next_criterion || "No open criterion")}</div>
+              </div>
+              <div>${pill(status, type)}</div>
+            </div>
+            <div class="work-grid">
+              <div><span>Definition of Done</span><strong>${escapeHtml(item.done_criteria || 0)} / ${escapeHtml(item.total_criteria || 0)} complete</strong></div>
+              <div><span>Open criteria</span><strong>${escapeHtml(item.open_criteria || 0)}</strong></div>
+              <div><span>Blocked criteria</span><strong>${escapeHtml(item.blocked_criteria || 0)}</strong></div>
+              <div><span>Interval</span><strong>${escapeHtml(item.interval_minutes || 5)} min</strong></div>
+              <div><span>Can start</span><strong>${item.can_start ? "yes" : "no"}</strong></div>
+              <div><span>Last start</span><strong>${escapeHtml(item.last_started_at || "-")}</strong></div>
+            </div>
+            <div class="work-actions">
+              <button data-command="${escapeHtml(item.command || "/autopilot status")}">Copy Command</button>
+              <button data-command="/autopilot status">Status</button>
+            </div>
+          </div>
+        `;
+      })
+      .join("") || `<p>No project autopilot configured yet.</p>`;
 }
 
 function renderAuditTrail(data) {
@@ -971,6 +1009,7 @@ async function refresh() {
   renderMetrics(data);
   renderActionCenter(data);
   renderOwnerReviews(data);
+  renderAutopilot(data);
   renderAuditTrail(data);
   renderConversation(data);
   renderDecisionSuggestions(data);
@@ -1268,6 +1307,7 @@ qs("#action-center").addEventListener("click", handleWorkFeedClick);
 qs("#decision-suggestions").addEventListener("click", handleDecisionSuggestionClick);
 qs("#decision-suggestions").addEventListener("click", handleCapabilityClick);
 qs("#owner-reviews").addEventListener("click", handleCapabilityClick);
+qs("#autopilot").addEventListener("click", handleCapabilityClick);
 qs("#mission-timeline").addEventListener("click", handleWorkFeedClick);
 qs("#operator-playback").addEventListener("click", handleWorkFeedClick);
 qs("#project-completion").addEventListener("click", handleWorkFeedClick);

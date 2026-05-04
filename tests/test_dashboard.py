@@ -163,6 +163,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertEqual(payload["project_completion"], [])
         self.assertIn("owner_reviews", payload)
         self.assertEqual(payload["owner_reviews"], [])
+        self.assertIn("autopilot", payload)
+        self.assertEqual(payload["autopilot"], [])
         self.assertIn("recent_images", payload)
         self.assertEqual(payload["recent_images"], [])
         self.assertIn("work_feed", payload)
@@ -216,6 +218,36 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertIn("/reviews", items[0]["command"])
         self.assertNotIn("example-owner-review", text)
         self.assertNotIn(".md", text)
+
+    def test_dashboard_autopilot_status_is_lightweight_and_plain_english(self) -> None:
+        original_profiles = dashboard.commander.profiles_data
+        original_label = dashboard.commander.project_label
+        try:
+            dashboard.commander.profiles_data = lambda: {  # type: ignore[assignment]
+                "profiles": {
+                    "example": {
+                        "autopilot": {"enabled": True, "interval_minutes": 7},
+                        "done_criteria": [
+                            {"id": "1", "text": "Backend works", "status": "done", "evidence": "tests passed"},
+                            {"id": "2", "text": "Dashboard owner view works", "status": "open", "evidence": ""},
+                        ],
+                    }
+                }
+            }
+            dashboard.commander.project_label = lambda project_id, project=None, include_id=True: "Example Product"  # type: ignore[assignment]
+
+            rows = dashboard.dashboard_autopilot_status(sessions={})
+        finally:
+            dashboard.commander.profiles_data = original_profiles  # type: ignore[assignment]
+            dashboard.commander.project_label = original_label  # type: ignore[assignment]
+
+        self.assertEqual(rows[0]["project"], "Example Product")
+        self.assertTrue(rows[0]["enabled"])
+        self.assertTrue(rows[0]["can_start"])
+        self.assertEqual(rows[0]["done_criteria"], 1)
+        self.assertEqual(rows[0]["total_criteria"], 2)
+        self.assertIn("Dashboard owner view works", rows[0]["next_criterion"])
+        self.assertEqual(rows[0]["command"], "/autopilot run")
 
     def test_dashboard_action_center_combines_decisions_sessions_tasks_and_changes(self) -> None:
         approvals = [

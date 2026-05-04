@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import datetime as dt
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -118,6 +119,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
         "operator_playback": [],
         "project_completion": [],
         "owner_reviews": [],
+        "autopilot": [],
         "session_briefs": [],
         "recent_images": [],
         "work_feed": [],
@@ -1084,6 +1086,69 @@ def dashboard_owner_review_packs(limit: int = 8) -> list[dict[str, Any]]:
     return items
 
 
+def dashboard_autopilot_status(sessions: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    profiles = commander.profiles_data().get("profiles", {})
+    now = dt.datetime.now(dt.timezone.utc)
+    for project_id, profile in sorted(profiles.items()):
+        if not isinstance(profile, dict):
+            continue
+        autopilot = profile.get("autopilot")
+        if not isinstance(autopilot, dict):
+            continue
+        criteria = commander.normalize_done_criteria(profile.get("done_criteria") or [])
+        open_criteria = [item for item in criteria if item.get("status") == "open"]
+        done_criteria = [item for item in criteria if item.get("status") in {"done", "waived"}]
+        blocked_criteria = [item for item in criteria if item.get("status") == "blocked"]
+        session = sessions.get(project_id) if isinstance(sessions.get(project_id), dict) else {}
+        pending = session.get("pending_actions") if isinstance(session.get("pending_actions"), dict) else {}
+        enabled = bool(autopilot.get("enabled"))
+        try:
+            interval = max(1, int(autopilot.get("interval_minutes") or 5))
+        except (TypeError, ValueError):
+            interval = 5
+        reason = "ready"
+        can_start = enabled
+        last_started = commander.parse_iso_datetime(str(autopilot.get("last_started_at") or ""))
+        if not enabled:
+            can_start = False
+            reason = "off"
+        elif session.get("state") == "running":
+            can_start = False
+            reason = "session already running"
+        elif pending:
+            can_start = False
+            reason = "pending approval exists"
+        elif not open_criteria:
+            can_start = False
+            reason = "no open criteria"
+        elif blocked_criteria:
+            can_start = False
+            reason = "blocked criteria need review"
+        elif last_started and last_started + dt.timedelta(minutes=interval) > now:
+            can_start = False
+            reason = "cooldown active"
+        next_criterion = open_criteria[0] if open_criteria else {}
+        rows.append(
+            {
+                "project": commander.safe_brief_text(commander.project_label(project_id, include_id=False)),
+                "project_id": commander.safe_brief_text(project_id),
+                "enabled": enabled,
+                "can_start": can_start,
+                "reason": commander.safe_brief_text(reason),
+                "interval_minutes": interval,
+                "done_criteria": len(done_criteria),
+                "total_criteria": len(criteria),
+                "open_criteria": len(open_criteria),
+                "blocked_criteria": len(blocked_criteria),
+                "next_criterion": commander.safe_brief_text(next_criterion.get("text") or reason),
+                "last_started_at": commander.safe_brief_text(autopilot.get("last_started_at") or "-"),
+                "command": f"/autopilot {'run' if can_start else 'status'}",
+            }
+        )
+    return rows[:limit]
+
+
 def build_dashboard_payload() -> dict[str, Any]:
     commander.refresh_session_states()
     commander.sync_tasks_with_sessions()
@@ -1131,6 +1196,7 @@ def build_dashboard_payload() -> dict[str, Any]:
         "operator_playback": operator_playback,
         "project_completion": project_completion,
         "owner_reviews": dashboard_owner_review_packs(limit=8),
+        "autopilot": dashboard_autopilot_status(sessions, limit=10),
         "session_briefs": session_briefs,
         "recent_images": dashboard_recent_images(users),
         "work_feed": work_feed,
