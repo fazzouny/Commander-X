@@ -1056,6 +1056,38 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertNotIn(backup_temp, str(result))
         self.assertNotIn(report_temp, str(result))
 
+    def test_dashboard_backup_import_list_and_open_saved_artifacts(self) -> None:
+        original_backup_dir = dashboard.commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        original_report_dir = dashboard.commander.os.environ.get("COMMANDER_REPORT_DIR")
+        with tempfile.TemporaryDirectory() as backup_temp, tempfile.TemporaryDirectory() as report_temp:
+            try:
+                dashboard.commander.os.environ["COMMANDER_BACKUP_DIR"] = backup_temp
+                dashboard.commander.os.environ["COMMANDER_REPORT_DIR"] = report_temp
+                dashboard.commander.save_commander_backup()
+                dashboard.dashboard_backup_action({"action": "import-save"})
+                listed, list_status = dashboard.dashboard_backup_action({"action": "import-list"})
+                opened, open_status = dashboard.dashboard_backup_action({"action": "import-open"})
+            finally:
+                if original_backup_dir is None:
+                    dashboard.commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    dashboard.commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+                if original_report_dir is None:
+                    dashboard.commander.os.environ.pop("COMMANDER_REPORT_DIR", None)
+                else:
+                    dashboard.commander.os.environ["COMMANDER_REPORT_DIR"] = original_report_dir
+
+        self.assertEqual(list_status, 200)
+        self.assertEqual(open_status, 200)
+        self.assertTrue(listed["ok"])
+        self.assertTrue(opened["ok"])
+        self.assertEqual(len(listed["import_artifacts"]), 1)
+        self.assertIn("Saved backup import drafts", listed["text"])
+        self.assertIn("Saved backup import draft", opened["text"])
+        self.assertIn("Backup config import preview", opened["text"])
+        self.assertNotIn(backup_temp, str(listed) + str(opened))
+        self.assertNotIn(report_temp, str(listed) + str(opened))
+
     def test_dashboard_image_analyze_rejects_non_image_payload(self) -> None:
         result, status = dashboard.dashboard_image_analyze_action({"data_url": "data:text/plain;base64,aGVsbG8="})
 

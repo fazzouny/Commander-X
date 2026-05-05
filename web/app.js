@@ -245,6 +245,7 @@ function renderBackups(data) {
   const restoreCheck = backups.restore_check || {};
   const restorePlan = backups.restore_plan || {};
   const importPreview = backups.import_preview || {};
+  const importArtifacts = backups.import_artifacts || [];
   const checkSummary = restoreCheck.status_label
     ? `\n\nRestore check: ${restoreCheck.status_label}\nBackup: ${restoreCheck.backup || "none"}\nProjects: ${restoreCheck.projects || 0}\nWeb shortcuts: ${
         restoreCheck.web_shortcuts || 0
@@ -256,6 +257,7 @@ function renderBackups(data) {
   const importSummary = importPreview.status_label
     ? `\nImport preview: ${importPreview.status_label}\nWould change files: ${importPreview.writes_files ? "yes" : "no"}`
     : "";
+  const artifactSummary = importArtifacts.length ? `\nSaved import drafts: ${importArtifacts.length}` : "";
   qs("#backup-count").textContent = `${items.length} saved`;
   qs("#backups").innerHTML =
     items
@@ -277,6 +279,7 @@ function renderBackups(data) {
       checkSummary +
       planSummary +
       importSummary +
+      artifactSummary +
       (guidance.length ? `\n\nRestore guidance:\n- ${guidance.map((item) => String(item || "")).join("\n- ")}` : "");
   }
 }
@@ -1599,6 +1602,8 @@ qs("#check-backup").addEventListener("click", () => runBackup("check"));
 qs("#plan-backup").addEventListener("click", () => runBackup("plan"));
 qs("#import-backup").addEventListener("click", () => runBackup("import"));
 qs("#save-import-backup").addEventListener("click", () => runBackup("import-save"));
+qs("#list-import-backups").addEventListener("click", () => runBackup("import-list"));
+qs("#open-import-backup").addEventListener("click", () => runBackup("import-open"));
 qs("#save-backup").addEventListener("click", () => runBackup("save"));
 qs("#list-backups").addEventListener("click", () => runBackup("list"));
 qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);

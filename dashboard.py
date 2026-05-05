@@ -1866,6 +1866,7 @@ def dashboard_backups_payload(limit: int = 8) -> dict[str, Any]:
         "restore_check": commander.backup_restore_check_payload(),
         "restore_plan": commander.backup_restore_plan_payload(),
         "import_preview": commander.backup_restore_import_preview_payload(include_drafts=False),
+        "import_artifacts": commander.saved_backup_import_previews(limit=8),
         "restore_guidance": commander.backup_restore_guidance(),
     }
 
@@ -1917,6 +1918,25 @@ def dashboard_backup_action(payload: dict[str, Any]) -> tuple[dict[str, Any], in
             "saved": True,
             "text": commander.format_saved_backup_import_preview(path, preview),
             "import_preview": preview,
+            "backups": dashboard_backups_payload(),
+        }, 200
+    if action in {"import-list", "drafts", "artifacts"}:
+        records = commander.saved_backup_import_previews(limit=10)
+        return {
+            "ok": True,
+            "saved": False,
+            "text": commander.format_saved_backup_import_previews(records),
+            "import_artifacts": records,
+            "backups": dashboard_backups_payload(),
+        }, 200
+    if action in {"import-open", "open-import", "draft-open", "open-draft"}:
+        identifier = str(payload.get("id") or payload.get("preview_id") or "").strip() or None
+        preview_text = commander.saved_backup_import_preview_text(identifier)
+        return {
+            "ok": bool(preview_text),
+            "saved": False,
+            "text": commander.format_saved_backup_import_preview_text(preview_text),
+            "import_artifact": preview_text or {},
             "backups": dashboard_backups_payload(),
         }, 200
     if action in {"save", "export", "write", "create"}:

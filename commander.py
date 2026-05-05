@@ -5520,6 +5520,101 @@ def format_saved_backup_import_preview(path: Path, preview: dict[str, Any]) -> s
     )
 
 
+def saved_backup_import_previews(limit: int = 8) -> list[dict[str, str]]:
+    directory = report_dir()
+    if not directory.exists():
+        return []
+    try:
+        paths = list(directory.glob("commander-x-backup-import-preview-*.md"))
+    except OSError:
+        return []
+    records: list[dict[str, str]] = []
+    for path in paths:
+        if not path.is_file():
+            continue
+        match = re.match(r"commander-x-backup-import-preview-(?P<stamp>\d{8}-\d{6})\.md$", path.name)
+        if not match:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        records.append(
+            {
+                "id": match.group("stamp"),
+                "saved_at": dt.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                "size": human_report_size(stat.st_size),
+                "filename": path.name,
+            }
+        )
+    records.sort(key=lambda item: item["id"], reverse=True)
+    return records[:limit]
+
+
+def selected_backup_import_preview(identifier: str | None = None) -> Path | None:
+    directory = report_dir()
+    if not directory.exists():
+        return None
+    records = saved_backup_import_previews(limit=50)
+    if not records:
+        return None
+    requested = str(identifier or "").strip()
+    if not requested:
+        return directory / records[0]["filename"]
+    safe_requested = Path(requested).name
+    if safe_requested != requested:
+        return None
+    normalized = safe_requested.removeprefix("commander-x-backup-import-preview-").removesuffix(".md")
+    for record in records:
+        if safe_requested in {record["id"], record["filename"]} or normalized == record["id"]:
+            return directory / record["filename"]
+    return None
+
+
+def saved_backup_import_preview_text(identifier: str | None = None, limit: int = 3600) -> dict[str, str] | None:
+    path = selected_backup_import_preview(identifier)
+    if not path or not path.exists():
+        return None
+    try:
+        stat = path.stat()
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    stamp = path.stem.removeprefix("commander-x-backup-import-preview-")
+    return {
+        "id": stamp,
+        "saved_at": dt.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+        "size": human_report_size(stat.st_size),
+        "filename": path.name,
+        "text": compact(redact(text), limit=limit),
+    }
+
+
+def format_saved_backup_import_previews(records: list[dict[str, str]] | None = None) -> str:
+    records = records if records is not None else saved_backup_import_previews(limit=10)
+    if not records:
+        return "No saved backup import drafts yet.\nCreate one with /backup import save."
+    lines = ["Saved backup import drafts"]
+    for index, record in enumerate(records, start=1):
+        lines.append(f"{index}. {record['id']} - saved {record['saved_at']} ({record['size']})")
+    lines.extend(["", "Open latest: /backup import open", "Open one: /backup import open <preview_id>"])
+    return "\n".join(lines)
+
+
+def format_saved_backup_import_preview_text(preview: dict[str, str] | None) -> str:
+    if not preview:
+        return "No saved backup import draft found.\nUse /backup import list to see saved drafts."
+    return "\n".join(
+        [
+            "Saved backup import draft",
+            f"Preview ID: {preview['id']}",
+            f"Saved: {preview['saved_at']} ({preview['size']})",
+            "",
+            preview["text"],
+        ]
+    )
+
+
 def command_backup(args: list[str]) -> str:
     action = args[0].lower() if args else "save"
     if action in {"preview", "status", "show"}:
@@ -5532,6 +5627,11 @@ def command_backup(args: list[str]) -> str:
         return format_backup_restore_plan(backup_restore_plan_payload(name))
     if action in {"import", "draft", "wizard", "config-preview", "import-preview"}:
         import_args = args[1:]
+        if import_args and import_args[0].lower() in {"list", "history", "drafts", "artifacts"}:
+            return format_saved_backup_import_previews()
+        if import_args and import_args[0].lower() in {"open", "show", "view"}:
+            identifier = import_args[1] if len(import_args) > 1 else None
+            return format_saved_backup_import_preview_text(saved_backup_import_preview_text(identifier))
         save_requested = any(arg.lower() in {"save", "export", "archive", "write"} for arg in import_args)
         name_args = [arg for arg in import_args if arg.lower() not in {"save", "export", "archive", "write"}]
         name = name_args[0] if name_args else None
@@ -5540,6 +5640,11 @@ def command_backup(args: list[str]) -> str:
             path = save_backup_import_preview(preview)
             return format_saved_backup_import_preview(path, preview)
         return format_backup_restore_import_preview(preview)
+    if action in {"drafts", "artifacts", "import-list"}:
+        return format_saved_backup_import_previews()
+    if action in {"open-draft", "show-draft", "draft-open"}:
+        identifier = args[1] if len(args) > 1 else None
+        return format_saved_backup_import_preview_text(saved_backup_import_preview_text(identifier))
     if action in {"list", "history"}:
         backups = saved_commander_backups()
         if not backups:

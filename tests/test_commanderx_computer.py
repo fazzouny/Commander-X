@@ -1955,6 +1955,36 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn(backup_temp, text + saved)
         self.assertNotIn(report_temp, text + saved)
 
+    def test_backup_import_list_and_open_saved_drafts_hide_paths(self) -> None:
+        original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        original_report_dir = commander.os.environ.get("COMMANDER_REPORT_DIR")
+        with tempfile.TemporaryDirectory() as backup_temp, tempfile.TemporaryDirectory() as report_temp:
+            try:
+                commander.os.environ["COMMANDER_BACKUP_DIR"] = backup_temp
+                commander.os.environ["COMMANDER_REPORT_DIR"] = report_temp
+                commander.save_commander_backup()
+                commander.command_backup(["import", "save"])
+                records = commander.saved_backup_import_previews()
+                listing = commander.command_backup(["import", "list"])
+                opened = commander.command_backup(["import", "open", records[0]["id"]])
+            finally:
+                if original_backup_dir is None:
+                    commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+                if original_report_dir is None:
+                    commander.os.environ.pop("COMMANDER_REPORT_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_REPORT_DIR"] = original_report_dir
+
+        self.assertEqual(len(records), 1)
+        self.assertIn("Saved backup import drafts", listing)
+        self.assertIn(records[0]["id"], listing)
+        self.assertIn("Saved backup import draft", opened)
+        self.assertIn("Backup config import preview", opened)
+        self.assertNotIn(backup_temp, listing + opened)
+        self.assertNotIn(report_temp, listing + opened)
+
     def test_service_helpers_hide_paths_and_detect_processes(self) -> None:
         self.assertEqual(
             commander.service_process_state(["123 python.exe python commander.py --poll"], "commander.py --poll"),
