@@ -243,10 +243,14 @@ function renderBackups(data) {
   const items = backups.items || [];
   const guidance = backups.restore_guidance || [];
   const restoreCheck = backups.restore_check || {};
+  const restorePlan = backups.restore_plan || {};
   const checkSummary = restoreCheck.status_label
     ? `\n\nRestore check: ${restoreCheck.status_label}\nBackup: ${restoreCheck.backup || "none"}\nProjects: ${restoreCheck.projects || 0}\nWeb shortcuts: ${
         restoreCheck.web_shortcuts || 0
       }`
+    : "";
+  const planSummary = restorePlan.status_label
+    ? `\nRestore plan: ${restorePlan.status_label}\nWould change files: ${restorePlan.writes_files ? "yes" : "no"}`
     : "";
   qs("#backup-count").textContent = `${items.length} saved`;
   qs("#backups").innerHTML =
@@ -267,6 +271,7 @@ function renderBackups(data) {
     qs("#backup-output").textContent =
       (backups.summary || "No backup summary yet.") +
       checkSummary +
+      planSummary +
       (guidance.length ? `\n\nRestore guidance:\n- ${guidance.map((item) => String(item || "")).join("\n- ")}` : "");
   }
 }
@@ -1586,6 +1591,7 @@ qs("#save-report").addEventListener("click", () => generateReport(true));
 qs("#copy-report").addEventListener("click", copyReport);
 qs("#preview-backup").addEventListener("click", () => runBackup("preview"));
 qs("#check-backup").addEventListener("click", () => runBackup("check"));
+qs("#plan-backup").addEventListener("click", () => runBackup("plan"));
 qs("#save-backup").addEventListener("click", () => runBackup("save"));
 qs("#list-backups").addEventListener("click", () => runBackup("list"));
 qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);

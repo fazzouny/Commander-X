@@ -5158,6 +5158,187 @@ def format_backup_restore_check(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def backup_restore_plan_payload(name: str | None = None) -> dict[str, Any]:
+    check = backup_restore_check_payload(name)
+    plan: dict[str, Any] = {
+        "status": "blocked" if check.get("status") != "ready" else "ready",
+        "status_label": "Blocked until backup check is clean" if check.get("status") != "ready" else "Dry-run restore plan ready",
+        "backup": check.get("backup") or "",
+        "writes_files": False,
+        "restore_check": check,
+        "target_files": [],
+        "manual_inputs": [
+            "Local project folder paths",
+            ".env secrets and API keys",
+            "Telegram allowed user IDs",
+            "Any safe roots for local computer access",
+        ],
+        "steps": [
+            "Run /backup check and confirm every check is good.",
+            "Create a fresh backup of the current Commander folder before changing local config.",
+            "Rebuild the listed config files manually from the safe backup reference.",
+            "Re-enter secrets and local paths from your password manager or machine knowledge.",
+            "Run /doctor and /service before trusting the restored Commander.",
+        ],
+    }
+    if check.get("status") != "ready":
+        return plan
+
+    path = selected_commander_backup(name)
+    if not path:
+        plan["status"] = "blocked"
+        plan["status_label"] = "No backup found"
+        return plan
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        plan["status"] = "blocked"
+        plan["status_label"] = "Backup could not be parsed"
+        return plan
+
+    projects = payload.get("projects") if isinstance(payload.get("projects"), dict) else {}
+    computer_tools = payload.get("computer_tools") if isinstance(payload.get("computer_tools"), dict) else {}
+    setup = payload.get("setup") if isinstance(payload.get("setup"), dict) else {}
+    project_rows: list[dict[str, Any]] = []
+    objectives = 0
+    criteria_count = 0
+    verification_count = 0
+    for project_id, raw_project in sorted(projects.items()):
+        if not isinstance(raw_project, dict):
+            continue
+        aliases = raw_project.get("aliases") if isinstance(raw_project.get("aliases"), list) else []
+        criteria = raw_project.get("done_criteria") if isinstance(raw_project.get("done_criteria"), list) else []
+        verification = raw_project.get("verification_commands") if isinstance(raw_project.get("verification_commands"), list) else []
+        stack = raw_project.get("stack") if isinstance(raw_project.get("stack"), list) else []
+        has_objective = bool(str(raw_project.get("objective") or "").strip())
+        objectives += 1 if has_objective else 0
+        criteria_count += len(criteria)
+        verification_count += len(verification)
+        project_rows.append(
+            {
+                "id": compact(str(raw_project.get("id") or project_id), limit=100),
+                "name": compact(str(raw_project.get("name") or project_id), limit=120),
+                "allowed": bool(raw_project.get("allowed")),
+                "aliases": len(aliases),
+                "has_local_path": bool(raw_project.get("has_local_path")),
+                "has_objective": has_objective,
+                "criteria": len(criteria),
+                "verification_commands": len(verification),
+                "stack": [compact(str(item), limit=80) for item in stack[:4]],
+            }
+        )
+
+    web_shortcuts = computer_tools.get("web_shortcuts") if isinstance(computer_tools.get("web_shortcuts"), dict) else {}
+    app_names = computer_tools.get("app_names") if isinstance(computer_tools.get("app_names"), list) else []
+    env_readiness = setup.get("env_readiness") if isinstance(setup.get("env_readiness"), dict) else {}
+    heartbeat_defaults = setup.get("heartbeat_defaults") if isinstance(setup.get("heartbeat_defaults"), dict) else {}
+    plan.update(
+        {
+            "project_count": len(project_rows),
+            "objective_count": objectives,
+            "criteria_count": criteria_count,
+            "verification_command_count": verification_count,
+            "web_shortcut_count": len(web_shortcuts),
+            "app_count": len(app_names),
+            "safe_root_count": int(computer_tools.get("safe_root_count") or 0),
+            "project_preview": project_rows[:8],
+            "web_shortcut_preview": [compact(str(name), limit=80) for name in sorted(web_shortcuts)[:12]],
+            "app_preview": [compact(str(name), limit=80) for name in sorted(app_names)[:12]],
+            "env_groups": {
+                compact(str(group), limit=80): {
+                    "configured": int(values.get("configured") or 0) if isinstance(values, dict) else 0,
+                    "missing": int(values.get("missing") or 0) if isinstance(values, dict) else 0,
+                    "total": int(values.get("total") or 0) if isinstance(values, dict) else 0,
+                }
+                for group, values in sorted(env_readiness.items())
+            },
+            "heartbeat_defaults": {
+                "minutes": int(heartbeat_defaults.get("minutes") or DEFAULT_HEARTBEAT_MINUTES),
+                "quiet_start": compact(str(heartbeat_defaults.get("quiet_start") or DEFAULT_QUIET_START), limit=40),
+                "quiet_end": compact(str(heartbeat_defaults.get("quiet_end") or DEFAULT_QUIET_END), limit=40),
+            },
+            "target_files": [
+                {
+                    "file": "projects.json",
+                    "mode": "manual rebuild",
+                    "summary": f"{len(project_rows)} project record(s). Local paths must be re-entered manually.",
+                },
+                {
+                    "file": "project_profiles.json",
+                    "mode": "manual rebuild",
+                    "summary": f"{objectives} objective(s), {criteria_count} success criterion item(s), {verification_count} verification command reference(s).",
+                },
+                {
+                    "file": "computer_tools.json",
+                    "mode": "manual rebuild",
+                    "summary": f"{len(web_shortcuts)} web shortcut(s), {len(app_names)} app name(s), {int(computer_tools.get('safe_root_count') or 0)} safe root placeholder(s).",
+                },
+                {
+                    "file": ".env",
+                    "mode": "manual re-entry only",
+                    "summary": "Secrets are not in the backup. Re-enter them manually.",
+                },
+                {
+                    "file": "allowlist.json",
+                    "mode": "manual re-entry only",
+                    "summary": "Telegram user IDs are not in the backup. Re-enter trusted IDs manually.",
+                },
+            ],
+        }
+    )
+    return plan
+
+
+def format_backup_restore_plan(plan: dict[str, Any]) -> str:
+    lines = [
+        "Backup restore dry run",
+        f"Status: {compact(str(plan.get('status_label') or plan.get('status') or 'unknown'), limit=140)}",
+        "Files changed: none",
+    ]
+    if plan.get("backup"):
+        lines.append(f"Backup: {compact(str(plan.get('backup')), limit=120)}")
+    if plan.get("status") != "ready":
+        lines.extend(["", "Restore is blocked until /backup check is clean."])
+        return "\n".join(lines)
+
+    lines.extend(
+        [
+            "",
+            "Would rebuild:",
+        ]
+    )
+    for item in plan.get("target_files") or []:
+        if not isinstance(item, dict):
+            continue
+        lines.append(f"- {compact(str(item.get('file') or '-'), limit=80)}: {compact(str(item.get('mode') or '-'), limit=80)} - {compact(str(item.get('summary') or '-'), limit=260)}")
+
+    lines.extend(["", "Preview:"])
+    for project in (plan.get("project_preview") or [])[:8]:
+        if not isinstance(project, dict):
+            continue
+        markers = []
+        markers.append("allowed" if project.get("allowed") else "disabled")
+        if project.get("has_objective"):
+            markers.append("objective")
+        if project.get("criteria"):
+            markers.append(f"{project.get('criteria')} criteria")
+        if project.get("verification_commands"):
+            markers.append(f"{project.get('verification_commands')} checks")
+        lines.append(f"- {compact(str(project.get('id') or '-'), limit=80)}: {compact(str(project.get('name') or '-'), limit=120)} ({', '.join(markers)})")
+    if plan.get("web_shortcut_preview"):
+        lines.append(f"- Web shortcuts: {', '.join(str(item) for item in (plan.get('web_shortcut_preview') or [])[:8])}")
+    if plan.get("app_preview"):
+        lines.append(f"- App names: {', '.join(str(item) for item in (plan.get('app_preview') or [])[:8])}")
+
+    lines.extend(["", "Manual inputs still needed:"])
+    for item in plan.get("manual_inputs") or []:
+        lines.append(f"- {compact(str(item or '-'), limit=160)}")
+    lines.extend(["", "Steps:"])
+    for item in plan.get("steps") or []:
+        lines.append(f"- {compact(str(item or '-'), limit=220)}")
+    return "\n".join(lines)
+
+
 def command_backup(args: list[str]) -> str:
     action = args[0].lower() if args else "save"
     if action in {"preview", "status", "show"}:
@@ -5165,6 +5346,9 @@ def command_backup(args: list[str]) -> str:
     if action in {"check", "verify", "validate", "restore-check"}:
         name = args[1] if len(args) > 1 else None
         return format_backup_restore_check(backup_restore_check_payload(name))
+    if action in {"plan", "restore-plan", "import-preview", "restore-preview"}:
+        name = args[1] if len(args) > 1 else None
+        return format_backup_restore_plan(backup_restore_plan_payload(name))
     if action in {"list", "history"}:
         backups = saved_commander_backups()
         if not backups:
@@ -5177,7 +5361,7 @@ def command_backup(args: list[str]) -> str:
         payload = commander_backup_payload()
         path = save_commander_backup(payload)
         return f"Saved Commander safe config backup: {path.name}\n\n" + format_backup_summary(payload)
-    return "Usage: /backup, /backup preview, /backup list, or /backup check"
+    return "Usage: /backup, /backup preview, /backup list, /backup check, or /backup plan"
 
 
 def command_report(args: list[str], user_id: str) -> str:
@@ -7751,7 +7935,7 @@ def command_help() -> str:
 /cancel <project> [approval_id]
 /audit
 /report [save]
-/backup [preview|list|check]
+/backup [preview|list|check|plan]
 /reviews [details]
 /heartbeat on [minutes]
 /heartbeat off
@@ -8568,7 +8752,7 @@ Allowed commands:
 /cancel <project> [approval_id]
 /audit
 /report [save]
-/backup [preview|list|check]
+/backup [preview|list|check|plan]
 /reviews [details]
 /mission [project]
 /replay [project]

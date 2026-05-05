@@ -1864,6 +1864,7 @@ def dashboard_backups_payload(limit: int = 8) -> dict[str, Any]:
         "summary": commander.format_backup_summary(commander.commander_backup_payload()),
         "items": items,
         "restore_check": commander.backup_restore_check_payload(),
+        "restore_plan": commander.backup_restore_plan_payload(),
         "restore_guidance": commander.backup_restore_guidance(),
     }
 
@@ -1880,6 +1881,14 @@ def dashboard_backup_action(payload: dict[str, Any]) -> tuple[dict[str, Any], in
             "ok": report.get("status") == "ready",
             "saved": False,
             "text": commander.format_backup_restore_check(report),
+            "backups": dashboard_backups_payload(),
+        }, 200
+    if action in {"plan", "restore-plan", "import-preview", "restore-preview"}:
+        plan = commander.backup_restore_plan_payload()
+        return {
+            "ok": plan.get("status") == "ready",
+            "saved": False,
+            "text": commander.format_backup_restore_plan(plan),
             "backups": dashboard_backups_payload(),
         }, 200
     if action in {"save", "export", "write", "create"}:

@@ -1833,6 +1833,53 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("local path", text)
         self.assertNotIn(temp, text)
 
+    def test_backup_restore_plan_is_dry_run_and_summarizes_files(self) -> None:
+        original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        payload = {
+            "kind": "commander-x-safe-config-backup",
+            "schema_version": 1,
+            "projects": {
+                "health": {
+                    "id": "health",
+                    "name": "Health Companion",
+                    "allowed": True,
+                    "aliases": ["health assistant"],
+                    "has_local_path": True,
+                    "objective": "Build a local health assistant",
+                    "done_criteria": [{"text": "Web app works"}],
+                    "verification_commands": ["npm test"],
+                    "stack": ["React"],
+                }
+            },
+            "computer_tools": {
+                "app_names": ["chrome", "notepad"],
+                "web_shortcuts": {"dashboard": "https://example.com"},
+                "safe_root_count": 1,
+            },
+            "setup": {"env_readiness": {"core": {"configured": 2, "missing": 1, "total": 3}}, "heartbeat_defaults": {"minutes": 30}},
+            "state_summary": {},
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                commander.os.environ["COMMANDER_BACKUP_DIR"] = temp
+                commander.save_commander_backup(payload)
+                plan = commander.backup_restore_plan_payload()
+                text = commander.format_backup_restore_plan(plan)
+            finally:
+                if original_backup_dir is None:
+                    commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+
+        self.assertEqual(plan["status"], "ready")
+        self.assertFalse(plan["writes_files"])
+        self.assertIn("projects.json", text)
+        self.assertIn("project_profiles.json", text)
+        self.assertIn("computer_tools.json", text)
+        self.assertIn("Files changed: none", text)
+        self.assertIn("Health Companion", text)
+        self.assertNotIn(temp, text)
+
     def test_service_helpers_hide_paths_and_detect_processes(self) -> None:
         self.assertEqual(
             commander.service_process_state(["123 python.exe python commander.py --poll"], "commander.py --poll"),
