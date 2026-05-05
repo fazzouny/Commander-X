@@ -1870,6 +1870,7 @@ def dashboard_backups_payload(limit: int = 8) -> dict[str, Any]:
         "import_compare": commander.backup_import_compare_payload(),
         "import_impact": commander.backup_import_impact_payload(),
         "import_apply_gate": commander.backup_import_apply_gate_payload(),
+        "config_timeline": commander.commander_config_timeline_payload(),
         "restore_guidance": commander.backup_restore_guidance(),
     }
 
@@ -1880,6 +1881,15 @@ def dashboard_backup_action(payload: dict[str, Any]) -> tuple[dict[str, Any], in
         return {"ok": True, "saved": False, "text": commander.command_backup(["preview"]), "backups": dashboard_backups_payload()}, 200
     if action in {"list", "history"}:
         return {"ok": True, "saved": False, "text": commander.command_backup(["list"]), "backups": dashboard_backups_payload()}, 200
+    if action in {"timeline", "config-timeline", "changes-timeline"}:
+        timeline = commander.commander_config_timeline_payload()
+        return {
+            "ok": timeline.get("status") == "ready",
+            "saved": False,
+            "text": commander.format_commander_config_timeline(timeline),
+            "config_timeline": timeline,
+            "backups": dashboard_backups_payload(),
+        }, 200
     if action in {"check", "verify", "validate", "restore-check"}:
         report = commander.backup_restore_check_payload()
         return {

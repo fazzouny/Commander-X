@@ -966,6 +966,19 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertIn("restore_guidance", result["backups"])
         self.assertNotIn("TELEGRAM_BOT_TOKEN", str(result))
 
+    def test_dashboard_backup_timeline_returns_safe_config_areas(self) -> None:
+        result, status = dashboard.dashboard_backup_action({"action": "timeline"})
+
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertIn("Commander config timeline", result["text"])
+        self.assertIn("config_timeline", result)
+        self.assertIn("config_timeline", result["backups"])
+        self.assertFalse(result["config_timeline"]["writes_files"])
+        self.assertFalse(result["config_timeline"]["exposes_secrets"])
+        self.assertIn("Project Registry", result["text"])
+        self.assertNotIn(str(dashboard.commander.BASE_DIR), str(result))
+
     def test_dashboard_backup_check_returns_restore_report(self) -> None:
         original_backup_dir = dashboard.commander.os.environ.get("COMMANDER_BACKUP_DIR")
         with tempfile.TemporaryDirectory() as temp:

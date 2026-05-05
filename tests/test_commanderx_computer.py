@@ -1782,6 +1782,21 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("commander-x-safe-config-backup", saved)
         self.assertNotIn("sk-", saved)
 
+    def test_backup_timeline_is_read_only_and_hides_paths(self) -> None:
+        payload = commander.commander_config_timeline_payload()
+        text = commander.format_commander_config_timeline(payload)
+
+        self.assertEqual(payload["status"], "ready")
+        self.assertFalse(payload["writes_files"])
+        self.assertFalse(payload["exposes_secrets"])
+        self.assertFalse(payload["exposes_local_paths"])
+        self.assertIn("Commander config timeline", text)
+        self.assertIn("Project Registry", text)
+        self.assertIn("Live config files changed: none", text)
+        self.assertIn("Real .env values are not inspected", text)
+        self.assertNotIn(str(commander.BASE_DIR), text)
+        self.assertNotIn("C:\\Users", text)
+
     def test_backup_restore_check_validates_latest_backup_without_paths(self) -> None:
         original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")
         with tempfile.TemporaryDirectory() as temp:

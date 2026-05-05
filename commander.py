@@ -4998,6 +4998,127 @@ def saved_commander_backups(limit: int = 8) -> list[Path]:
         return []
 
 
+CONFIG_TIMELINE_SPECS: tuple[tuple[str, str, Path, str], ...] = (
+    ("Project Registry", "projects.json", PROJECTS_FILE, "Which projects Commander can manage."),
+    ("Project Profiles", "project_profiles.json", PROFILES_FILE, "Objectives, done criteria, risk notes, and verification hints."),
+    ("Computer Tool Broker", "computer_tools.json", COMPUTER_TOOLS_FILE, "Allowlisted apps, web shortcuts, and local access boundaries."),
+    ("Commander Prompt", "system_prompt.md", SYSTEM_PROMPT_FILE, "The local operating rules Commander gives to managed sessions."),
+    ("Environment Template", ".env.example", BASE_DIR / ".env.example", "Open-source setup keys without real secrets."),
+    ("Allowlist Template", "allowlist.example.json", BASE_DIR / "allowlist.example.json", "Open-source Telegram allowlist shape without real user IDs."),
+    ("Project Registry Template", "projects.example.json", BASE_DIR / "projects.example.json", "Open-source project registry example."),
+    ("Project Profile Template", "project_profiles.example.json", BASE_DIR / "project_profiles.example.json", "Open-source profile example."),
+    ("Computer Tools Template", "computer_tools.example.json", BASE_DIR / "computer_tools.example.json", "Open-source tool-broker example."),
+)
+
+
+def config_timeline_git_state(path: Path) -> str:
+    try:
+        rel = path.resolve().relative_to(BASE_DIR)
+    except ValueError:
+        return "outside Commander repo"
+    if not (BASE_DIR / ".git").exists():
+        return "git unavailable"
+    result = git_run(BASE_DIR, "status", "--short", "--", rel.as_posix(), timeout=12)
+    if result.returncode != 0:
+        return "git state unavailable"
+    line = next((item for item in result.stdout.splitlines() if item.strip()), "")
+    if not line:
+        return "clean"
+    code = line[:2]
+    if code == "??":
+        return "untracked local file"
+    if "D" in code:
+        return "deleted locally"
+    if "A" in code:
+        return "new local file"
+    if "M" in code:
+        return "modified locally"
+    return "changed locally"
+
+
+def commander_config_timeline_payload() -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    now = dt.datetime.now(dt.timezone.utc)
+    for area, safe_file, path, purpose in CONFIG_TIMELINE_SPECS:
+        item: dict[str, Any] = {
+            "area": area,
+            "file": safe_file,
+            "purpose": purpose,
+            "exists": path.exists(),
+            "status": "missing",
+            "git_state": "missing",
+            "size": "0 B",
+            "last_changed": "",
+            "age_minutes": None,
+            "risk": "warn",
+        }
+        if path.exists():
+            try:
+                stat = path.stat()
+                changed_at = dt.datetime.fromtimestamp(stat.st_mtime, dt.timezone.utc)
+                git_state = config_timeline_git_state(path)
+                item.update(
+                    {
+                        "status": "changed locally" if git_state not in {"clean", "git unavailable"} else "present",
+                        "git_state": git_state,
+                        "size": human_report_size(stat.st_size),
+                        "last_changed": changed_at.astimezone().strftime("%Y-%m-%d %H:%M"),
+                        "age_minutes": max(0, int((now - changed_at).total_seconds() // 60)),
+                        "risk": "warn" if git_state not in {"clean", "git unavailable"} else "good",
+                    }
+                )
+            except OSError:
+                item.update({"status": "unreadable", "git_state": "unreadable", "risk": "bad"})
+        items.append(item)
+    items.sort(key=lambda item: int(item.get("age_minutes") if item.get("age_minutes") is not None else 10**9))
+    changed = sum(1 for item in items if str(item.get("git_state") or "").endswith("locally") or str(item.get("git_state") or "").startswith(("modified", "new", "deleted", "changed", "untracked")))
+    missing = sum(1 for item in items if not item.get("exists"))
+    return {
+        "status": "ready",
+        "status_label": "Config timeline ready",
+        "writes_files": False,
+        "exposes_secrets": False,
+        "exposes_local_paths": False,
+        "items": items,
+        "changed_count": changed,
+        "missing_count": missing,
+        "summary": f"{len(items)} safe config area(s), {changed} local change(s), {missing} missing.",
+        "excluded": [
+            "Real .env values are not inspected.",
+            "Real Telegram allowlist user IDs are not inspected.",
+            "Runtime logs and Codex command output are not included.",
+        ],
+    }
+
+
+def format_commander_config_timeline(payload: dict[str, Any] | None = None) -> str:
+    payload = payload or commander_config_timeline_payload()
+    lines = [
+        "Commander config timeline",
+        f"Status: {compact(str(payload.get('status_label') or payload.get('status') or 'unknown'), limit=120)}",
+        "Live config files changed: none",
+        "Secrets and local paths shown: no",
+        f"Summary: {compact(str(payload.get('summary') or '-'), limit=180)}",
+        "",
+        "Recent safe config areas:",
+    ]
+    for item in (payload.get("items") if isinstance(payload.get("items"), list) else [])[:9]:
+        if not isinstance(item, dict):
+            continue
+        area = compact(str(item.get("area") or "-"), limit=100)
+        status = compact(str(item.get("status") or "-"), limit=80)
+        changed = compact(str(item.get("last_changed") or "unknown"), limit=80)
+        age = item.get("age_minutes")
+        age_text = f", {int(age)} min ago" if isinstance(age, int) else ""
+        lines.append(f"- {area}: {status}; last changed {changed}{age_text}.")
+        lines.append(f"  Controls: {compact(str(item.get('purpose') or '-'), limit=220)}")
+        lines.append(f"  Git state: {compact(str(item.get('git_state') or '-'), limit=80)}; size {compact(str(item.get('size') or '-'), limit=40)}.")
+    lines.extend(["", "Excluded:"])
+    for item in payload.get("excluded") or []:
+        lines.append(f"- {compact(str(item or '-'), limit=220)}")
+    return compact("\n".join(lines), limit=3600)
+
+
 def backup_restore_guidance() -> list[str]:
     return [
         "Backups are safe reference snapshots, not automatic restore scripts.",
@@ -6101,6 +6222,8 @@ def command_backup(args: list[str]) -> str:
     action = args[0].lower() if args else "save"
     if action in {"preview", "status", "show"}:
         return format_backup_summary(commander_backup_payload())
+    if action in {"timeline", "config-timeline", "changes-timeline"}:
+        return format_commander_config_timeline(commander_config_timeline_payload())
     if action in {"check", "verify", "validate", "restore-check"}:
         name = args[1] if len(args) > 1 else None
         return format_backup_restore_check(backup_restore_check_payload(name))

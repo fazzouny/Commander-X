@@ -249,6 +249,7 @@ function renderBackups(data) {
   const importCompare = backups.import_compare || {};
   const importImpact = backups.import_impact || {};
   const importApplyGate = backups.import_apply_gate || {};
+  const configTimeline = backups.config_timeline || {};
   const checkSummary = restoreCheck.status_label
     ? `\n\nRestore check: ${restoreCheck.status_label}\nBackup: ${restoreCheck.backup || "none"}\nProjects: ${restoreCheck.projects || 0}\nWeb shortcuts: ${
         restoreCheck.web_shortcuts || 0
@@ -266,6 +267,7 @@ function renderBackups(data) {
   const gateSummary = importApplyGate.status_label
     ? `\nApply gate: ${importApplyGate.status_label}\nWrites live config: ${importApplyGate.writes_live_config ? "yes" : "no"}`
     : "";
+  const timelineSummary = configTimeline.status_label ? `\nConfig timeline: ${configTimeline.summary || configTimeline.status_label}` : "";
   qs("#backup-count").textContent = `${items.length} saved`;
   const riskType = (risk) => (risk === "high" ? "bad" : risk === "medium" ? "warn" : risk === "low" ? "good" : "warn");
   const riskSummary = importImpact.risk_summary || {};
@@ -317,7 +319,40 @@ function renderBackups(data) {
         `,
       )
       .join("") || `<p>No safe backups saved yet.</p>`;
-  qs("#backups").innerHTML = impactCardsHtml + backupRows;
+  const timelineItems = configTimeline.items || [];
+  const timelineHtml = timelineItems.length
+    ? `
+      <div class="config-timeline">
+        <div class="backup-impact-head">
+          <div>
+            <div class="row-title">Config Change Timeline</div>
+            <div class="row-meta">${escapeHtml(configTimeline.summary || "Safe config areas only")}</div>
+          </div>
+          <div>${pill(`${configTimeline.changed_count || 0} local changes`, configTimeline.changed_count ? "warn" : "good")}</div>
+        </div>
+        <div class="timeline-config-list">
+          ${timelineItems
+            .slice(0, 6)
+            .map(
+              (item) => `
+                <div class="timeline-config-row">
+                  <div>
+                    <strong>${escapeHtml(item.area || "-")}</strong>
+                    <span>${escapeHtml(item.purpose || "-")}</span>
+                  </div>
+                  <div>
+                    <span>${escapeHtml(item.last_changed || "unknown")}</span>
+                    ${pill(item.git_state || item.status || "unknown", item.risk === "bad" ? "bad" : item.risk === "warn" ? "warn" : "good")}
+                  </div>
+                </div>
+              `,
+            )
+            .join("")}
+        </div>
+      </div>
+    `
+    : "";
+  qs("#backups").innerHTML = impactCardsHtml + timelineHtml + backupRows;
   if (!qs("#backup-output").textContent.trim()) {
     qs("#backup-output").textContent =
       (backups.summary || "No backup summary yet.") +
@@ -328,6 +363,7 @@ function renderBackups(data) {
       compareSummary +
       impactSummary +
       gateSummary +
+      timelineSummary +
       (guidance.length ? `\n\nRestore guidance:\n- ${guidance.map((item) => String(item || "")).join("\n- ")}` : "");
   }
 }
@@ -1646,6 +1682,7 @@ qs("#preview-report").addEventListener("click", () => generateReport(false));
 qs("#save-report").addEventListener("click", () => generateReport(true));
 qs("#copy-report").addEventListener("click", copyReport);
 qs("#preview-backup").addEventListener("click", () => runBackup("preview"));
+qs("#timeline-backup").addEventListener("click", () => runBackup("timeline"));
 qs("#check-backup").addEventListener("click", () => runBackup("check"));
 qs("#plan-backup").addEventListener("click", () => runBackup("plan"));
 qs("#import-backup").addEventListener("click", () => runBackup("import"));
