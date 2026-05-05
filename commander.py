@@ -5339,6 +5339,163 @@ def format_backup_restore_plan(plan: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def backup_restore_import_preview_payload(name: str | None = None, include_drafts: bool = True) -> dict[str, Any]:
+    plan = backup_restore_plan_payload(name)
+    preview: dict[str, Any] = {
+        "status": "blocked" if plan.get("status") != "ready" else "ready",
+        "status_label": "Blocked until restore plan is ready" if plan.get("status") != "ready" else "Config import preview ready",
+        "backup": plan.get("backup") or "",
+        "writes_files": False,
+        "restore_plan": plan,
+        "draft_files": [],
+        "manual_files": [
+            {"file": ".env", "reason": "Secrets are excluded from safe backups."},
+            {"file": "allowlist.json", "reason": "Telegram user IDs are excluded from safe backups."},
+        ],
+    }
+    if plan.get("status") != "ready":
+        return preview
+
+    path = selected_commander_backup(name)
+    if not path:
+        preview["status"] = "blocked"
+        preview["status_label"] = "No backup found"
+        return preview
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        preview["status"] = "blocked"
+        preview["status_label"] = "Backup could not be parsed"
+        return preview
+
+    backup_projects = payload.get("projects") if isinstance(payload.get("projects"), dict) else {}
+    backup_tools = payload.get("computer_tools") if isinstance(payload.get("computer_tools"), dict) else {}
+    project_entries: dict[str, Any] = {}
+    profile_entries: dict[str, Any] = {}
+
+    def draft_text(value: Any, limit: int = 240) -> str:
+        text = compact(str(value or ""), limit=limit)
+        return "" if text == "-" else text
+
+    def draft_list(values: Any, limit: int = 12, item_limit: int = 160) -> list[str]:
+        if not isinstance(values, list):
+            return []
+        items = [draft_text(item, limit=item_limit) for item in values[:limit]]
+        return [item for item in items if item]
+
+    for project_id, raw_project in sorted(backup_projects.items()):
+        if not isinstance(raw_project, dict):
+            continue
+        safe_id = draft_text(raw_project.get("id") or project_id, limit=100) or draft_text(project_id, limit=100)
+        aliases = raw_project.get("aliases") if isinstance(raw_project.get("aliases"), list) else []
+        criteria = raw_project.get("done_criteria") if isinstance(raw_project.get("done_criteria"), list) else []
+        verification = raw_project.get("verification_commands") if isinstance(raw_project.get("verification_commands"), list) else []
+        stack = raw_project.get("stack") if isinstance(raw_project.get("stack"), list) else []
+        notes = raw_project.get("notes") if isinstance(raw_project.get("notes"), list) else []
+        risk_rules = raw_project.get("risk_rules") if isinstance(raw_project.get("risk_rules"), list) else []
+        project_entries[safe_id] = {
+            "name": draft_text(raw_project.get("name") or safe_id, limit=160) or safe_id,
+            "path": "<REENTER_LOCAL_PROJECT_PATH>",
+            "allowed": bool(raw_project.get("allowed")),
+            "aliases": draft_list(aliases, limit=12, item_limit=120),
+            "default_branch": draft_text(raw_project.get("default_branch") or "main", limit=80) or "main",
+        }
+        profile_entries[safe_id] = {
+            "objective": draft_text(raw_project.get("objective"), limit=1000),
+            "done_criteria": [
+                {
+                    "text": draft_text(item.get("text"), limit=300),
+                    "status": "done" if item.get("done") else "open",
+                    "evidence": draft_text(item.get("evidence"), limit=300),
+                }
+                for item in criteria[:30]
+                if isinstance(item, dict) and draft_text(item.get("text"), limit=300)
+            ],
+            "verification_commands": draft_list(verification, limit=12, item_limit=200),
+            "stack": draft_list(stack, limit=12, item_limit=120),
+            "notes": draft_list(notes, limit=12, item_limit=240),
+            "risk_rules": draft_list(risk_rules, limit=12, item_limit=240),
+        }
+
+    web_shortcuts = backup_tools.get("web_shortcuts") if isinstance(backup_tools.get("web_shortcuts"), dict) else {}
+    app_names = backup_tools.get("app_names") if isinstance(backup_tools.get("app_names"), list) else []
+    safe_root_count = int(backup_tools.get("safe_root_count") or 0)
+    tool_draft = {
+        "apps": {draft_text(name, limit=80): ["<REENTER_APP_COMMAND_OR_PATH>"] for name in sorted(app_names)[:40] if draft_text(name, limit=80)},
+        "web_shortcuts": {draft_text(name, limit=80): draft_text(url, limit=260) for name, url in sorted(web_shortcuts.items()) if draft_text(name, limit=80) and draft_text(url, limit=260)},
+        "safe_roots": [f"<REENTER_SAFE_ROOT_PATH_{index}>" for index in range(1, safe_root_count + 1)],
+    }
+    draft_specs = [
+        ("projects.json", {"projects": project_entries}, len(project_entries)),
+        ("project_profiles.json", {"profiles": profile_entries}, len(profile_entries)),
+        ("computer_tools.json", tool_draft, len(web_shortcuts) + len(app_names) + safe_root_count),
+    ]
+    draft_files: list[dict[str, Any]] = []
+    for filename, content, count in draft_specs:
+        text = json.dumps(content, ensure_ascii=False, indent=2, sort_keys=True)
+        draft_files.append(
+            {
+                "file": filename,
+                "mode": "review only",
+                "records": count,
+                "content_preview": compact(text, limit=900) if include_drafts else "",
+            }
+        )
+    preview.update(
+        {
+            "project_count": len(project_entries),
+            "profile_count": len(profile_entries),
+            "web_shortcut_count": len(web_shortcuts),
+            "app_count": len(app_names),
+            "safe_root_count": safe_root_count,
+            "draft_files": draft_files,
+        }
+    )
+    return preview
+
+
+def format_backup_restore_import_preview(preview: dict[str, Any]) -> str:
+    lines = [
+        "Backup config import preview",
+        f"Status: {compact(str(preview.get('status_label') or preview.get('status') or 'unknown'), limit=140)}",
+        "Files changed: none",
+        "Apply behavior: not implemented here; this is a review-only draft.",
+    ]
+    if preview.get("backup"):
+        lines.append(f"Backup: {compact(str(preview.get('backup')), limit=120)}")
+    if preview.get("status") != "ready":
+        lines.extend(["", "Import preview is blocked until /backup plan is ready."])
+        return "\n".join(lines)
+
+    lines.extend(
+        [
+            "",
+            "Draft files for review:",
+        ]
+    )
+    for item in preview.get("draft_files") or []:
+        if not isinstance(item, dict):
+            continue
+        lines.append(f"- {compact(str(item.get('file') or '-'), limit=80)}: {compact(str(item.get('mode') or '-'), limit=80)} - {int(item.get('records') or 0)} draft record(s)")
+
+    lines.extend(["", "Manual-only files:"])
+    for item in preview.get("manual_files") or []:
+        if not isinstance(item, dict):
+            continue
+        lines.append(f"- {compact(str(item.get('file') or '-'), limit=80)}: {compact(str(item.get('reason') or '-'), limit=220)}")
+
+    lines.extend(["", "Review snippets:"])
+    for item in (preview.get("draft_files") or [])[:3]:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content_preview") or "").strip()
+        if not content:
+            continue
+        lines.append(f"\n{compact(str(item.get('file') or '-'), limit=80)}")
+        lines.append(content)
+    return compact("\n".join(lines), limit=3900)
+
+
 def command_backup(args: list[str]) -> str:
     action = args[0].lower() if args else "save"
     if action in {"preview", "status", "show"}:
@@ -5346,9 +5503,12 @@ def command_backup(args: list[str]) -> str:
     if action in {"check", "verify", "validate", "restore-check"}:
         name = args[1] if len(args) > 1 else None
         return format_backup_restore_check(backup_restore_check_payload(name))
-    if action in {"plan", "restore-plan", "import-preview", "restore-preview"}:
+    if action in {"plan", "restore-plan", "restore-preview"}:
         name = args[1] if len(args) > 1 else None
         return format_backup_restore_plan(backup_restore_plan_payload(name))
+    if action in {"import", "draft", "wizard", "config-preview", "import-preview"}:
+        name = args[1] if len(args) > 1 else None
+        return format_backup_restore_import_preview(backup_restore_import_preview_payload(name, include_drafts=True))
     if action in {"list", "history"}:
         backups = saved_commander_backups()
         if not backups:
@@ -5361,7 +5521,7 @@ def command_backup(args: list[str]) -> str:
         payload = commander_backup_payload()
         path = save_commander_backup(payload)
         return f"Saved Commander safe config backup: {path.name}\n\n" + format_backup_summary(payload)
-    return "Usage: /backup, /backup preview, /backup list, /backup check, or /backup plan"
+    return "Usage: /backup, /backup preview, /backup list, /backup check, /backup plan, or /backup import"
 
 
 def command_report(args: list[str], user_id: str) -> str:
@@ -7935,7 +8095,7 @@ def command_help() -> str:
 /cancel <project> [approval_id]
 /audit
 /report [save]
-/backup [preview|list|check|plan]
+/backup [preview|list|check|plan|import]
 /reviews [details]
 /heartbeat on [minutes]
 /heartbeat off
@@ -8752,7 +8912,7 @@ Allowed commands:
 /cancel <project> [approval_id]
 /audit
 /report [save]
-/backup [preview|list|check|plan]
+/backup [preview|list|check|plan|import]
 /reviews [details]
 /mission [project]
 /replay [project]

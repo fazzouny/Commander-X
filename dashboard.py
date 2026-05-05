@@ -1865,6 +1865,7 @@ def dashboard_backups_payload(limit: int = 8) -> dict[str, Any]:
         "items": items,
         "restore_check": commander.backup_restore_check_payload(),
         "restore_plan": commander.backup_restore_plan_payload(),
+        "import_preview": commander.backup_restore_import_preview_payload(include_drafts=False),
         "restore_guidance": commander.backup_restore_guidance(),
     }
 
@@ -1883,12 +1884,21 @@ def dashboard_backup_action(payload: dict[str, Any]) -> tuple[dict[str, Any], in
             "text": commander.format_backup_restore_check(report),
             "backups": dashboard_backups_payload(),
         }, 200
-    if action in {"plan", "restore-plan", "import-preview", "restore-preview"}:
+    if action in {"plan", "restore-plan", "restore-preview"}:
         plan = commander.backup_restore_plan_payload()
         return {
             "ok": plan.get("status") == "ready",
             "saved": False,
             "text": commander.format_backup_restore_plan(plan),
+            "backups": dashboard_backups_payload(),
+        }, 200
+    if action in {"import", "draft", "wizard", "config-preview", "import-preview"}:
+        preview = commander.backup_restore_import_preview_payload(include_drafts=True)
+        return {
+            "ok": preview.get("status") == "ready",
+            "saved": False,
+            "text": commander.format_backup_restore_import_preview(preview),
+            "import_preview": preview,
             "backups": dashboard_backups_payload(),
         }, 200
     if action in {"save", "export", "write", "create"}:

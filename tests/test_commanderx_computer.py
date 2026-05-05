@@ -1880,6 +1880,53 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("Health Companion", text)
         self.assertNotIn(temp, text)
 
+    def test_backup_import_preview_drafts_sanitized_config_without_writes(self) -> None:
+        original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        payload = {
+            "kind": "commander-x-safe-config-backup",
+            "schema_version": 1,
+            "projects": {
+                "health": {
+                    "id": "health",
+                    "name": "Health Companion",
+                    "allowed": True,
+                    "aliases": ["health assistant"],
+                    "has_local_path": True,
+                    "objective": "Build a local health assistant",
+                    "done_criteria": [{"text": "Web app works", "done": False}],
+                    "verification_commands": ["npm test"],
+                    "stack": ["React"],
+                }
+            },
+            "computer_tools": {
+                "app_names": ["chrome"],
+                "web_shortcuts": {"dashboard": "https://example.com"},
+                "safe_root_count": 1,
+            },
+            "setup": {},
+            "state_summary": {},
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                commander.os.environ["COMMANDER_BACKUP_DIR"] = temp
+                commander.save_commander_backup(payload)
+                preview = commander.backup_restore_import_preview_payload(include_drafts=True)
+                text = commander.format_backup_restore_import_preview(preview)
+            finally:
+                if original_backup_dir is None:
+                    commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+
+        self.assertEqual(preview["status"], "ready")
+        self.assertFalse(preview["writes_files"])
+        self.assertIn("projects.json", text)
+        self.assertIn("<REENTER_LOCAL_PROJECT_PATH>", text)
+        self.assertIn("<REENTER_APP_COMMAND_OR_PATH>", text)
+        self.assertIn("Files changed: none", text)
+        self.assertNotIn(temp, text)
+        self.assertNotIn("TELEGRAM_BOT_TOKEN", text)
+
     def test_service_helpers_hide_paths_and_detect_processes(self) -> None:
         self.assertEqual(
             commander.service_process_state(["123 python.exe python commander.py --poll"], "commander.py --poll"),
