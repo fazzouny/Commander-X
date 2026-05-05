@@ -5765,6 +5765,156 @@ def format_backup_import_compare(compare: dict[str, Any]) -> str:
     return compact("\n".join(lines), limit=3600)
 
 
+def backup_import_impact_item(label: str, section: dict[str, Any]) -> dict[str, Any] | None:
+    missing = int(section.get("missing_count") or 0)
+    extra = int(section.get("extra_count") or 0)
+    if not missing and not extra:
+        return None
+    missing_names = [compact(str(item), limit=100) for item in (section.get("missing_from_current") if isinstance(section.get("missing_from_current"), list) else [])[:5]]
+    extra_names = [compact(str(item), limit=100) for item in (section.get("extra_in_current") if isinstance(section.get("extra_in_current"), list) else [])[:5]]
+    templates = {
+        "Project registry": (
+            "Projects Commander knows about",
+            "The backup contains project records that differ from the current Commander registry.",
+            "Review whether Commander should remember those projects again before any future importer applies them.",
+        ),
+        "Project profiles": (
+            "Project goals and done criteria",
+            "The backup has project assistant memory such as objectives, success criteria, stack notes, or verification commands that current Commander may not have.",
+            "Use this to restore Commander context, not code.",
+        ),
+        "Web shortcuts": (
+            "Website shortcuts",
+            "The backup and current Commander disagree about named browser shortcuts.",
+            "Review names only; URLs are sanitized and secrets are not inspected.",
+        ),
+        "App names": (
+            "Allowlisted desktop apps",
+            "The backup and current Commander disagree about which local apps Commander can open by name.",
+            "Keep this tight; app access should stay intentional.",
+        ),
+        "Safe roots": (
+            "Local folder access boundaries",
+            "The backup expects a different number of local folders that Commander may access.",
+            "These folder paths are not backed up and must be re-entered manually.",
+        ),
+        "Local project paths": (
+            "Project folder links",
+            "The backup expects a different number of project folders connected to Commander.",
+            "No paths are shown or restored; reconnect folders manually on this machine.",
+        ),
+    }
+    area, meaning, action = templates.get(
+        label,
+        (
+            compact(label, limit=80),
+            "The backup and current Commander differ in this area.",
+            "Review the difference before preparing an approval gate.",
+        ),
+    )
+    return {
+        "area": area,
+        "label": compact(label, limit=80),
+        "severity": "review",
+        "missing_count": missing,
+        "extra_count": extra,
+        "missing_examples": missing_names,
+        "extra_examples": extra_names,
+        "meaning": meaning,
+        "operator_action": action,
+    }
+
+
+def backup_import_impact_payload(name: str | None = None) -> dict[str, Any]:
+    compare = backup_import_compare_payload(name)
+    result: dict[str, Any] = {
+        "status": "blocked" if compare.get("status") == "blocked" else "ready",
+        "status_label": "Blocked until backup comparison is clean" if compare.get("status") == "blocked" else "Impact preview ready",
+        "backup": compare.get("backup") or "",
+        "writes_files": False,
+        "writes_live_config": False,
+        "exposes_paths": False,
+        "compare": compare,
+        "impact_items": [],
+        "recommended_next_step": "Run /backup import prepare only after reviewing the impact.",
+    }
+    if compare.get("status") == "blocked":
+        return result
+    items: list[dict[str, Any]] = []
+    for section in compare.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        item = backup_import_impact_item(str(section.get("label") or "-"), section)
+        if item:
+            items.append(item)
+    if not items:
+        result.update(
+            {
+                "status": "match",
+                "status_label": "No visible operator impact",
+                "recommended_next_step": "No import action is needed unless you want to save another backup.",
+            }
+        )
+    elif any(item["label"] in {"Safe roots", "Local project paths", "App names"} for item in items):
+        result.update({"status": "review", "status_label": "Manual review recommended"})
+    else:
+        result.update({"status": "review", "status_label": "Low-risk context differences found"})
+    result["impact_items"] = items
+    return result
+
+
+def format_backup_import_impact(impact: dict[str, Any]) -> str:
+    lines = [
+        "Backup import impact",
+        f"Status: {compact(str(impact.get('status_label') or impact.get('status') or 'unknown'), limit=160)}",
+        "Live config files changed: none",
+        "Secrets and local paths shown: no",
+    ]
+    if impact.get("backup"):
+        lines.append(f"Backup: {compact(str(impact.get('backup')), limit=120)}")
+    if impact.get("status") == "blocked":
+        lines.extend(["", "Impact preview is blocked until /backup import compare can read a clean safe backup."])
+        return "\n".join(lines)
+
+    items = impact.get("impact_items") if isinstance(impact.get("impact_items"), list) else []
+    if not items:
+        lines.extend(
+            [
+                "",
+                "Plain-English meaning:",
+                "- The current Commander setup already matches the backup summary in the areas this tool can safely compare.",
+            ]
+        )
+    else:
+        lines.extend(["", "Plain-English meaning:"])
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            area = compact(str(item.get("area") or "-"), limit=120)
+            missing = int(item.get("missing_count") or 0)
+            extra = int(item.get("extra_count") or 0)
+            meaning = compact(str(item.get("meaning") or "-"), limit=260)
+            action = compact(str(item.get("operator_action") or "-"), limit=240)
+            lines.append(f"- {area}: {meaning}")
+            counts = []
+            if missing:
+                counts.append(f"{missing} from backup not in current setup")
+            if extra:
+                counts.append(f"{extra} current-only")
+            if counts:
+                lines.append(f"  Difference: {', '.join(counts)}.")
+            examples = []
+            if item.get("missing_examples"):
+                examples.append("backup-only: " + ", ".join(str(value) for value in item["missing_examples"][:4]))
+            if item.get("extra_examples"):
+                examples.append("current-only: " + ", ".join(str(value) for value in item["extra_examples"][:4]))
+            if examples:
+                lines.append("  Examples: " + "; ".join(examples))
+            lines.append(f"  Operator action: {action}")
+    lines.extend(["", compact(str(impact.get("recommended_next_step") or "Review before preparing any approval gate."), limit=260)])
+    return compact("\n".join(lines), limit=3600)
+
+
 def backup_import_apply_gate_payload(name: str | None = None) -> dict[str, Any]:
     preview = backup_restore_import_preview_payload(name, include_drafts=False)
     compare = backup_import_compare_payload(name)
@@ -5893,6 +6043,9 @@ def command_backup(args: list[str]) -> str:
         if import_args and import_args[0].lower() in {"prepare", "gate", "apply", "apply-gate", "prepare-apply", "approval", "approve-gate"}:
             name = import_args[1] if len(import_args) > 1 else None
             return prepare_backup_import_apply_gate(name)
+        if import_args and import_args[0].lower() in {"impact", "explain", "meaning", "summary", "review"}:
+            name = import_args[1] if len(import_args) > 1 else None
+            return format_backup_import_impact(backup_import_impact_payload(name))
         if import_args and import_args[0].lower() in {"compare", "diff", "status"}:
             name = import_args[1] if len(import_args) > 1 else None
             return format_backup_import_compare(backup_import_compare_payload(name))
@@ -5912,6 +6065,9 @@ def command_backup(args: list[str]) -> str:
     if action in {"compare", "diff", "import-compare"}:
         name = args[1] if len(args) > 1 else None
         return format_backup_import_compare(backup_import_compare_payload(name))
+    if action in {"impact", "explain", "import-impact"}:
+        name = args[1] if len(args) > 1 else None
+        return format_backup_import_impact(backup_import_impact_payload(name))
     if action in {"apply-gate", "prepare-apply", "import-apply", "import-gate"}:
         name = args[1] if len(args) > 1 else None
         return prepare_backup_import_apply_gate(name)

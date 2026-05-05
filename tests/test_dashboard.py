@@ -1110,6 +1110,28 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertFalse(result["import_compare"]["writes_files"])
         self.assertNotIn(temp, str(result))
 
+    def test_dashboard_backup_import_impact_returns_operator_summary(self) -> None:
+        original_backup_dir = dashboard.commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                dashboard.commander.os.environ["COMMANDER_BACKUP_DIR"] = temp
+                dashboard.commander.save_commander_backup()
+                result, status = dashboard.dashboard_backup_action({"action": "import-impact"})
+            finally:
+                if original_backup_dir is None:
+                    dashboard.commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    dashboard.commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertIn("Backup import impact", result["text"])
+        self.assertIn("Live config files changed: none", result["text"])
+        self.assertIn("import_impact", result)
+        self.assertIn("import_impact", result["backups"])
+        self.assertFalse(result["import_impact"]["writes_live_config"])
+        self.assertNotIn(temp, str(result))
+
     def test_dashboard_backup_import_apply_gate_prepares_approval_without_writes(self) -> None:
         original_prepare = dashboard.commander.prepare_backup_import_apply_gate
         original_gate = dashboard.commander.backup_import_apply_gate_payload

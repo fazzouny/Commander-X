@@ -247,6 +247,7 @@ function renderBackups(data) {
   const importPreview = backups.import_preview || {};
   const importArtifacts = backups.import_artifacts || [];
   const importCompare = backups.import_compare || {};
+  const importImpact = backups.import_impact || {};
   const importApplyGate = backups.import_apply_gate || {};
   const checkSummary = restoreCheck.status_label
     ? `\n\nRestore check: ${restoreCheck.status_label}\nBackup: ${restoreCheck.backup || "none"}\nProjects: ${restoreCheck.projects || 0}\nWeb shortcuts: ${
@@ -261,6 +262,7 @@ function renderBackups(data) {
     : "";
   const artifactSummary = importArtifacts.length ? `\nSaved import drafts: ${importArtifacts.length}` : "";
   const compareSummary = importCompare.status_label ? `\nImport compare: ${importCompare.status_label}` : "";
+  const impactSummary = importImpact.status_label ? `\nImport impact: ${importImpact.status_label}` : "";
   const gateSummary = importApplyGate.status_label
     ? `\nApply gate: ${importApplyGate.status_label}\nWrites live config: ${importApplyGate.writes_live_config ? "yes" : "no"}`
     : "";
@@ -287,6 +289,7 @@ function renderBackups(data) {
       importSummary +
       artifactSummary +
       compareSummary +
+      impactSummary +
       gateSummary +
       (guidance.length ? `\n\nRestore guidance:\n- ${guidance.map((item) => String(item || "")).join("\n- ")}` : "");
   }
@@ -1613,6 +1616,7 @@ qs("#save-import-backup").addEventListener("click", () => runBackup("import-save
 qs("#list-import-backups").addEventListener("click", () => runBackup("import-list"));
 qs("#open-import-backup").addEventListener("click", () => runBackup("import-open"));
 qs("#compare-import-backup").addEventListener("click", () => runBackup("import-compare"));
+qs("#impact-import-backup").addEventListener("click", () => runBackup("import-impact"));
 qs("#prepare-import-apply").addEventListener("click", () => runBackup("import-apply-gate"));
 qs("#save-backup").addEventListener("click", () => runBackup("save"));
 qs("#list-backups").addEventListener("click", () => runBackup("list"));
