@@ -1797,6 +1797,32 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn(str(commander.BASE_DIR), text)
         self.assertNotIn("C:\\Users", text)
 
+    def test_public_diagnostics_hide_paths_and_can_save_bundle(self) -> None:
+        original_report_dir = commander.os.environ.get("COMMANDER_REPORT_DIR")
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                commander.os.environ["COMMANDER_REPORT_DIR"] = temp
+                text = commander.command_diagnostics([])
+                saved = commander.command_diagnostics(["save"])
+                files = list(Path(temp).glob("commander-x-public-diagnostics-*.md"))
+            finally:
+                if original_report_dir is None:
+                    commander.os.environ.pop("COMMANDER_REPORT_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_REPORT_DIR"] = original_report_dir
+
+        self.assertIn("Commander X public diagnostics", text)
+        self.assertIn("Secrets and local paths shown: no", text)
+        self.assertIn("Excluded:", text)
+        self.assertIn("Saved public-safe diagnostics bundle", saved)
+        self.assertEqual(len(files), 1)
+        self.assertNotIn(str(commander.BASE_DIR), text + saved)
+        self.assertNotIn(temp, text + saved)
+        self.assertNotIn("Program Files", text + saved)
+        self.assertNotIn("Git\\cmd", text + saved)
+        self.assertNotIn("TELEGRAM_BOT_TOKEN", text + saved)
+        self.assertNotIn("sk-", text + saved)
+
     def test_backup_restore_check_validates_latest_backup_without_paths(self) -> None:
         original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")
         with tempfile.TemporaryDirectory() as temp:

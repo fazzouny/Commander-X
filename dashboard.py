@@ -1846,6 +1846,23 @@ def dashboard_report_action(payload: dict[str, Any]) -> tuple[dict[str, Any], in
     return response, 200
 
 
+def dashboard_diagnostics_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    save = bool(payload.get("save"))
+    diagnostics = commander.public_diagnostics_payload(user_id="dashboard")
+    text = commander.format_public_diagnostics(diagnostics)
+    response: dict[str, Any] = {"ok": True, "text": text, "saved": False, "diagnostics": diagnostics}
+    if save:
+        path = commander.save_public_diagnostics(text)
+        response.update(
+            {
+                "saved": True,
+                "diagnostics_id": path.stem.removeprefix("commander-x-public-diagnostics-"),
+                "text": "Saved public-safe diagnostics bundle.\n\n" + text,
+            }
+        )
+    return response, 200
+
+
 def dashboard_backups_payload(limit: int = 8) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for path in commander.saved_commander_backups(limit=limit):
@@ -2184,6 +2201,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/report":
             result, status = dashboard_report_action(payload)
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/diagnostics":
+            result, status = dashboard_diagnostics_action(payload)
             self.send_json(result, status=status)
             return
         if parsed.path == "/api/backup":

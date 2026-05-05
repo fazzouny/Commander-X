@@ -115,6 +115,7 @@ NL_ALLOWED_COMMANDS = {
     "/status",
     "/service",
     "/doctor",
+    "/diagnostics",
     "/inbox",
     "/approvals",
     "/changes",
@@ -183,6 +184,7 @@ TELEGRAM_COMMANDS = [
     ("status", "Show active Codex sessions"),
     ("service", "Show Commander service health"),
     ("doctor", "Run Commander health check"),
+    ("diagnostics", "Export public-safe diagnostics"),
     ("inbox", "Show decision inbox"),
     ("approvals", "List pending approvals"),
     ("changes", "Show changed projects"),
@@ -248,7 +250,8 @@ TELEGRAM_COMMANDS = [
 ]
 DEFAULT_BUTTON_ROWS = [
     [("Status", "cmd:/status"), ("Projects", "cmd:/projects")],
-    [("Service", "cmd:/service"), ("Doctor", "cmd:/doctor"), ("Setup", "cmd:/setup")],
+    [("Service", "cmd:/service"), ("Doctor", "cmd:/doctor"), ("Diagnostics", "cmd:/diagnostics")],
+    [("Setup", "cmd:/setup")],
     [("Mode", "cmd:/mode"), ("Free Mode", "cmd:/free")],
     [("Mission", "cmd:/mission"), ("Briefs", "cmd:/briefs"), ("Feed", "cmd:/feed")],
     [("Playback", "cmd:/playback"), ("Evidence", "cmd:/evidence"), ("Replay", "cmd:/replay")],
@@ -4393,6 +4396,193 @@ def command_doctor(user_id: str | None = None) -> str:
     lines.append("")
     lines.append("No secrets were printed.")
     return compact("\n".join(lines), limit=3600)
+
+
+def public_diagnostic_detail(value: Any, limit: int = 220) -> str:
+    raw = redact(str(value or "-"))
+    raw = re.sub(r"[A-Za-z]:\\[^\r\n]+", "[local path]", raw)
+    clean = sanitize_service_line(raw)
+    clean = re.sub(r"\[local path\](?:\s+[A-Za-z0-9_.() -]+\\[^\s,;]*)+", "[local path]", clean)
+    clean = re.sub(r"\bPID\s+\d+\b", "running", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\b\d+\s+allowed user ID\(s\)", "allowlist configured", clean)
+    return compact(clean, limit=limit)
+
+
+def public_service_state() -> dict[str, Any]:
+    try:
+        process_rows = computer_process_lines(["commander.py --poll", "dashboard.py"], timeout=6)
+    except Exception:
+        process_rows = []
+    poller = service_process_state(process_rows, "commander.py --poll")
+    dashboard_state = service_process_state(process_rows, "dashboard.py")
+
+    def state(value: str) -> str:
+        return "running" if str(value).startswith("running") else "not running"
+
+    poller_error = service_log_line(LOG_DIR / "commander-service.err.log", ["Traceback", "Error", "Exception", "failed", "ConnectionReset"])
+    dashboard_error = service_log_line(LOG_DIR / "dashboard.err.log", ["Traceback", "Error", "Exception", "failed"])
+    return {
+        "poller": state(poller),
+        "dashboard": state(dashboard_state),
+        "poller_error": "none" if poller_error in {"empty", "missing"} else public_diagnostic_detail(poller_error),
+        "dashboard_error": "none" if dashboard_error in {"empty", "missing"} else public_diagnostic_detail(dashboard_error),
+    }
+
+
+def public_diagnostics_payload(user_id: str | None = None) -> dict[str, Any]:
+    checks = doctor_checks(user_id=user_id)
+    setup_items = setup_status_items()
+    timeline = commander_config_timeline_payload()
+    backup_check = backup_restore_check_payload()
+    try:
+        commit = git_run(BASE_DIR, "rev-parse", "--short", "HEAD", timeout=12).stdout.strip()
+    except Exception:
+        commit = ""
+    sessions = sessions_data().get("sessions", {})
+    return {
+        "kind": "commander-x-public-diagnostics",
+        "generated_at": utc_now(),
+        "version": commit or "unknown",
+        "writes_files": False,
+        "exposes_secrets": False,
+        "exposes_local_paths": False,
+        "service": public_service_state(),
+        "doctor": {
+            "score": doctor_score(checks),
+            "checks": [
+                {
+                    "label": safe_backup_text(check.get("label")),
+                    "status": safe_backup_text(check.get("status")),
+                    "detail": public_diagnostic_detail(check.get("detail")),
+                }
+                for check in checks
+            ],
+        },
+        "setup": [
+            {
+                "title": safe_backup_text(item.get("title")),
+                "state": safe_backup_text(item.get("state")),
+                "configured": int(item.get("configured") or 0),
+                "total": int(item.get("total") or 0),
+                "missing_keys": [safe_backup_text(key) for key in (item.get("missing_keys") or [])[:8]],
+            }
+            for item in setup_items
+        ],
+        "config_timeline": timeline,
+        "backup_check": {
+            "status": backup_check.get("status"),
+            "status_label": backup_check.get("status_label"),
+            "projects": backup_check.get("projects"),
+            "web_shortcuts": backup_check.get("web_shortcuts"),
+        },
+        "counts": {
+            "registered_projects": len(projects_config().get("projects", {})),
+            "sessions": len(sessions) if isinstance(sessions, dict) else 0,
+            "tasks": len(tasks_data().get("tasks", [])),
+            "memories": len(memory_data().get("memories", [])),
+        },
+        "excluded": [
+            "Secrets, tokens, .env values, and credential files.",
+            "Telegram user IDs and allowlist contents.",
+            "Full local paths, raw logs, screenshots, voice files, and Codex command output.",
+            "Project source code and Git diffs.",
+        ],
+    }
+
+
+def format_public_diagnostics(payload: dict[str, Any] | None = None) -> str:
+    payload = payload or public_diagnostics_payload()
+    service = payload.get("service") if isinstance(payload.get("service"), dict) else {}
+    doctor = payload.get("doctor") if isinstance(payload.get("doctor"), dict) else {}
+    backup = payload.get("backup_check") if isinstance(payload.get("backup_check"), dict) else {}
+    timeline = payload.get("config_timeline") if isinstance(payload.get("config_timeline"), dict) else {}
+    counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
+    lines = [
+        "Commander X public diagnostics",
+        f"Generated: {safe_backup_text(payload.get('generated_at'))}",
+        f"Version: {safe_backup_text(payload.get('version'))}",
+        "Live files changed: none",
+        "Secrets and local paths shown: no",
+        "",
+        "Service:",
+        f"- Telegram control: {safe_backup_text(service.get('poller') or 'unknown')}",
+        f"- Dashboard: {safe_backup_text(service.get('dashboard') or 'unknown')}",
+        f"- Telegram errors: {public_diagnostic_detail(service.get('poller_error') or 'none')}",
+        f"- Dashboard errors: {public_diagnostic_detail(service.get('dashboard_error') or 'none')}",
+        "",
+        f"Doctor score: {int(doctor.get('score') or 0)}/100",
+    ]
+    for check in (doctor.get("checks") if isinstance(doctor.get("checks"), list) else [])[:12]:
+        if not isinstance(check, dict):
+            continue
+        lines.append(f"- {safe_backup_text(check.get('status')).upper()}: {safe_backup_text(check.get('label'))} - {public_diagnostic_detail(check.get('detail'))}")
+    lines.extend(
+        [
+            "",
+            "Setup readiness:",
+        ]
+    )
+    for item in (payload.get("setup") if isinstance(payload.get("setup"), list) else [])[:10]:
+        if not isinstance(item, dict):
+            continue
+        missing = item.get("missing_keys") if isinstance(item.get("missing_keys"), list) else []
+        missing_text = ", ".join(str(key) for key in missing[:6]) if missing else "none"
+        lines.append(
+            f"- {safe_backup_text(item.get('state')).upper()}: {safe_backup_text(item.get('title'))} "
+            f"({int(item.get('configured') or 0)}/{int(item.get('total') or 0)} configured; missing: {missing_text})"
+        )
+    lines.extend(
+        [
+            "",
+            "Safe config timeline:",
+            f"- {safe_backup_text(timeline.get('summary') if isinstance(timeline, dict) else '-')}",
+            f"- Backup check: {safe_backup_text(backup.get('status_label') or backup.get('status') or 'unknown')}",
+            "",
+            "Counts:",
+            f"- Registered projects: {int(counts.get('registered_projects') or 0)}",
+            f"- Sessions: {int(counts.get('sessions') or 0)}",
+            f"- Tasks: {int(counts.get('tasks') or 0)}",
+            f"- Memories: {int(counts.get('memories') or 0)}",
+            "",
+            "Excluded:",
+        ]
+    )
+    for item in payload.get("excluded") or []:
+        lines.append(f"- {public_diagnostic_detail(item)}")
+    return compact("\n".join(lines), limit=5200)
+
+
+def save_public_diagnostics(markdown: str | None = None) -> Path:
+    directory = report_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    path = directory / f"commander-x-public-diagnostics-{stamp}.md"
+    path.write_text(redact(markdown or format_public_diagnostics(public_diagnostics_payload())).strip() + "\n", encoding="utf-8")
+    return path
+
+
+def command_diagnostics(args: list[str] | None = None, user_id: str | None = None) -> str:
+    args = args or []
+    save_requested = any(arg.lower() in {"save", "export", "write", "archive"} for arg in args)
+    payload = public_diagnostics_payload(user_id=user_id)
+    text = format_public_diagnostics(payload)
+    if not save_requested:
+        return text
+    path = save_public_diagnostics(text)
+    diagnostic_id = path.stem.removeprefix("commander-x-public-diagnostics-")
+    return compact(
+        "\n".join(
+            [
+                "Saved public-safe diagnostics bundle.",
+                f"Diagnostics ID: {diagnostic_id}",
+                "Live files changed: none outside ignored reports.",
+                "Secrets and local paths shown: no.",
+                "",
+                text,
+            ]
+        ),
+        limit=5200,
+    )
 
 
 def sanitize_service_line(line: str) -> str:
@@ -8811,6 +9001,7 @@ def command_help() -> str:
 /status
 /service
 /doctor
+/diagnostics [save]
 /inbox
 /approvals
 /changes [project]
@@ -9459,6 +9650,11 @@ def natural_computer_command(text: str) -> str | None:
         return "/skills"
     if re.search(r"\b(plugins?)\b", lowered) and re.search(r"\b(show|list|what|available|have)\b", lowered):
         return "/plugins"
+    if re.search(r"\b(public[- ]?safe|bug report|github issue|support bundle|diagnostics bundle)\b", lowered) and re.search(
+        r"\b(diagnostic|diagnostics|export|save|bundle|report)\b",
+        lowered,
+    ):
+        return "/diagnostics save" if re.search(r"\b(save|export|bundle|file|archive)\b", lowered) else "/diagnostics"
     if re.search(r"\b(doctor|health check|diagnose|diagnostic|self[- ]?test)\b", lowered):
         return "/doctor"
     if re.search(r"\b(service|daemon|poller|dashboard)\b", lowered) and re.search(r"\b(status|health|running|check|alive|up)\b", lowered):
@@ -9641,6 +9837,7 @@ Allowed commands:
 /status
 /service
 /doctor
+/diagnostics [save]
 /inbox
 /approvals
 /changes [project]
@@ -9731,6 +9928,7 @@ Rules:
 - If the user specifically asks for skills, map to /skills.
 - If the user specifically asks for plugins, map to /plugins.
 - If the user asks whether Commander, the poller, service, daemon, or dashboard is running, map to /service.
+- If the user asks for a public-safe diagnostics bundle, bug-report bundle, or support diagnostics export, map to /diagnostics save.
 - If the user asks for a health check, doctor, diagnostic, or self-test, map to /doctor.
 - If the user asks what needs their attention, decisions, inbox, or pending items, map to /inbox.
 - If the user asks for approvals, pending approvals, approve list, or decisions to approve/cancel, map to /approvals.
@@ -9892,6 +10090,8 @@ def handle_text(
         return [command_service()]
     if command == "/doctor":
         return [command_doctor(user_id=user_id)]
+    if command == "/diagnostics":
+        return [command_diagnostics(args, user_id=user_id)]
     if command == "/inbox":
         return [command_inbox(user_id=user_id)]
     if command == "/approvals":

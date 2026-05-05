@@ -1381,6 +1381,24 @@ async function generateReport(save = false) {
   }
 }
 
+async function generateDiagnostics(save = false) {
+  const output = qs("#report-output");
+  const status = qs("#report-status");
+  status.textContent = save ? "Saving diagnostics..." : "Diagnostics...";
+  output.textContent = save ? "Saving public-safe diagnostics bundle..." : "Generating public-safe diagnostics bundle...";
+  try {
+    const result = await api("/api/diagnostics", {
+      method: "POST",
+      body: JSON.stringify({ save }),
+    });
+    output.textContent = result.text || result.error || JSON.stringify(result, null, 2);
+    status.textContent = result.saved ? `Diagnostics ${result.diagnostics_id || ""}`.trim() : "Diagnostics preview";
+  } catch (error) {
+    output.textContent = error.message || String(error);
+    status.textContent = "Failed";
+  }
+}
+
 async function copyReport() {
   const text = qs("#report-output").textContent || "";
   if (!text.trim()) {
@@ -1680,6 +1698,8 @@ qs("#openclaw-start").addEventListener("click", openClawStart);
 qs("#image-test-button").addEventListener("click", analyzeDashboardImage);
 qs("#preview-report").addEventListener("click", () => generateReport(false));
 qs("#save-report").addEventListener("click", () => generateReport(true));
+qs("#preview-diagnostics").addEventListener("click", () => generateDiagnostics(false));
+qs("#save-diagnostics").addEventListener("click", () => generateDiagnostics(true));
 qs("#copy-report").addEventListener("click", copyReport);
 qs("#preview-backup").addEventListener("click", () => runBackup("preview"));
 qs("#timeline-backup").addEventListener("click", () => runBackup("timeline"));

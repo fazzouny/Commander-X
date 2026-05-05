@@ -932,6 +932,32 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertNotIn("C:\\Users", result["text"])
         self.assertNotIn("secret.py", result["text"])
 
+    def test_dashboard_diagnostics_action_builds_public_safe_bundle(self) -> None:
+        original_report_dir = dashboard.commander.os.environ.get("COMMANDER_REPORT_DIR")
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                dashboard.commander.os.environ["COMMANDER_REPORT_DIR"] = temp
+                preview, preview_status = dashboard.dashboard_diagnostics_action({"save": False})
+                saved, saved_status = dashboard.dashboard_diagnostics_action({"save": True})
+                files = list(Path(temp).glob("commander-x-public-diagnostics-*.md"))
+            finally:
+                if original_report_dir is None:
+                    dashboard.commander.os.environ.pop("COMMANDER_REPORT_DIR", None)
+                else:
+                    dashboard.commander.os.environ["COMMANDER_REPORT_DIR"] = original_report_dir
+
+        self.assertEqual(preview_status, 200)
+        self.assertEqual(saved_status, 200)
+        self.assertTrue(preview["ok"])
+        self.assertTrue(saved["saved"])
+        self.assertIn("Commander X public diagnostics", preview["text"])
+        self.assertIn("diagnostics", preview)
+        self.assertFalse(preview["diagnostics"]["writes_files"])
+        self.assertFalse(preview["diagnostics"]["exposes_secrets"])
+        self.assertEqual(len(files), 1)
+        self.assertNotIn(temp, preview["text"] + saved["text"])
+        self.assertNotIn(str(dashboard.commander.BASE_DIR), preview["text"] + saved["text"])
+
     def test_dashboard_backup_action_saves_and_lists_without_paths(self) -> None:
         original_backup_dir = dashboard.commander.os.environ.get("COMMANDER_BACKUP_DIR")
         with tempfile.TemporaryDirectory() as temp:

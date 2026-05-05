@@ -108,6 +108,8 @@ Remove it later with:
 /status
 /service
 /doctor
+/diagnostics
+/diagnostics save
 /inbox
 /approvals
 /changes
@@ -216,6 +218,8 @@ What keys are missing?
 What do I need to configure?
 Show system status.
 Run Commander doctor.
+Export public-safe diagnostics.
+Save a diagnostics bundle for a GitHub issue.
 What needs my attention?
 Show pending approvals.
 What changed across projects?
@@ -516,6 +520,8 @@ http://127.0.0.1:8787
 The dashboard shows an Action Center, plain-English work feed, registered projects, sessions, approvals, task queue, memory count, Git evidence, safe backups, logs, capabilities, OpenClaw status, and profiles. It binds to localhost by default. If you expose it through Tailscale, Cloudflare Tunnel, or another remote path, set `COMMANDER_DASHBOARD_TOKEN` in `.env`.
 
 When a dashboard token is configured, paste it into the local dashboard token field once. The browser stores it locally and sends it as `X-Commander-Token` for dashboard actions.
+
+The Operator Report card can also preview or save a public-safe diagnostics bundle. This bundle is designed for bug reports and GitHub issues: it includes service status, doctor checks, setup readiness, safe config timeline, backup-check status, and counts, while excluding secrets, `.env` values, Telegram user IDs, full local paths, logs, screenshots, voice files, Codex output, source code, and diffs.
 
 The Service Health card translates the Telegram poller, dashboard process, and recent service signals into owner-readable status. Temporary Telegram connection issues show as watch items, while stopped services or error logs show as attention items without exposing raw process command lines. When a service needs attention, the protected Restart Commander button schedules the existing local service restart script; it is not a raw shell entrypoint. Restart dry-runs, scheduled restarts, rejected restart actions, restart-script failures, and cooldown-blocked duplicate restarts are recorded in the approval audit trail and surfaced as recent recovery actions on the Service Health card. Tune duplicate-restart protection with `COMMANDER_SERVICE_RESTART_COOLDOWN_SECONDS`.
 
