@@ -1381,18 +1381,24 @@ async function generateReport(save = false) {
   }
 }
 
-async function generateDiagnostics(save = false) {
+async function generateDiagnostics(save = false, issue = false) {
   const output = qs("#report-output");
   const status = qs("#report-status");
-  status.textContent = save ? "Saving diagnostics..." : "Diagnostics...";
-  output.textContent = save ? "Saving public-safe diagnostics bundle..." : "Generating public-safe diagnostics bundle...";
+  status.textContent = issue ? (save ? "Saving issue..." : "Issue preview...") : (save ? "Saving diagnostics..." : "Diagnostics...");
+  output.textContent = issue
+    ? (save ? "Saving GitHub-ready diagnostics issue..." : "Generating GitHub-ready diagnostics issue...")
+    : (save ? "Saving public-safe diagnostics bundle..." : "Generating public-safe diagnostics bundle...");
   try {
     const result = await api("/api/diagnostics", {
       method: "POST",
-      body: JSON.stringify({ save }),
+      body: JSON.stringify({ save, issue }),
     });
     output.textContent = result.text || result.error || JSON.stringify(result, null, 2);
-    status.textContent = result.saved ? `Diagnostics ${result.diagnostics_id || ""}`.trim() : "Diagnostics preview";
+    if (issue) {
+      status.textContent = result.saved ? `Issue ${result.diagnostics_id || ""}`.trim() : "Issue preview";
+    } else {
+      status.textContent = result.saved ? `Diagnostics ${result.diagnostics_id || ""}`.trim() : "Diagnostics preview";
+    }
   } catch (error) {
     output.textContent = error.message || String(error);
     status.textContent = "Failed";
@@ -1700,6 +1706,8 @@ qs("#preview-report").addEventListener("click", () => generateReport(false));
 qs("#save-report").addEventListener("click", () => generateReport(true));
 qs("#preview-diagnostics").addEventListener("click", () => generateDiagnostics(false));
 qs("#save-diagnostics").addEventListener("click", () => generateDiagnostics(true));
+qs("#preview-issue").addEventListener("click", () => generateDiagnostics(false, true));
+qs("#save-issue").addEventListener("click", () => generateDiagnostics(true, true));
 qs("#copy-report").addEventListener("click", copyReport);
 qs("#preview-backup").addEventListener("click", () => runBackup("preview"));
 qs("#timeline-backup").addEventListener("click", () => runBackup("timeline"));

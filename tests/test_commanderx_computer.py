@@ -1804,7 +1804,10 @@ class BrowserAndClickUpTests(unittest.TestCase):
                 commander.os.environ["COMMANDER_REPORT_DIR"] = temp
                 text = commander.command_diagnostics([])
                 saved = commander.command_diagnostics(["save"])
+                issue = commander.command_diagnostics(["issue"])
+                saved_issue = commander.command_diagnostics(["issue", "save"])
                 files = list(Path(temp).glob("commander-x-public-diagnostics-*.md"))
+                issue_files = list(Path(temp).glob("commander-x-github-issue-*.md"))
             finally:
                 if original_report_dir is None:
                     commander.os.environ.pop("COMMANDER_REPORT_DIR", None)
@@ -1815,13 +1818,17 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("Secrets and local paths shown: no", text)
         self.assertIn("Excluded:", text)
         self.assertIn("Saved public-safe diagnostics bundle", saved)
+        self.assertIn("Commander X Support Diagnostics", issue)
+        self.assertIn("Saved GitHub-ready diagnostics issue", saved_issue)
         self.assertEqual(len(files), 1)
-        self.assertNotIn(str(commander.BASE_DIR), text + saved)
-        self.assertNotIn(temp, text + saved)
-        self.assertNotIn("Program Files", text + saved)
-        self.assertNotIn("Git\\cmd", text + saved)
-        self.assertNotIn("TELEGRAM_BOT_TOKEN", text + saved)
-        self.assertNotIn("sk-", text + saved)
+        self.assertEqual(len(issue_files), 1)
+        all_text = text + saved + issue + saved_issue
+        self.assertNotIn(str(commander.BASE_DIR), all_text)
+        self.assertNotIn(temp, all_text)
+        self.assertNotIn("Program Files", all_text)
+        self.assertNotIn("Git\\cmd", all_text)
+        self.assertNotIn("TELEGRAM_BOT_TOKEN", all_text)
+        self.assertNotIn("sk-", all_text)
 
     def test_backup_restore_check_validates_latest_backup_without_paths(self) -> None:
         original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")

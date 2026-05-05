@@ -939,7 +939,10 @@ class DashboardCapabilityTests(unittest.TestCase):
                 dashboard.commander.os.environ["COMMANDER_REPORT_DIR"] = temp
                 preview, preview_status = dashboard.dashboard_diagnostics_action({"save": False})
                 saved, saved_status = dashboard.dashboard_diagnostics_action({"save": True})
+                issue_preview, issue_preview_status = dashboard.dashboard_diagnostics_action({"issue": True, "save": False})
+                issue_saved, issue_saved_status = dashboard.dashboard_diagnostics_action({"issue": True, "save": True})
                 files = list(Path(temp).glob("commander-x-public-diagnostics-*.md"))
+                issue_files = list(Path(temp).glob("commander-x-github-issue-*.md"))
             finally:
                 if original_report_dir is None:
                     dashboard.commander.os.environ.pop("COMMANDER_REPORT_DIR", None)
@@ -948,15 +951,23 @@ class DashboardCapabilityTests(unittest.TestCase):
 
         self.assertEqual(preview_status, 200)
         self.assertEqual(saved_status, 200)
+        self.assertEqual(issue_preview_status, 200)
+        self.assertEqual(issue_saved_status, 200)
         self.assertTrue(preview["ok"])
         self.assertTrue(saved["saved"])
+        self.assertEqual(issue_preview["kind"], "github_issue")
+        self.assertTrue(issue_saved["saved"])
         self.assertIn("Commander X public diagnostics", preview["text"])
+        self.assertIn("Commander X Support Diagnostics", issue_preview["text"])
+        self.assertIn("Saved GitHub-ready diagnostics issue", issue_saved["text"])
         self.assertIn("diagnostics", preview)
         self.assertFalse(preview["diagnostics"]["writes_files"])
         self.assertFalse(preview["diagnostics"]["exposes_secrets"])
         self.assertEqual(len(files), 1)
-        self.assertNotIn(temp, preview["text"] + saved["text"])
-        self.assertNotIn(str(dashboard.commander.BASE_DIR), preview["text"] + saved["text"])
+        self.assertEqual(len(issue_files), 1)
+        all_text = preview["text"] + saved["text"] + issue_preview["text"] + issue_saved["text"]
+        self.assertNotIn(temp, all_text)
+        self.assertNotIn(str(dashboard.commander.BASE_DIR), all_text)
 
     def test_dashboard_backup_action_saves_and_lists_without_paths(self) -> None:
         original_backup_dir = dashboard.commander.os.environ.get("COMMANDER_BACKUP_DIR")

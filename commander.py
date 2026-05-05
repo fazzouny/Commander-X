@@ -4552,6 +4552,45 @@ def format_public_diagnostics(payload: dict[str, Any] | None = None) -> str:
     return compact("\n".join(lines), limit=5200)
 
 
+def format_public_diagnostics_github_issue(payload: dict[str, Any] | None = None) -> str:
+    payload = payload or public_diagnostics_payload()
+    diagnostics = format_public_diagnostics(payload)
+    generated = safe_backup_text(payload.get("generated_at"))
+    version = safe_backup_text(payload.get("version"))
+    lines = [
+        "# Commander X Support Diagnostics",
+        "",
+        "## Problem",
+        "- What did you expect Commander X to do?",
+        "- What happened instead?",
+        "",
+        "## Steps to reproduce",
+        "1. Send or click:",
+        "2. Observe:",
+        "3. Expected:",
+        "",
+        "## Impact",
+        "- Blocks Telegram control: no",
+        "- Blocks dashboard use: no",
+        "- Blocks Codex session work: unknown",
+        "",
+        "## Public-safe diagnostics",
+        f"- Generated: {generated}",
+        f"- Version: {version}",
+        "- Secrets included: no",
+        "- Local paths included: no",
+        "- Raw logs included: no",
+        "",
+        "```text",
+        diagnostics,
+        "```",
+        "",
+        "## Safety note",
+        "This template is generated from Commander X public diagnostics. Review before posting, but it is designed to exclude secrets, full local paths, Telegram user IDs, raw logs, screenshots, voice files, Codex output, source code, and Git diffs.",
+    ]
+    return compact(redact("\n".join(lines)), limit=7600)
+
+
 def save_public_diagnostics(markdown: str | None = None) -> Path:
     directory = report_dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -4561,19 +4600,30 @@ def save_public_diagnostics(markdown: str | None = None) -> Path:
     return path
 
 
+def save_public_diagnostics_issue(markdown: str | None = None) -> Path:
+    directory = report_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    path = directory / f"commander-x-github-issue-{stamp}.md"
+    path.write_text(redact(markdown or format_public_diagnostics_github_issue(public_diagnostics_payload())).strip() + "\n", encoding="utf-8")
+    return path
+
+
 def command_diagnostics(args: list[str] | None = None, user_id: str | None = None) -> str:
     args = args or []
     save_requested = any(arg.lower() in {"save", "export", "write", "archive"} for arg in args)
+    issue_requested = any(arg.lower() in {"issue", "github", "github-issue", "bug", "bug-report", "template"} for arg in args)
     payload = public_diagnostics_payload(user_id=user_id)
-    text = format_public_diagnostics(payload)
+    text = format_public_diagnostics_github_issue(payload) if issue_requested else format_public_diagnostics(payload)
     if not save_requested:
         return text
-    path = save_public_diagnostics(text)
-    diagnostic_id = path.stem.removeprefix("commander-x-public-diagnostics-")
+    path = save_public_diagnostics_issue(text) if issue_requested else save_public_diagnostics(text)
+    diagnostic_id = path.stem.removeprefix("commander-x-github-issue-" if issue_requested else "commander-x-public-diagnostics-")
+    label = "GitHub-ready diagnostics issue" if issue_requested else "public-safe diagnostics bundle"
     return compact(
         "\n".join(
             [
-                "Saved public-safe diagnostics bundle.",
+                f"Saved {label}.",
                 f"Diagnostics ID: {diagnostic_id}",
                 "Live files changed: none outside ignored reports.",
                 "Secrets and local paths shown: no.",
@@ -9001,7 +9051,7 @@ def command_help() -> str:
 /status
 /service
 /doctor
-/diagnostics [save]
+/diagnostics [save|issue|issue save]
 /inbox
 /approvals
 /changes [project]
@@ -9650,7 +9700,12 @@ def natural_computer_command(text: str) -> str | None:
         return "/skills"
     if re.search(r"\b(plugins?)\b", lowered) and re.search(r"\b(show|list|what|available|have)\b", lowered):
         return "/plugins"
-    if re.search(r"\b(public[- ]?safe|bug report|github issue|support bundle|diagnostics bundle)\b", lowered) and re.search(
+    if re.search(r"\b(github issue|bug report|issue template|support issue)\b", lowered) and re.search(
+        r"\b(diagnostic|diagnostics|export|save|bundle|report|template|issue)\b",
+        lowered,
+    ):
+        return "/diagnostics issue save" if re.search(r"\b(save|export|bundle|file|archive)\b", lowered) else "/diagnostics issue"
+    if re.search(r"\b(public[- ]?safe|support bundle|diagnostics bundle)\b", lowered) and re.search(
         r"\b(diagnostic|diagnostics|export|save|bundle|report)\b",
         lowered,
     ):
@@ -9928,7 +9983,8 @@ Rules:
 - If the user specifically asks for skills, map to /skills.
 - If the user specifically asks for plugins, map to /plugins.
 - If the user asks whether Commander, the poller, service, daemon, or dashboard is running, map to /service.
-- If the user asks for a public-safe diagnostics bundle, bug-report bundle, or support diagnostics export, map to /diagnostics save.
+- If the user asks for a public-safe diagnostics bundle or support diagnostics export, map to /diagnostics save.
+- If the user asks for a GitHub issue, bug-report template, or support issue export, map to /diagnostics issue save.
 - If the user asks for a health check, doctor, diagnostic, or self-test, map to /doctor.
 - If the user asks what needs their attention, decisions, inbox, or pending items, map to /inbox.
 - If the user asks for approvals, pending approvals, approve list, or decisions to approve/cancel, map to /approvals.

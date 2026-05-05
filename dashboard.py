@@ -1848,16 +1848,23 @@ def dashboard_report_action(payload: dict[str, Any]) -> tuple[dict[str, Any], in
 
 def dashboard_diagnostics_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     save = bool(payload.get("save"))
+    issue = bool(payload.get("issue")) or str(payload.get("format") or "").lower() in {"github", "github_issue", "issue"}
     diagnostics = commander.public_diagnostics_payload(user_id="dashboard")
-    text = commander.format_public_diagnostics(diagnostics)
-    response: dict[str, Any] = {"ok": True, "text": text, "saved": False, "diagnostics": diagnostics}
+    text = commander.format_public_diagnostics_github_issue(diagnostics) if issue else commander.format_public_diagnostics(diagnostics)
+    response: dict[str, Any] = {
+        "ok": True,
+        "text": text,
+        "saved": False,
+        "kind": "github_issue" if issue else "diagnostics",
+        "diagnostics": diagnostics,
+    }
     if save:
-        path = commander.save_public_diagnostics(text)
+        path = commander.save_public_diagnostics_issue(text) if issue else commander.save_public_diagnostics(text)
         response.update(
             {
                 "saved": True,
-                "diagnostics_id": path.stem.removeprefix("commander-x-public-diagnostics-"),
-                "text": "Saved public-safe diagnostics bundle.\n\n" + text,
+                "diagnostics_id": path.stem.removeprefix("commander-x-github-issue-" if issue else "commander-x-public-diagnostics-"),
+                "text": ("Saved GitHub-ready diagnostics issue.\n\n" if issue else "Saved public-safe diagnostics bundle.\n\n") + text,
             }
         )
     return response, 200
