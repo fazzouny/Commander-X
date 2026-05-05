@@ -5496,6 +5496,30 @@ def format_backup_restore_import_preview(preview: dict[str, Any]) -> str:
     return compact("\n".join(lines), limit=3900)
 
 
+def save_backup_import_preview(preview: dict[str, Any] | None = None) -> Path:
+    payload = preview or backup_restore_import_preview_payload(include_drafts=True)
+    directory = report_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    path = directory / f"commander-x-backup-import-preview-{stamp}.md"
+    markdown = format_backup_restore_import_preview(payload)
+    path.write_text(redact(markdown) + "\n", encoding="utf-8")
+    return path
+
+
+def format_saved_backup_import_preview(path: Path, preview: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "Saved backup import review artifact.",
+            f"Preview ID: {path.stem.removeprefix('commander-x-backup-import-preview-')}",
+            f"File: {path.name}",
+            "Files changed: none in live Commander config.",
+            f"Status: {compact(str(preview.get('status_label') or preview.get('status') or 'unknown'), limit=140)}",
+            "Open the dashboard Safe Backups card or run /backup import to regenerate the live preview.",
+        ]
+    )
+
+
 def command_backup(args: list[str]) -> str:
     action = args[0].lower() if args else "save"
     if action in {"preview", "status", "show"}:
@@ -5507,8 +5531,15 @@ def command_backup(args: list[str]) -> str:
         name = args[1] if len(args) > 1 else None
         return format_backup_restore_plan(backup_restore_plan_payload(name))
     if action in {"import", "draft", "wizard", "config-preview", "import-preview"}:
-        name = args[1] if len(args) > 1 else None
-        return format_backup_restore_import_preview(backup_restore_import_preview_payload(name, include_drafts=True))
+        import_args = args[1:]
+        save_requested = any(arg.lower() in {"save", "export", "archive", "write"} for arg in import_args)
+        name_args = [arg for arg in import_args if arg.lower() not in {"save", "export", "archive", "write"}]
+        name = name_args[0] if name_args else None
+        preview = backup_restore_import_preview_payload(name, include_drafts=True)
+        if save_requested:
+            path = save_backup_import_preview(preview)
+            return format_saved_backup_import_preview(path, preview)
+        return format_backup_restore_import_preview(preview)
     if action in {"list", "history"}:
         backups = saved_commander_backups()
         if not backups:

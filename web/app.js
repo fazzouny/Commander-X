@@ -1598,6 +1598,7 @@ qs("#preview-backup").addEventListener("click", () => runBackup("preview"));
 qs("#check-backup").addEventListener("click", () => runBackup("check"));
 qs("#plan-backup").addEventListener("click", () => runBackup("plan"));
 qs("#import-backup").addEventListener("click", () => runBackup("import"));
+qs("#save-import-backup").addEventListener("click", () => runBackup("import-save"));
 qs("#save-backup").addEventListener("click", () => runBackup("save"));
 qs("#list-backups").addEventListener("click", () => runBackup("list"));
 qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);

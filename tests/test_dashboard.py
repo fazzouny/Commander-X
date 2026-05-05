@@ -1027,6 +1027,35 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertFalse(result["import_preview"]["writes_files"])
         self.assertNotIn(temp, str(result))
 
+    def test_dashboard_backup_save_import_writes_review_artifact_only(self) -> None:
+        original_backup_dir = dashboard.commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        original_report_dir = dashboard.commander.os.environ.get("COMMANDER_REPORT_DIR")
+        with tempfile.TemporaryDirectory() as backup_temp, tempfile.TemporaryDirectory() as report_temp:
+            try:
+                dashboard.commander.os.environ["COMMANDER_BACKUP_DIR"] = backup_temp
+                dashboard.commander.os.environ["COMMANDER_REPORT_DIR"] = report_temp
+                dashboard.commander.save_commander_backup()
+                result, status = dashboard.dashboard_backup_action({"action": "import-save"})
+                paths = list(Path(report_temp).glob("commander-x-backup-import-preview-*.md"))
+            finally:
+                if original_backup_dir is None:
+                    dashboard.commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    dashboard.commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+                if original_report_dir is None:
+                    dashboard.commander.os.environ.pop("COMMANDER_REPORT_DIR", None)
+                else:
+                    dashboard.commander.os.environ["COMMANDER_REPORT_DIR"] = original_report_dir
+
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["saved"])
+        self.assertEqual(len(paths), 1)
+        self.assertIn("Saved backup import review artifact", result["text"])
+        self.assertIn("Files changed: none", result["text"])
+        self.assertNotIn(backup_temp, str(result))
+        self.assertNotIn(report_temp, str(result))
+
     def test_dashboard_image_analyze_rejects_non_image_payload(self) -> None:
         result, status = dashboard.dashboard_image_analyze_action({"data_url": "data:text/plain;base64,aGVsbG8="})
 

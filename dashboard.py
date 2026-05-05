@@ -1901,6 +1901,24 @@ def dashboard_backup_action(payload: dict[str, Any]) -> tuple[dict[str, Any], in
             "import_preview": preview,
             "backups": dashboard_backups_payload(),
         }, 200
+    if action in {"import-save", "save-import", "draft-save", "save-draft"}:
+        preview = commander.backup_restore_import_preview_payload(include_drafts=True)
+        if preview.get("status") != "ready":
+            return {
+                "ok": False,
+                "saved": False,
+                "text": commander.format_backup_restore_import_preview(preview),
+                "import_preview": preview,
+                "backups": dashboard_backups_payload(),
+            }, 200
+        path = commander.save_backup_import_preview(preview)
+        return {
+            "ok": True,
+            "saved": True,
+            "text": commander.format_saved_backup_import_preview(path, preview),
+            "import_preview": preview,
+            "backups": dashboard_backups_payload(),
+        }, 200
     if action in {"save", "export", "write", "create"}:
         text = commander.command_backup(["save"])
         return {"ok": True, "saved": True, "text": text, "backups": dashboard_backups_payload()}, 200
