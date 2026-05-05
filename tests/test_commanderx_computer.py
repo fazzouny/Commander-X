@@ -2037,6 +2037,92 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn(temp, text)
         self.assertNotIn("C:\\Users", text)
 
+    def test_backup_import_prepare_creates_review_only_approval(self) -> None:
+        original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        original_add = commander.add_pending_action
+        actions: list[tuple[str, dict[str, object]]] = []
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                commander.os.environ["COMMANDER_BACKUP_DIR"] = temp
+                commander.save_commander_backup()
+                commander.add_pending_action = lambda project_id, action: actions.append((project_id, action)) or "abc123"  # type: ignore[assignment]
+                text = commander.command_backup(["import", "prepare"])
+            finally:
+                if original_backup_dir is None:
+                    commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+                commander.add_pending_action = original_add  # type: ignore[assignment]
+
+        self.assertIn("Backup import apply gate prepared", text)
+        self.assertIn("Pending approval ID: abc123", text)
+        self.assertIn("What approval will not do", text)
+        self.assertEqual(actions[0][0], "commander")
+        self.assertEqual(actions[0][1]["type"], "backup_import_apply_review")
+        self.assertFalse(actions[0][1]["writes_live_config"])
+        self.assertNotIn(temp, text)
+
+    def test_backup_import_pending_response_gets_approval_buttons(self) -> None:
+        rows = commander.contextual_button_rows(
+            "Backup import apply gate prepared.\nPending approval ID: abc123\n\nApprove with /approve commander abc123"
+        )
+        labels = [button["text"] for row in rows for button in row]
+        callbacks = [button["callback_data"] for row in rows for button in row]
+        self.assertIn("Approve backup import gate", labels)
+        self.assertIn("Compare draft", labels)
+        self.assertIn("cmd:/approve commander abc123", callbacks)
+
+    def test_backup_import_apply_approval_saves_review_artifact_without_live_config(self) -> None:
+        original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        original_report_dir = commander.os.environ.get("COMMANDER_REPORT_DIR")
+        original_sessions_file = commander.SESSIONS_FILE
+        original_audit_file = commander.AUDIT_FILE
+        with tempfile.TemporaryDirectory() as backup_temp, tempfile.TemporaryDirectory() as report_temp, tempfile.TemporaryDirectory() as state_temp:
+            try:
+                commander.os.environ["COMMANDER_BACKUP_DIR"] = backup_temp
+                commander.os.environ["COMMANDER_REPORT_DIR"] = report_temp
+                commander.SESSIONS_FILE = Path(state_temp) / "sessions.json"
+                commander.AUDIT_FILE = Path(state_temp) / "audit_log.json"
+                backup_path = commander.save_commander_backup()
+                commander.write_json(
+                    commander.SESSIONS_FILE,
+                    {
+                        "sessions": {
+                            "commander": {
+                                "state": "idle",
+                                "pending_actions": {
+                                    "gate1": {
+                                        "type": "backup_import_apply_review",
+                                        "backup": backup_path.name,
+                                        "writes_live_config": False,
+                                    }
+                                },
+                            }
+                        }
+                    },
+                )
+                result = commander.execute_pending("commander", "gate1")
+                reports = list(Path(report_temp).glob("commander-x-backup-import-preview-*.md"))
+                sessions = commander.sessions_data()
+            finally:
+                if original_backup_dir is None:
+                    commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+                if original_report_dir is None:
+                    commander.os.environ.pop("COMMANDER_REPORT_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_REPORT_DIR"] = original_report_dir
+                commander.SESSIONS_FILE = original_sessions_file
+                commander.AUDIT_FILE = original_audit_file
+
+        self.assertIn("Backup import apply gate approved", result)
+        self.assertIn("Live Commander config files changed: none", result)
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(sessions["sessions"]["commander"]["pending_actions"], {})
+        self.assertNotIn(backup_temp, result)
+        self.assertNotIn(report_temp, result)
+
     def test_service_helpers_hide_paths_and_detect_processes(self) -> None:
         self.assertEqual(
             commander.service_process_state(["123 python.exe python commander.py --poll"], "commander.py --poll"),

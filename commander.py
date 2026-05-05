@@ -494,6 +494,13 @@ def response_pending_hint(text: str) -> tuple[str, str, str] | None:
     )
     if match:
         return f"openclaw {match.group(1).lower()}", "commander", match.group(2)
+    match = re.search(
+        r"^Backup import apply gate prepared\b.*?Pending approval ID:\s*([A-Za-z0-9]+)",
+        stripped,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        return "backup import gate", "commander", match.group(1)
     return None
 
 
@@ -511,6 +518,8 @@ def contextual_button_rows(text: str, user_id: str | None = None) -> list[list[d
         if project_id == "commander":
             if "openclaw" in action_type:
                 rows.append([telegram_button("OpenClaw status", "/openclaw"), telegram_button("Recovery", "/openclaw recover")])
+            elif "backup import" in action_type:
+                rows.append([telegram_button("Compare draft", "/backup import compare"), telegram_button("Backup check", "/backup check")])
             else:
                 rows.append([telegram_button("MCP status", "/mcp"), telegram_button("MCP help", "/mcp help")])
         else:
@@ -728,6 +737,8 @@ def audit_event_summary(action: dict[str, Any]) -> str:
         return f"OpenClaw clone prepared: {audit_clean(action.get('full_name') or action.get('repo_url') or '-')}"
     if action_type == "openclaw_start":
         return "OpenClaw start prepared"
+    if action_type == "backup_import_apply_review":
+        return f"Backup import apply gate prepared: {audit_clean(action.get('backup') or '-')}"
     return audit_clean(action.get("message") or action_type)
 
 
@@ -5754,6 +5765,114 @@ def format_backup_import_compare(compare: dict[str, Any]) -> str:
     return compact("\n".join(lines), limit=3600)
 
 
+def backup_import_apply_gate_payload(name: str | None = None) -> dict[str, Any]:
+    preview = backup_restore_import_preview_payload(name, include_drafts=False)
+    compare = backup_import_compare_payload(name)
+    status = "ready" if preview.get("status") == "ready" and compare.get("status") in {"match", "attention"} else "blocked"
+    status_label = "Approval gate ready" if status == "ready" else "Blocked until backup import preview is clean"
+    target_files = []
+    for item in preview.get("draft_files") or []:
+        if not isinstance(item, dict):
+            continue
+        target_files.append(
+            {
+                "file": compact(str(item.get("file") or "-"), limit=80),
+                "records": int(item.get("records") or 0),
+                "mode": "approval review only",
+            }
+        )
+    manual_files = []
+    for item in preview.get("manual_files") or []:
+        if not isinstance(item, dict):
+            continue
+        manual_files.append(
+            {
+                "file": compact(str(item.get("file") or "-"), limit=80),
+                "reason": compact(str(item.get("reason") or "-"), limit=220),
+            }
+        )
+    return {
+        "status": status,
+        "status_label": status_label,
+        "backup": preview.get("backup") or compare.get("backup") or "",
+        "writes_files": False,
+        "writes_live_config": False,
+        "preview": preview,
+        "compare": compare,
+        "target_files": target_files,
+        "manual_files": manual_files,
+        "approval_effect": "Approving records review approval and saves a review artifact only. It never writes live Commander config.",
+    }
+
+
+def format_backup_import_apply_gate(gate: dict[str, Any]) -> str:
+    lines = [
+        "Backup import apply gate",
+        f"Status: {compact(str(gate.get('status_label') or gate.get('status') or 'unknown'), limit=160)}",
+        "Live config files changed: none",
+        "Approval behavior: review record only",
+    ]
+    if gate.get("backup"):
+        lines.append(f"Backup: {compact(str(gate.get('backup')), limit=120)}")
+    if gate.get("status") != "ready":
+        lines.extend(["", "Gate is blocked until /backup import and /backup import compare are clean."])
+        return "\n".join(lines)
+    compare = gate.get("compare") if isinstance(gate.get("compare"), dict) else {}
+    lines.extend(
+        [
+            f"Comparison: {compact(str(compare.get('status_label') or compare.get('status') or 'unknown'), limit=120)}",
+            "",
+            "Would review these config areas:",
+        ]
+    )
+    for item in gate.get("target_files") or []:
+        if not isinstance(item, dict):
+            continue
+        lines.append(f"- {compact(str(item.get('file') or '-'), limit=80)}: {int(item.get('records') or 0)} draft record(s), {compact(str(item.get('mode') or '-'), limit=80)}")
+    lines.extend(["", "Manual-only files:"])
+    for item in gate.get("manual_files") or []:
+        if not isinstance(item, dict):
+            continue
+        lines.append(f"- {compact(str(item.get('file') or '-'), limit=80)}: {compact(str(item.get('reason') or '-'), limit=220)}")
+    lines.extend(
+        [
+            "",
+            "This gate intentionally does not apply config. It creates an approval checkpoint before any future importer exists.",
+        ]
+    )
+    return compact("\n".join(lines), limit=3600)
+
+
+def prepare_backup_import_apply_gate(name: str | None = None) -> str:
+    gate = backup_import_apply_gate_payload(name)
+    if gate.get("status") != "ready":
+        return format_backup_import_apply_gate(gate)
+    backup_name = str(gate.get("backup") or "")
+    target_files = [str(item.get("file") or "-") for item in gate.get("target_files") or [] if isinstance(item, dict)]
+    pending_id = add_pending_action(
+        "commander",
+        {
+            "type": "backup_import_apply_review",
+            "backup": backup_name,
+            "target_files": target_files,
+            "writes_live_config": False,
+            "message": "Review-only backup import apply gate. Approval does not write live Commander config.",
+            "compare_status": (gate.get("compare") or {}).get("status") if isinstance(gate.get("compare"), dict) else "unknown",
+        },
+    )
+    return (
+        "Backup import apply gate prepared.\n"
+        f"Backup: {compact(backup_name, limit=120)}\n"
+        f"Pending approval ID: {pending_id}\n\n"
+        "What approval will do: record that the import draft was reviewed and save a review artifact.\n"
+        "What approval will not do: write projects.json, project_profiles.json, computer_tools.json, .env, or allowlist.json.\n\n"
+        + format_backup_import_apply_gate(gate)
+        + "\n\n"
+        f"Approve with /approve commander {pending_id}\n"
+        f"Cancel with /cancel commander {pending_id}"
+    )
+
+
 def command_backup(args: list[str]) -> str:
     action = args[0].lower() if args else "save"
     if action in {"preview", "status", "show"}:
@@ -5771,6 +5890,9 @@ def command_backup(args: list[str]) -> str:
         if import_args and import_args[0].lower() in {"open", "show", "view"}:
             identifier = import_args[1] if len(import_args) > 1 else None
             return format_saved_backup_import_preview_text(saved_backup_import_preview_text(identifier))
+        if import_args and import_args[0].lower() in {"prepare", "gate", "apply", "apply-gate", "prepare-apply", "approval", "approve-gate"}:
+            name = import_args[1] if len(import_args) > 1 else None
+            return prepare_backup_import_apply_gate(name)
         if import_args and import_args[0].lower() in {"compare", "diff", "status"}:
             name = import_args[1] if len(import_args) > 1 else None
             return format_backup_import_compare(backup_import_compare_payload(name))
@@ -5790,6 +5912,9 @@ def command_backup(args: list[str]) -> str:
     if action in {"compare", "diff", "import-compare"}:
         name = args[1] if len(args) > 1 else None
         return format_backup_import_compare(backup_import_compare_payload(name))
+    if action in {"apply-gate", "prepare-apply", "import-apply", "import-gate"}:
+        name = args[1] if len(args) > 1 else None
+        return prepare_backup_import_apply_gate(name)
     if action in {"list", "history"}:
         backups = saved_commander_backups()
         if not backups:
@@ -7978,6 +8103,21 @@ def execute_pending(project_id: str, pending_id: str | None) -> str:
         ok_start, result = execute_openclaw_start(action)
         if not ok_start:
             return result
+    elif action_type == "backup_import_apply_review":
+        backup_name = str(action.get("backup") or "").strip() or None
+        gate = backup_import_apply_gate_payload(backup_name)
+        if gate.get("status") != "ready":
+            return "Backup import approval blocked because the gate is no longer ready.\n" + format_backup_import_apply_gate(gate)
+        preview = backup_restore_import_preview_payload(backup_name, include_drafts=True)
+        path = save_backup_import_preview(preview)
+        result = "\n".join(
+            [
+                "Backup import apply gate approved.",
+                "Live Commander config files changed: none.",
+                f"Saved review artifact: {path.name}",
+                "Next safe step: use the saved draft as a human-reviewed reference, or build a separate importer with another approval gate.",
+            ]
+        )
     else:
         return f"Unsupported pending action type: {action_type}"
 

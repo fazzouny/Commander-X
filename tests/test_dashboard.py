@@ -1110,6 +1110,24 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertFalse(result["import_compare"]["writes_files"])
         self.assertNotIn(temp, str(result))
 
+    def test_dashboard_backup_import_apply_gate_prepares_approval_without_writes(self) -> None:
+        original_prepare = dashboard.commander.prepare_backup_import_apply_gate
+        original_gate = dashboard.commander.backup_import_apply_gate_payload
+        try:
+            dashboard.commander.prepare_backup_import_apply_gate = lambda: "Backup import apply gate prepared.\nPending approval ID: abc123"  # type: ignore[assignment]
+            dashboard.commander.backup_import_apply_gate_payload = lambda: {"status": "ready", "writes_live_config": False}  # type: ignore[assignment]
+            result, status = dashboard.dashboard_backup_action({"action": "import-apply-gate"})
+        finally:
+            dashboard.commander.prepare_backup_import_apply_gate = original_prepare  # type: ignore[assignment]
+            dashboard.commander.backup_import_apply_gate_payload = original_gate  # type: ignore[assignment]
+
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertIn("Backup import apply gate prepared", result["text"])
+        self.assertIn("import_apply_gate", result)
+        self.assertIn("import_apply_gate", result["backups"])
+        self.assertFalse(result["import_apply_gate"]["writes_live_config"])
+
     def test_dashboard_image_analyze_rejects_non_image_payload(self) -> None:
         result, status = dashboard.dashboard_image_analyze_action({"data_url": "data:text/plain;base64,aGVsbG8="})
 
