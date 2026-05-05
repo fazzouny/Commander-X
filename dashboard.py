@@ -146,6 +146,7 @@ def fallback_dashboard_payload(message: str) -> dict[str, Any]:
             "plugins": commander.plugin_catalog(limit=12),
             "clickup_configured": commander.clickup_settings_from_env().configured,
         },
+        "backups": dashboard_backups_payload(),
         "capabilities": capabilities_payload("checking"),
         "openclaw": {
             "state": "checking",
@@ -1684,6 +1685,7 @@ def build_dashboard_payload() -> dict[str, Any]:
             "plugins": commander.plugin_catalog(limit=24),
             "clickup_configured": commander.clickup_settings_from_env().configured,
         },
+        "backups": dashboard_backups_payload(),
         "capabilities": capabilities_payload(str(openclaw.get("state") or "")),
         "openclaw": openclaw,
         "env": commander.env_readiness(),
@@ -1842,6 +1844,43 @@ def dashboard_report_action(payload: dict[str, Any]) -> tuple[dict[str, Any], in
             }
         )
     return response, 200
+
+
+def dashboard_backups_payload(limit: int = 8) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for path in commander.saved_commander_backups(limit=limit):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        items.append(
+            {
+                "name": path.name,
+                "size": commander.human_report_size(stat.st_size),
+                "saved_at": dt.datetime.fromtimestamp(stat.st_mtime, dt.timezone.utc).isoformat(),
+            }
+        )
+    return {
+        "summary": commander.format_backup_summary(commander.commander_backup_payload()),
+        "items": items,
+        "restore_guidance": [
+            "Backups are safe reference snapshots, not automatic restore scripts.",
+            "Use them to rebuild projects.json, project_profiles.json, and computer_tools.json manually.",
+            "Secrets and .env values are intentionally excluded and must be re-entered from your password manager.",
+        ],
+    }
+
+
+def dashboard_backup_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    action = str(payload.get("action") or "save").strip().lower()
+    if action in {"preview", "status", "show"}:
+        return {"ok": True, "saved": False, "text": commander.command_backup(["preview"]), "backups": dashboard_backups_payload()}, 200
+    if action in {"list", "history"}:
+        return {"ok": True, "saved": False, "text": commander.command_backup(["list"]), "backups": dashboard_backups_payload()}, 200
+    if action in {"save", "export", "write", "create"}:
+        text = commander.command_backup(["save"])
+        return {"ok": True, "saved": True, "text": text, "backups": dashboard_backups_payload()}, 200
+    return {"ok": False, "error": "Unknown backup action."}, 400
 
 
 def dashboard_project_read_action(project_id: str, action: str) -> tuple[dict[str, Any], int]:
@@ -2043,6 +2082,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/report":
             result, status = dashboard_report_action(payload)
+            self.send_json(result, status=status)
+            return
+        if parsed.path == "/api/backup":
+            result, status = dashboard_backup_action(payload)
+            invalidate_dashboard_cache()
             self.send_json(result, status=status)
             return
         if parsed.path == "/api/approval/approve":

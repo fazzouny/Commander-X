@@ -932,6 +932,40 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertNotIn("C:\\Users", result["text"])
         self.assertNotIn("secret.py", result["text"])
 
+    def test_dashboard_backup_action_saves_and_lists_without_paths(self) -> None:
+        original_backup_dir = dashboard.commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                dashboard.commander.os.environ["COMMANDER_BACKUP_DIR"] = temp
+                saved, saved_status = dashboard.dashboard_backup_action({"action": "save"})
+                listed, listed_status = dashboard.dashboard_backup_action({"action": "list"})
+                payload = dashboard.dashboard_backups_payload()
+            finally:
+                if original_backup_dir is None:
+                    dashboard.commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    dashboard.commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+
+        self.assertEqual(saved_status, 200)
+        self.assertTrue(saved["ok"])
+        self.assertTrue(saved["saved"])
+        self.assertIn("Saved Commander safe config backup", saved["text"])
+        self.assertNotIn(temp, saved["text"])
+        self.assertEqual(listed_status, 200)
+        self.assertTrue(listed["ok"])
+        self.assertEqual(len(payload["items"]), 1)
+        self.assertIn("commander-x-safe-config-", payload["items"][0]["name"])
+        self.assertNotIn(temp, str(payload))
+
+    def test_dashboard_backup_preview_includes_restore_guidance(self) -> None:
+        result, status = dashboard.dashboard_backup_action({"action": "preview"})
+
+        self.assertEqual(status, 200)
+        self.assertFalse(result["saved"])
+        self.assertIn("Commander safe config backup", result["text"])
+        self.assertIn("restore_guidance", result["backups"])
+        self.assertNotIn("TELEGRAM_BOT_TOKEN", str(result))
+
     def test_dashboard_image_analyze_rejects_non_image_payload(self) -> None:
         result, status = dashboard.dashboard_image_analyze_action({"data_url": "data:text/plain;base64,aGVsbG8="})
 

@@ -55,6 +55,21 @@
 
       <section class="panel">
         <div class="panel-head">
+          <h2>Safe Backups</h2>
+          <span id="backup-count"></span>
+        </div>
+        <p class="panel-summary">Sanitized Commander snapshots only. Secrets, Telegram user IDs, local paths, logs, and command output stay out.</p>
+        <div class="report-actions">
+          <button id="preview-backup">Preview Backup</button>
+          <button id="save-backup">Save Backup</button>
+          <button id="list-backups">Refresh List</button>
+        </div>
+        <div id="backups" class="backup-list"></div>
+        <pre id="backup-output"></pre>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
           <h2>Owner Review Packs</h2>
           <span id="owner-review-count"></span>
         </div>

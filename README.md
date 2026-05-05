@@ -513,7 +513,7 @@ Open:
 http://127.0.0.1:8787
 ```
 
-The dashboard shows an Action Center, plain-English work feed, registered projects, sessions, approvals, task queue, memory count, Git evidence, logs, capabilities, OpenClaw status, and profiles. It binds to localhost by default. If you expose it through Tailscale, Cloudflare Tunnel, or another remote path, set `COMMANDER_DASHBOARD_TOKEN` in `.env`.
+The dashboard shows an Action Center, plain-English work feed, registered projects, sessions, approvals, task queue, memory count, Git evidence, safe backups, logs, capabilities, OpenClaw status, and profiles. It binds to localhost by default. If you expose it through Tailscale, Cloudflare Tunnel, or another remote path, set `COMMANDER_DASHBOARD_TOKEN` in `.env`.
 
 When a dashboard token is configured, paste it into the local dashboard token field once. The browser stores it locally and sends it as `X-Commander-Token` for dashboard actions.
 
@@ -530,6 +530,8 @@ Service Health warnings also appear in the Action Center with the same protected
 The Project Completion card is an owner scorecard for non-technical review. It uses the same completion engine as `/done`, then translates that evidence into owner status, confidence, success-criteria progress, proof count, changed areas to review, attention items, and the safest next action. It uses friendly project names, sorts actionable projects ahead of unconfigured ones, and includes Review Pack plus protected Save Pack buttons for the plain-English owner review. Saved owner review cards can reopen the latest saved pack directly from the dashboard without showing local paths or report filenames. Commander still must not call a project final unless the objective is set, all criteria have proof, verification exists, no blockers or approvals are pending, and local changes are settled.
 
 The Capabilities card gives a quick operator-readable snapshot of what Commander can currently do and exposes copyable command chips for common checks.
+
+The Safe Backups card previews and saves the same sanitized config snapshots as `/backup`. It shows backup names and sizes only, plus restore guidance; backup contents and local paths are not exposed in the dashboard.
 
 The Work Feed card is the closest dashboard view to the Codex app experience. It shows each active project in plain English: task, current step, direction, human-readable work areas, blocker, last activity, and the next useful command. It intentionally hides filenames unless you explicitly open `/diff`.
 

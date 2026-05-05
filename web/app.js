@@ -238,6 +238,32 @@ function renderOwnerReviews(data) {
       .join("") || `<p>No saved owner review packs yet. Use /review &lt;project&gt; save after a milestone is ready.</p>`;
 }
 
+function renderBackups(data) {
+  const backups = data.backups || {};
+  const items = backups.items || [];
+  const guidance = backups.restore_guidance || [];
+  qs("#backup-count").textContent = `${items.length} saved`;
+  qs("#backups").innerHTML =
+    items
+      .map(
+        (item) => `
+          <div class="row">
+            <div class="row-main">
+              <div class="row-title">${escapeHtml(item.name || "-")}</div>
+              <div class="row-meta">${escapeHtml(item.size || "-")} - ${escapeHtml(item.saved_at || "-")}</div>
+            </div>
+            <div>${pill("safe", "good")}</div>
+          </div>
+        `,
+      )
+      .join("") || `<p>No safe backups saved yet.</p>`;
+  if (!qs("#backup-output").textContent.trim()) {
+    qs("#backup-output").textContent =
+      (backups.summary || "No backup summary yet.") +
+      (guidance.length ? `\n\nRestore guidance:\n- ${guidance.map((item) => String(item || "")).join("\n- ")}` : "");
+  }
+}
+
 function renderAutopilot(data) {
   const items = data.autopilot || [];
   qs("#autopilot-count").textContent = `${items.length} configured`;
@@ -1141,6 +1167,7 @@ async function refresh() {
   renderServiceHealth(data);
   renderActionCenter(data);
   renderOwnerReviews(data);
+  renderBackups(data);
   renderAutopilot(data);
   renderAuditTrail(data);
   renderConversation(data);
@@ -1261,6 +1288,25 @@ async function copyReport() {
     qs("#report-status").textContent = "Copied";
   } catch {
     qs("#report-status").textContent = "Copy failed";
+  }
+}
+
+async function runBackup(action = "save") {
+  const output = qs("#backup-output");
+  const status = qs("#backup-count");
+  status.textContent = action === "save" ? "Saving..." : "Loading...";
+  output.textContent = action === "save" ? "Saving sanitized backup..." : "Loading safe backup information...";
+  try {
+    const result = await api("/api/backup", {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    });
+    output.textContent = result.text || result.error || JSON.stringify(result, null, 2);
+    if (result.backups) state.dashboard.backups = result.backups;
+    await refresh();
+  } catch (error) {
+    output.textContent = error.message || String(error);
+    status.textContent = "Failed";
   }
 }
 
@@ -1531,6 +1577,9 @@ qs("#image-test-button").addEventListener("click", analyzeDashboardImage);
 qs("#preview-report").addEventListener("click", () => generateReport(false));
 qs("#save-report").addEventListener("click", () => generateReport(true));
 qs("#copy-report").addEventListener("click", copyReport);
+qs("#preview-backup").addEventListener("click", () => runBackup("preview"));
+qs("#save-backup").addEventListener("click", () => runBackup("save"));
+qs("#list-backups").addEventListener("click", () => runBackup("list"));
 qs("#save-dashboard-token").addEventListener("click", saveDashboardToken);
 qs("#clear-dashboard-token").addEventListener("click", clearDashboardToken);
 qs("#approvals").addEventListener("click", handleApprovalClick);
