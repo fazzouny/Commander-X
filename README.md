@@ -356,7 +356,7 @@ Commander X intentionally does not expose a raw `/run` shell over Telegram. Devi
 /shortcut
 /shortcut add <name> <https-url>
 /shortcut delete <name>
-/backup [preview|list]
+/backup [preview|list|check]
 /open app <allowlisted_app>
 /file <project> <relative_path> [lines]
 /volume up|down|max|mute [steps]
@@ -371,7 +371,7 @@ Default allowlisted apps are `notepad`, `calculator`, `paint`, and `explorer`. T
 
 File reads stay inside registered project folders and block secret-like files such as `.env`, private keys, and credential files.
 
-`/backup` writes a sanitized Commander configuration snapshot under `backups/`. It excludes `.env` values, tokens, Telegram user IDs, full local paths, logs, and command output. Use `/backup preview` to inspect the summary first and `/backup list` to see saved snapshots.
+`/backup` writes a sanitized Commander configuration snapshot under `backups/`. It excludes `.env` values, tokens, Telegram user IDs, full local paths, logs, and command output. Use `/backup preview` to inspect the summary first, `/backup list` to see saved snapshots, and `/backup check` to validate the latest snapshot before using it as a manual restore reference.
 
 Device and readiness checks:
 
@@ -531,7 +531,7 @@ The Project Completion card is an owner scorecard for non-technical review. It u
 
 The Capabilities card gives a quick operator-readable snapshot of what Commander can currently do and exposes copyable command chips for common checks.
 
-The Safe Backups card previews and saves the same sanitized config snapshots as `/backup`. It shows backup names and sizes only, plus restore guidance; backup contents and local paths are not exposed in the dashboard.
+The Safe Backups card previews and saves the same sanitized config snapshots as `/backup`. It shows backup names and sizes only, plus restore guidance; backup contents and local paths are not exposed in the dashboard. Use `/backup check` or the dashboard Check Restore button to validate the latest backup before using it as a manual rebuild reference.
 
 The Work Feed card is the closest dashboard view to the Codex app experience. It shows each active project in plain English: task, current step, direction, human-readable work areas, blocker, last activity, and the next useful command. It intentionally hides filenames unless you explicitly open `/diff`.
 

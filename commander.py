@@ -235,7 +235,7 @@ TELEGRAM_COMMANDS = [
     ("cancel", "Cancel a pending action"),
     ("audit", "Show approval audit history"),
     ("report", "Show operator report"),
-    ("backup", "Save sanitized config backup"),
+    ("backup", "Save or check sanitized config backup"),
     ("heartbeat", "Manage automatic status updates"),
     ("remember", "Save a Commander memory"),
     ("memory", "Show saved Commander memories"),
@@ -4987,6 +4987,134 @@ def saved_commander_backups(limit: int = 8) -> list[Path]:
         return []
 
 
+def backup_restore_guidance() -> list[str]:
+    return [
+        "Backups are safe reference snapshots, not automatic restore scripts.",
+        "Use them to rebuild projects.json, project_profiles.json, and computer_tools.json manually.",
+        "Secrets and .env values are intentionally excluded and must be re-entered from your password manager.",
+    ]
+
+
+def selected_commander_backup(name: str | None = None) -> Path | None:
+    backups = saved_commander_backups(limit=50)
+    if not backups:
+        return None
+    if not name:
+        return backups[0]
+    safe_name = Path(str(name).strip()).name
+    if not safe_name or safe_name != str(name).strip():
+        return None
+    for path in backups:
+        if path.name == safe_name:
+            return path
+    return None
+
+
+def backup_restore_check_payload(name: str | None = None) -> dict[str, Any]:
+    checks: list[dict[str, str]] = []
+
+    def add(label: str, status: str, detail: str) -> None:
+        checks.append({"label": label, "status": status, "detail": compact(str(detail or "-"), limit=260)})
+
+    path = selected_commander_backup(name)
+    if not path:
+        add("Backup file", "bad", "No safe backup was found. Create one with /backup.")
+        return {
+            "status": "missing",
+            "status_label": "No backup found",
+            "backup": "",
+            "projects": 0,
+            "web_shortcuts": 0,
+            "checks": checks,
+            "restore_guidance": backup_restore_guidance(),
+        }
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        add("Backup file", "bad", "Backup exists but could not be read.")
+        return {
+            "status": "attention",
+            "status_label": "Needs attention",
+            "backup": path.name,
+            "projects": 0,
+            "web_shortcuts": 0,
+            "checks": checks,
+            "restore_guidance": backup_restore_guidance(),
+        }
+
+    add("Backup file", "good", f"Found {path.name}.")
+    leaks: list[str] = []
+    openai_key_pattern = r"\b" + "s" + r"k-[A-Za-z0-9_-]{20,}\b"
+    leak_patterns = {
+        "OpenAI key": openai_key_pattern,
+        "Telegram bot token": r"\b\d{8,12}:[A-Za-z0-9_-]{25,}\b",
+        "secret assignment": r"(?i)\b(api[_-]?key|token|secret|password|private[_-]?key|access[_-]?token|refresh[_-]?token)\b\s*[=:]\s*(?!\[REDACTED\])[A-Za-z0-9_./:+-]{6,}",
+        "URL credential": r"(?i)[?&](token|api[_-]?key|secret|password)=",
+        "local path": r"(?i)([A-Z]:\\\\(?:Users|AI-Company|Windows|Program Files)|[A-Z]:\\(?:Users|AI-Company|Windows|Program Files)|/home/[^\\s\"']+|/Users/[^\\s\"']+)",
+    }
+    for label, pattern in leak_patterns.items():
+        if re.search(pattern, text):
+            leaks.append(label)
+    if leaks:
+        add("Privacy scan", "bad", "Possible sensitive content found: " + ", ".join(leaks) + ". Do not restore this backup until reviewed.")
+    else:
+        add("Privacy scan", "good", "No tokens, obvious local paths, or credential-looking values were found.")
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        add("JSON format", "bad", "Backup is not valid JSON.")
+        return {
+            "status": "attention",
+            "status_label": "Needs attention",
+            "backup": path.name,
+            "projects": 0,
+            "web_shortcuts": 0,
+            "checks": checks,
+            "restore_guidance": backup_restore_guidance(),
+        }
+
+    if payload.get("kind") == "commander-x-safe-config-backup":
+        add("Backup type", "good", "Backup type is Commander X safe config.")
+    else:
+        add("Backup type", "bad", "Backup type is missing or not recognized.")
+
+    if payload.get("schema_version") == 1:
+        add("Schema version", "good", "Schema version 1 is supported.")
+    else:
+        add("Schema version", "bad", "Schema version is missing or unsupported.")
+
+    required_sections = ("projects", "computer_tools", "setup", "state_summary")
+    missing_sections = [section for section in required_sections if not isinstance(payload.get(section), dict)]
+    if missing_sections:
+        add("Required sections", "bad", "Missing or invalid: " + ", ".join(missing_sections) + ".")
+    else:
+        add("Required sections", "good", "Projects, tools, setup, and state summary are present.")
+
+    projects = payload.get("projects") if isinstance(payload.get("projects"), dict) else {}
+    computer_tools = payload.get("computer_tools") if isinstance(payload.get("computer_tools"), dict) else {}
+    web_shortcuts = computer_tools.get("web_shortcuts") if isinstance(computer_tools.get("web_shortcuts"), dict) else {}
+    if projects:
+        add("Project registry", "good", f"{len(projects)} project reference(s) are available.")
+    else:
+        add("Project registry", "warn", "Backup has no projects to rebuild.")
+
+    has_bad = any(check["status"] == "bad" for check in checks)
+    has_warn = any(check["status"] == "warn" for check in checks)
+    status = "attention" if has_bad or has_warn else "ready"
+    status_label = "Ready for manual restore" if status == "ready" else "Needs attention"
+    return {
+        "status": status,
+        "status_label": status_label,
+        "backup": path.name,
+        "projects": len(projects),
+        "web_shortcuts": len(web_shortcuts),
+        "checks": checks,
+        "restore_guidance": backup_restore_guidance(),
+    }
+
+
 def format_backup_summary(payload: dict[str, Any]) -> str:
     projects = payload.get("projects") if isinstance(payload.get("projects"), dict) else {}
     shortcuts = ((payload.get("computer_tools") or {}).get("web_shortcuts") or {}) if isinstance(payload.get("computer_tools"), dict) else {}
@@ -5004,10 +5132,39 @@ def format_backup_summary(payload: dict[str, Any]) -> str:
     )
 
 
+def format_backup_restore_check(report: dict[str, Any]) -> str:
+    lines = [
+        "Backup restore check",
+        f"Status: {compact(str(report.get('status_label') or report.get('status') or 'unknown'), limit=120)}",
+    ]
+    if report.get("backup"):
+        lines.append(f"Backup: {compact(str(report.get('backup')), limit=120)}")
+    lines.extend(
+        [
+            f"Projects: {int(report.get('projects') or 0)}",
+            f"Web shortcuts: {int(report.get('web_shortcuts') or 0)}",
+            "",
+            "Checks:",
+        ]
+    )
+    for check in report.get("checks") or []:
+        if not isinstance(check, dict):
+            continue
+        lines.append(f"- {compact(str(check.get('label') or '-'), limit=80)}: {compact(str(check.get('status') or '-'), limit=40)} - {compact(str(check.get('detail') or '-'), limit=260)}")
+    lines.append("")
+    lines.append("Manual restore guidance:")
+    for item in report.get("restore_guidance") or backup_restore_guidance():
+        lines.append(f"- {compact(str(item or '-'), limit=260)}")
+    return "\n".join(lines)
+
+
 def command_backup(args: list[str]) -> str:
     action = args[0].lower() if args else "save"
     if action in {"preview", "status", "show"}:
         return format_backup_summary(commander_backup_payload())
+    if action in {"check", "verify", "validate", "restore-check"}:
+        name = args[1] if len(args) > 1 else None
+        return format_backup_restore_check(backup_restore_check_payload(name))
     if action in {"list", "history"}:
         backups = saved_commander_backups()
         if not backups:
@@ -5020,7 +5177,7 @@ def command_backup(args: list[str]) -> str:
         payload = commander_backup_payload()
         path = save_commander_backup(payload)
         return f"Saved Commander safe config backup: {path.name}\n\n" + format_backup_summary(payload)
-    return "Usage: /backup, /backup preview, or /backup list"
+    return "Usage: /backup, /backup preview, /backup list, or /backup check"
 
 
 def command_report(args: list[str], user_id: str) -> str:
@@ -7594,7 +7751,7 @@ def command_help() -> str:
 /cancel <project> [approval_id]
 /audit
 /report [save]
-/backup [preview|list]
+/backup [preview|list|check]
 /reviews [details]
 /heartbeat on [minutes]
 /heartbeat off
@@ -8411,7 +8568,7 @@ Allowed commands:
 /cancel <project> [approval_id]
 /audit
 /report [save]
-/backup [preview|list]
+/backup [preview|list|check]
 /reviews [details]
 /mission [project]
 /replay [project]

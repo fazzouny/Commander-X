@@ -1782,6 +1782,57 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertIn("commander-x-safe-config-backup", saved)
         self.assertNotIn("sk-", saved)
 
+    def test_backup_restore_check_validates_latest_backup_without_paths(self) -> None:
+        original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                commander.os.environ["COMMANDER_BACKUP_DIR"] = temp
+                commander.save_commander_backup()
+                report = commander.backup_restore_check_payload()
+                text = commander.format_backup_restore_check(report)
+            finally:
+                if original_backup_dir is None:
+                    commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+
+        self.assertEqual(report["status"], "ready")
+        self.assertIn("Ready for manual restore", text)
+        self.assertNotIn(temp, text)
+        self.assertNotIn("TELEGRAM_BOT_TOKEN", text)
+
+    def test_backup_restore_check_flags_leaky_backup(self) -> None:
+        original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                commander.os.environ["COMMANDER_BACKUP_DIR"] = temp
+                path = Path(temp) / "commander-x-safe-config-bad.json"
+                path.write_text(
+                    json.dumps(
+                        {
+                            "kind": "commander-x-safe-config-backup",
+                            "schema_version": 1,
+                            "projects": {"bad": {"path": "C:\\Users\\Name\\secret"}},
+                            "computer_tools": {"web_shortcuts": {}},
+                            "setup": {},
+                            "state_summary": {},
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                report = commander.backup_restore_check_payload(path.name)
+                text = commander.format_backup_restore_check(report)
+            finally:
+                if original_backup_dir is None:
+                    commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+
+        self.assertEqual(report["status"], "attention")
+        self.assertIn("Privacy scan", text)
+        self.assertIn("local path", text)
+        self.assertNotIn(temp, text)
+
     def test_service_helpers_hide_paths_and_detect_processes(self) -> None:
         self.assertEqual(
             commander.service_process_state(["123 python.exe python commander.py --poll"], "commander.py --poll"),

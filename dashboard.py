@@ -1863,11 +1863,8 @@ def dashboard_backups_payload(limit: int = 8) -> dict[str, Any]:
     return {
         "summary": commander.format_backup_summary(commander.commander_backup_payload()),
         "items": items,
-        "restore_guidance": [
-            "Backups are safe reference snapshots, not automatic restore scripts.",
-            "Use them to rebuild projects.json, project_profiles.json, and computer_tools.json manually.",
-            "Secrets and .env values are intentionally excluded and must be re-entered from your password manager.",
-        ],
+        "restore_check": commander.backup_restore_check_payload(),
+        "restore_guidance": commander.backup_restore_guidance(),
     }
 
 
@@ -1877,6 +1874,14 @@ def dashboard_backup_action(payload: dict[str, Any]) -> tuple[dict[str, Any], in
         return {"ok": True, "saved": False, "text": commander.command_backup(["preview"]), "backups": dashboard_backups_payload()}, 200
     if action in {"list", "history"}:
         return {"ok": True, "saved": False, "text": commander.command_backup(["list"]), "backups": dashboard_backups_payload()}, 200
+    if action in {"check", "verify", "validate", "restore-check"}:
+        report = commander.backup_restore_check_payload()
+        return {
+            "ok": report.get("status") == "ready",
+            "saved": False,
+            "text": commander.format_backup_restore_check(report),
+            "backups": dashboard_backups_payload(),
+        }, 200
     if action in {"save", "export", "write", "create"}:
         text = commander.command_backup(["save"])
         return {"ok": True, "saved": True, "text": text, "backups": dashboard_backups_payload()}, 200
