@@ -267,7 +267,43 @@ function renderBackups(data) {
     ? `\nApply gate: ${importApplyGate.status_label}\nWrites live config: ${importApplyGate.writes_live_config ? "yes" : "no"}`
     : "";
   qs("#backup-count").textContent = `${items.length} saved`;
-  qs("#backups").innerHTML =
+  const riskType = (risk) => (risk === "high" ? "bad" : risk === "medium" ? "warn" : risk === "low" ? "good" : "warn");
+  const riskSummary = importImpact.risk_summary || {};
+  const reviewCards = importImpact.review_cards || [];
+  const impactCardsHtml = reviewCards.length
+    ? `
+      <div class="backup-impact">
+        <div class="backup-impact-head">
+          <div>
+            <div class="row-title">Import Impact Review</div>
+            <div class="row-meta">${escapeHtml(importImpact.status_label || "Review differences before approval")}</div>
+          </div>
+          <div>${pill(`high ${riskSummary.high || 0} / medium ${riskSummary.medium || 0} / low ${riskSummary.low || 0}`, riskType(importImpact.primary_risk))}</div>
+        </div>
+        <div class="backup-impact-grid">
+          ${reviewCards
+            .slice(0, 6)
+            .map((card) => {
+              const examples = (card.examples || []).slice(0, 2).join("; ");
+              return `
+                <div class="impact-card">
+                  <div class="impact-card-head">
+                    <strong>${escapeHtml(card.area || "-")}</strong>
+                    ${pill(card.risk_label || card.risk || "review", riskType(card.risk))}
+                  </div>
+                  <p>${escapeHtml(card.meaning || "-")}</p>
+                  <div class="row-meta">${escapeHtml(card.difference || "-")}</div>
+                  ${examples ? `<div class="row-meta">${escapeHtml(examples)}</div>` : ""}
+                  <div class="impact-action">${escapeHtml(card.operator_action || "-")}</div>
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+      </div>
+    `
+    : "";
+  const backupRows =
     items
       .map(
         (item) => `
@@ -281,6 +317,7 @@ function renderBackups(data) {
         `,
       )
       .join("") || `<p>No safe backups saved yet.</p>`;
+  qs("#backups").innerHTML = impactCardsHtml + backupRows;
   if (!qs("#backup-output").textContent.trim()) {
     qs("#backup-output").textContent =
       (backups.summary || "No backup summary yet.") +

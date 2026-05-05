@@ -2082,10 +2082,15 @@ class BrowserAndClickUpTests(unittest.TestCase):
                 commander.safe_web_shortcuts_backup = original_shortcuts  # type: ignore[assignment]
 
         self.assertEqual(impact["status"], "review")
+        self.assertEqual(impact["primary_risk"], "high")
+        self.assertGreaterEqual(impact["risk_summary"]["high"], 1)
+        self.assertTrue(impact["review_cards"])
         self.assertIn("Backup import impact", text)
+        self.assertIn("Risk groups: high", text)
         self.assertIn("Plain-English meaning", text)
         self.assertIn("Projects Commander knows about", text)
         self.assertIn("Project goals and done criteria", text)
+        self.assertIn("Review before allowing device access", text)
         self.assertIn("backup-only: new-project", text)
         self.assertIn("Live config files changed: none", text)
         self.assertNotIn(temp, text)

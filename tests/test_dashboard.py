@@ -1130,6 +1130,8 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertIn("import_impact", result)
         self.assertIn("import_impact", result["backups"])
         self.assertFalse(result["import_impact"]["writes_live_config"])
+        self.assertIn("review_cards", result["import_impact"])
+        self.assertIn("risk_summary", result["import_impact"])
         self.assertNotIn(temp, str(result))
 
     def test_dashboard_backup_import_apply_gate_prepares_approval_without_writes(self) -> None:

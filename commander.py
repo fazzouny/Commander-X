@@ -5765,6 +5765,14 @@ def format_backup_import_compare(compare: dict[str, Any]) -> str:
     return compact("\n".join(lines), limit=3600)
 
 
+def backup_import_risk_for_label(label: str) -> tuple[str, str, str]:
+    if label in {"Safe roots", "App names"}:
+        return "high", "Review before allowing device access", "This area controls what Commander can touch on the local machine."
+    if label in {"Local project paths", "Web shortcuts"}:
+        return "medium", "Manual review recommended", "This area changes how Commander finds projects or opens websites."
+    return "low", "Context review", "This area restores Commander memory and project context, not code or secrets."
+
+
 def backup_import_impact_item(label: str, section: dict[str, Any]) -> dict[str, Any] | None:
     missing = int(section.get("missing_count") or 0)
     extra = int(section.get("extra_count") or 0)
@@ -5812,10 +5820,13 @@ def backup_import_impact_item(label: str, section: dict[str, Any]) -> dict[str, 
             "Review the difference before preparing an approval gate.",
         ),
     )
+    risk, risk_label, risk_reason = backup_import_risk_for_label(label)
     return {
         "area": area,
         "label": compact(label, limit=80),
-        "severity": "review",
+        "risk": risk,
+        "risk_label": risk_label,
+        "risk_reason": risk_reason,
         "missing_count": missing,
         "extra_count": extra,
         "missing_examples": missing_names,
@@ -5823,6 +5834,48 @@ def backup_import_impact_item(label: str, section: dict[str, Any]) -> dict[str, 
         "meaning": meaning,
         "operator_action": action,
     }
+
+
+def backup_import_review_cards(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    risk_order = {"high": 0, "medium": 1, "low": 2}
+    cards: list[dict[str, Any]] = []
+    for item in items:
+        risk = str(item.get("risk") or "low")
+        missing = int(item.get("missing_count") or 0)
+        extra = int(item.get("extra_count") or 0)
+        examples: list[str] = []
+        if item.get("missing_examples"):
+            examples.append("Backup-only: " + ", ".join(str(value) for value in item["missing_examples"][:4]))
+        if item.get("extra_examples"):
+            examples.append("Current-only: " + ", ".join(str(value) for value in item["extra_examples"][:4]))
+        cards.append(
+            {
+                "area": compact(str(item.get("area") or "-"), limit=120),
+                "risk": risk,
+                "risk_label": compact(str(item.get("risk_label") or "Review"), limit=120),
+                "risk_reason": compact(str(item.get("risk_reason") or "-"), limit=220),
+                "difference": compact(
+                    ", ".join(
+                        part
+                        for part in [
+                            f"{missing} backup-only" if missing else "",
+                            f"{extra} current-only" if extra else "",
+                        ]
+                        if part
+                    )
+                    or "No visible difference",
+                    limit=160,
+                ),
+                "examples": examples,
+                "meaning": compact(str(item.get("meaning") or "-"), limit=260),
+                "operator_action": compact(str(item.get("operator_action") or "-"), limit=240),
+                "sort": risk_order.get(risk, 9),
+            }
+        )
+    cards.sort(key=lambda card: (int(card.get("sort") or 9), str(card.get("area") or "")))
+    for card in cards:
+        card.pop("sort", None)
+    return cards
 
 
 def backup_import_impact_payload(name: str | None = None) -> dict[str, Any]:
@@ -5836,6 +5889,9 @@ def backup_import_impact_payload(name: str | None = None) -> dict[str, Any]:
         "exposes_paths": False,
         "compare": compare,
         "impact_items": [],
+        "review_cards": [],
+        "risk_summary": {"high": 0, "medium": 0, "low": 0},
+        "primary_risk": "none",
         "recommended_next_step": "Run /backup import prepare only after reviewing the impact.",
     }
     if compare.get("status") == "blocked":
@@ -5852,14 +5908,22 @@ def backup_import_impact_payload(name: str | None = None) -> dict[str, Any]:
             {
                 "status": "match",
                 "status_label": "No visible operator impact",
+                "primary_risk": "none",
                 "recommended_next_step": "No import action is needed unless you want to save another backup.",
             }
         )
-    elif any(item["label"] in {"Safe roots", "Local project paths", "App names"} for item in items):
-        result.update({"status": "review", "status_label": "Manual review recommended"})
     else:
-        result.update({"status": "review", "status_label": "Low-risk context differences found"})
+        counts = {"high": 0, "medium": 0, "low": 0}
+        for item in items:
+            risk = str(item.get("risk") or "low")
+            if risk not in counts:
+                risk = "low"
+            counts[risk] += 1
+        primary = "high" if counts["high"] else "medium" if counts["medium"] else "low"
+        label = "High-impact review recommended" if primary == "high" else "Manual review recommended" if primary == "medium" else "Low-risk context differences found"
+        result.update({"status": "review", "status_label": label, "risk_summary": counts, "primary_risk": primary})
     result["impact_items"] = items
+    result["review_cards"] = backup_import_review_cards(items)
     return result
 
 
@@ -5877,6 +5941,15 @@ def format_backup_import_impact(impact: dict[str, Any]) -> str:
         return "\n".join(lines)
 
     items = impact.get("impact_items") if isinstance(impact.get("impact_items"), list) else []
+    risk_summary = impact.get("risk_summary") if isinstance(impact.get("risk_summary"), dict) else {}
+    if items:
+        lines.append(
+            "Risk groups: "
+            + ", ".join(
+                f"{name} {int(risk_summary.get(name) or 0)}"
+                for name in ("high", "medium", "low")
+            )
+        )
     if not items:
         lines.extend(
             [
@@ -5893,9 +5966,10 @@ def format_backup_import_impact(impact: dict[str, Any]) -> str:
             area = compact(str(item.get("area") or "-"), limit=120)
             missing = int(item.get("missing_count") or 0)
             extra = int(item.get("extra_count") or 0)
+            risk_label = compact(str(item.get("risk_label") or "Review"), limit=120)
             meaning = compact(str(item.get("meaning") or "-"), limit=260)
             action = compact(str(item.get("operator_action") or "-"), limit=240)
-            lines.append(f"- {area}: {meaning}")
+            lines.append(f"- {area} ({risk_label}): {meaning}")
             counts = []
             if missing:
                 counts.append(f"{missing} from backup not in current setup")
