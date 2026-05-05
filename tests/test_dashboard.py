@@ -1088,6 +1088,28 @@ class DashboardCapabilityTests(unittest.TestCase):
         self.assertNotIn(backup_temp, str(listed) + str(opened))
         self.assertNotIn(report_temp, str(listed) + str(opened))
 
+    def test_dashboard_backup_import_compare_returns_read_only_summary(self) -> None:
+        original_backup_dir = dashboard.commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                dashboard.commander.os.environ["COMMANDER_BACKUP_DIR"] = temp
+                dashboard.commander.save_commander_backup()
+                result, status = dashboard.dashboard_backup_action({"action": "import-compare"})
+            finally:
+                if original_backup_dir is None:
+                    dashboard.commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    dashboard.commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertIn("Backup import comparison", result["text"])
+        self.assertIn("Files changed: none", result["text"])
+        self.assertIn("import_compare", result)
+        self.assertIn("import_compare", result["backups"])
+        self.assertFalse(result["import_compare"]["writes_files"])
+        self.assertNotIn(temp, str(result))
+
     def test_dashboard_image_analyze_rejects_non_image_payload(self) -> None:
         result, status = dashboard.dashboard_image_analyze_action({"data_url": "data:text/plain;base64,aGVsbG8="})
 

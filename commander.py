@@ -5615,6 +5615,145 @@ def format_saved_backup_import_preview_text(preview: dict[str, str] | None) -> s
     )
 
 
+def backup_payload_from_file(name: str | None = None) -> tuple[dict[str, Any] | None, str]:
+    path = selected_commander_backup(name)
+    if not path:
+        return None, ""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, path.name
+    return payload if isinstance(payload, dict) else None, path.name
+
+
+def compare_name_sets(current: set[str], draft: set[str], limit: int = 8) -> dict[str, Any]:
+    missing = sorted(draft - current)
+    extra = sorted(current - draft)
+    return {
+        "current": len(current),
+        "draft": len(draft),
+        "matched": len(current & draft),
+        "missing_from_current": [compact(item, limit=120) for item in missing[:limit]],
+        "extra_in_current": [compact(item, limit=120) for item in extra[:limit]],
+        "missing_count": len(missing),
+        "extra_count": len(extra),
+    }
+
+
+def backup_import_compare_payload(name: str | None = None) -> dict[str, Any]:
+    check = backup_restore_check_payload(name)
+    result: dict[str, Any] = {
+        "status": "blocked" if check.get("status") != "ready" else "ready",
+        "status_label": "Blocked until backup check is clean" if check.get("status") != "ready" else "Import draft comparison ready",
+        "backup": check.get("backup") or "",
+        "writes_files": False,
+        "restore_check": check,
+        "sections": [],
+    }
+    if check.get("status") != "ready":
+        return result
+    payload, backup_name = backup_payload_from_file(name)
+    if not payload:
+        result["status"] = "blocked"
+        result["status_label"] = "Backup could not be parsed"
+        result["backup"] = backup_name
+        return result
+
+    current_projects_raw = projects_config().get("projects", {})
+    current_projects = current_projects_raw if isinstance(current_projects_raw, dict) else {}
+    current_profiles_raw = profiles_data().get("profiles", {})
+    current_profiles = current_profiles_raw if isinstance(current_profiles_raw, dict) else {}
+    current_tools = computer_tools_config()
+
+    draft_projects_raw = payload.get("projects") if isinstance(payload.get("projects"), dict) else {}
+    draft_projects = draft_projects_raw if isinstance(draft_projects_raw, dict) else {}
+    draft_tools = payload.get("computer_tools") if isinstance(payload.get("computer_tools"), dict) else {}
+    draft_shortcuts = draft_tools.get("web_shortcuts") if isinstance(draft_tools.get("web_shortcuts"), dict) else {}
+    draft_apps = draft_tools.get("app_names") if isinstance(draft_tools.get("app_names"), list) else []
+    draft_safe_root_count = int(draft_tools.get("safe_root_count") or 0)
+
+    current_project_ids = {safe_backup_text(project_id) for project_id in current_projects}
+    draft_project_ids = {safe_backup_text(project_id) for project_id in draft_projects}
+    current_profile_ids = {safe_backup_text(project_id) for project_id in current_profiles}
+    draft_profile_ids = draft_project_ids
+    current_shortcuts = set(safe_web_shortcuts_backup(current_tools))
+    draft_shortcut_names = {safe_backup_text(name) for name in draft_shortcuts}
+    current_apps = {safe_backup_text(name) for name in app_catalog(current_tools)}
+    draft_app_names = {safe_backup_text(name) for name in draft_apps}
+    current_safe_root_count = len(current_tools.get("safe_roots") or [])
+    current_projects_with_paths = sum(1 for project in current_projects.values() if isinstance(project, dict) and bool(project.get("path")))
+    draft_projects_needing_paths = sum(1 for project in draft_projects.values() if isinstance(project, dict) and bool(project.get("has_local_path")))
+
+    sections = [
+        {"label": "Project registry", **compare_name_sets(current_project_ids, draft_project_ids)},
+        {"label": "Project profiles", **compare_name_sets(current_profile_ids, draft_profile_ids)},
+        {"label": "Web shortcuts", **compare_name_sets(current_shortcuts, draft_shortcut_names)},
+        {"label": "App names", **compare_name_sets(current_apps, draft_app_names)},
+        {
+            "label": "Safe roots",
+            "current": current_safe_root_count,
+            "draft": draft_safe_root_count,
+            "matched": min(current_safe_root_count, draft_safe_root_count),
+            "missing_from_current": [],
+            "extra_in_current": [],
+            "missing_count": max(0, draft_safe_root_count - current_safe_root_count),
+            "extra_count": max(0, current_safe_root_count - draft_safe_root_count),
+        },
+        {
+            "label": "Local project paths",
+            "current": current_projects_with_paths,
+            "draft": draft_projects_needing_paths,
+            "matched": min(current_projects_with_paths, draft_projects_needing_paths),
+            "missing_from_current": [],
+            "extra_in_current": [],
+            "missing_count": max(0, draft_projects_needing_paths - current_projects_with_paths),
+            "extra_count": max(0, current_projects_with_paths - draft_projects_needing_paths),
+        },
+    ]
+    attention = [section for section in sections if int(section.get("missing_count") or 0) or int(section.get("extra_count") or 0)]
+    result.update(
+        {
+            "status": "attention" if attention else "match",
+            "status_label": "Differences found" if attention else "Current config matches import draft summary",
+            "backup": backup_name or result.get("backup", ""),
+            "sections": sections,
+            "attention_count": len(attention),
+        }
+    )
+    return result
+
+
+def format_backup_import_compare(compare: dict[str, Any]) -> str:
+    lines = [
+        "Backup import comparison",
+        f"Status: {compact(str(compare.get('status_label') or compare.get('status') or 'unknown'), limit=160)}",
+        "Files changed: none",
+    ]
+    if compare.get("backup"):
+        lines.append(f"Backup: {compact(str(compare.get('backup')), limit=120)}")
+    if compare.get("status") == "blocked":
+        lines.extend(["", "Comparison is blocked until /backup check is clean."])
+        return "\n".join(lines)
+    lines.extend(["", "Compared areas:"])
+    for section in compare.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        label = compact(str(section.get("label") or "-"), limit=80)
+        lines.append(
+            f"- {label}: current {int(section.get('current') or 0)}, draft {int(section.get('draft') or 0)}, matched {int(section.get('matched') or 0)}"
+        )
+        missing = section.get("missing_from_current") if isinstance(section.get("missing_from_current"), list) else []
+        extra = section.get("extra_in_current") if isinstance(section.get("extra_in_current"), list) else []
+        if int(section.get("missing_count") or 0):
+            detail = ", ".join(str(item) for item in missing[:6]) or f"{int(section.get('missing_count') or 0)} item(s)"
+            lines.append(f"  Missing from current: {detail}")
+        if int(section.get("extra_count") or 0):
+            detail = ", ".join(str(item) for item in extra[:6]) or f"{int(section.get('extra_count') or 0)} item(s)"
+            lines.append(f"  Extra in current: {detail}")
+    lines.extend(["", "This is read-only. It compares names and counts only; it does not inspect secrets or apply config."])
+    return compact("\n".join(lines), limit=3600)
+
+
 def command_backup(args: list[str]) -> str:
     action = args[0].lower() if args else "save"
     if action in {"preview", "status", "show"}:
@@ -5632,6 +5771,9 @@ def command_backup(args: list[str]) -> str:
         if import_args and import_args[0].lower() in {"open", "show", "view"}:
             identifier = import_args[1] if len(import_args) > 1 else None
             return format_saved_backup_import_preview_text(saved_backup_import_preview_text(identifier))
+        if import_args and import_args[0].lower() in {"compare", "diff", "status"}:
+            name = import_args[1] if len(import_args) > 1 else None
+            return format_backup_import_compare(backup_import_compare_payload(name))
         save_requested = any(arg.lower() in {"save", "export", "archive", "write"} for arg in import_args)
         name_args = [arg for arg in import_args if arg.lower() not in {"save", "export", "archive", "write"}]
         name = name_args[0] if name_args else None
@@ -5645,6 +5787,9 @@ def command_backup(args: list[str]) -> str:
     if action in {"open-draft", "show-draft", "draft-open"}:
         identifier = args[1] if len(args) > 1 else None
         return format_saved_backup_import_preview_text(saved_backup_import_preview_text(identifier))
+    if action in {"compare", "diff", "import-compare"}:
+        name = args[1] if len(args) > 1 else None
+        return format_backup_import_compare(backup_import_compare_payload(name))
     if action in {"list", "history"}:
         backups = saved_commander_backups()
         if not backups:

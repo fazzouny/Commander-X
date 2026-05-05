@@ -1867,6 +1867,7 @@ def dashboard_backups_payload(limit: int = 8) -> dict[str, Any]:
         "restore_plan": commander.backup_restore_plan_payload(),
         "import_preview": commander.backup_restore_import_preview_payload(include_drafts=False),
         "import_artifacts": commander.saved_backup_import_previews(limit=8),
+        "import_compare": commander.backup_import_compare_payload(),
         "restore_guidance": commander.backup_restore_guidance(),
     }
 
@@ -1937,6 +1938,15 @@ def dashboard_backup_action(payload: dict[str, Any]) -> tuple[dict[str, Any], in
             "saved": False,
             "text": commander.format_saved_backup_import_preview_text(preview_text),
             "import_artifact": preview_text or {},
+            "backups": dashboard_backups_payload(),
+        }, 200
+    if action in {"import-compare", "compare", "diff", "draft-compare"}:
+        compare = commander.backup_import_compare_payload()
+        return {
+            "ok": compare.get("status") in {"match", "attention"},
+            "saved": False,
+            "text": commander.format_backup_import_compare(compare),
+            "import_compare": compare,
             "backups": dashboard_backups_payload(),
         }, 200
     if action in {"save", "export", "write", "create"}:

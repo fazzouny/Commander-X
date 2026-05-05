@@ -1985,6 +1985,58 @@ class BrowserAndClickUpTests(unittest.TestCase):
         self.assertNotIn(backup_temp, listing + opened)
         self.assertNotIn(report_temp, listing + opened)
 
+    def test_backup_import_compare_reports_name_differences_without_paths(self) -> None:
+        original_backup_dir = commander.os.environ.get("COMMANDER_BACKUP_DIR")
+        original_projects = commander.projects_config
+        original_profiles = commander.profiles_data
+        original_tools = commander.computer_tools_config
+        original_apps = commander.app_catalog
+        original_shortcuts = commander.safe_web_shortcuts_backup
+        payload = {
+            "kind": "commander-x-safe-config-backup",
+            "schema_version": 1,
+            "projects": {
+                "health": {"id": "health", "name": "Health", "allowed": True, "has_local_path": True},
+                "new-project": {"id": "new-project", "name": "New Project", "allowed": True, "has_local_path": True},
+            },
+            "computer_tools": {
+                "app_names": ["chrome", "notepad"],
+                "web_shortcuts": {"dashboard": "https://example.com"},
+                "safe_root_count": 1,
+            },
+            "setup": {},
+            "state_summary": {},
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                commander.os.environ["COMMANDER_BACKUP_DIR"] = temp
+                commander.save_commander_backup(payload)
+                commander.projects_config = lambda: {"projects": {"health": {"path": "C:\\Users\\Name\\health", "allowed": True}}}  # type: ignore[assignment]
+                commander.profiles_data = lambda: {"profiles": {"health": {"objective": "Build health"}}}  # type: ignore[assignment]
+                commander.computer_tools_config = lambda: {"safe_roots": [], "web_shortcuts": {"crm": "https://crm.example.com"}}  # type: ignore[assignment]
+                commander.app_catalog = lambda config: {"chrome": ["chrome"]}  # type: ignore[assignment]
+                commander.safe_web_shortcuts_backup = lambda config: {"crm": "https://crm.example.com"}  # type: ignore[assignment]
+                compare = commander.backup_import_compare_payload()
+                text = commander.format_backup_import_compare(compare)
+            finally:
+                if original_backup_dir is None:
+                    commander.os.environ.pop("COMMANDER_BACKUP_DIR", None)
+                else:
+                    commander.os.environ["COMMANDER_BACKUP_DIR"] = original_backup_dir
+                commander.projects_config = original_projects  # type: ignore[assignment]
+                commander.profiles_data = original_profiles  # type: ignore[assignment]
+                commander.computer_tools_config = original_tools  # type: ignore[assignment]
+                commander.app_catalog = original_apps  # type: ignore[assignment]
+                commander.safe_web_shortcuts_backup = original_shortcuts  # type: ignore[assignment]
+
+        self.assertEqual(compare["status"], "attention")
+        self.assertIn("Backup import comparison", text)
+        self.assertIn("Missing from current: new-project", text)
+        self.assertIn("Extra in current: crm", text)
+        self.assertIn("Files changed: none", text)
+        self.assertNotIn(temp, text)
+        self.assertNotIn("C:\\Users", text)
+
     def test_service_helpers_hide_paths_and_detect_processes(self) -> None:
         self.assertEqual(
             commander.service_process_state(["123 python.exe python commander.py --poll"], "commander.py --poll"),
